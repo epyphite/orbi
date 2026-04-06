@@ -1,4 +1,4 @@
-# KVMQL User Manual
+# Orbi User Manual
 
 **Version 0.2.0**
 
@@ -32,9 +32,9 @@
 
 ## 1. Introduction
 
-### What KVMQL Is
+### What Orbi Is
 
-KVMQL is a declarative, SQL-like DSL for managing virtual machines, OS images, block volumes, and cloud-managed resources across heterogeneous infrastructure. It provides:
+Orbi is a declarative, SQL-like DSL for managing virtual machines, OS images, block volumes, and cloud-managed resources across heterogeneous infrastructure. It provides:
 
 - A unified language for both queries (SELECT, SHOW, WATCH) and mutations (CREATE, DESTROY, ALTER, etc.) across microVMs, images, volumes, and managed cloud resources.
 - A driver model abstracting KVM/Firecracker and cloud providers behind a single interface.
@@ -44,11 +44,11 @@ KVMQL is a declarative, SQL-like DSL for managing virtual machines, OS images, b
 - A capability model that reports provider-specific limitations explicitly.
 - A psql-style interactive shell for human operators.
 
-### What KVMQL Is Not
+### What Orbi Is Not
 
-- **Not a hypervisor.** KVMQL manages VMs; KVM and Firecracker are the hypervisor layer underneath.
+- **Not a hypervisor.** Orbi manages VMs; KVM and Firecracker are the hypervisor layer underneath.
 - **Not a container orchestrator.** MicroVMs are an alternative isolation primitive to containers.
-- **Not Terraform.** KVMQL manages VM, image, volume, and managed resource lifecycle with a live, always-queryable registry. There is no separate state file.
+- **Not Terraform.** Orbi manages VM, image, volume, and managed resource lifecycle with a live, always-queryable registry. There is no separate state file.
 - **Not HA by default.** Single control plane. HA is a documented upgrade path.
 
 ### Key Concepts
@@ -63,8 +63,8 @@ KVMQL is a declarative, SQL-like DSL for managing virtual machines, OS images, b
 | **Resource** | A managed cloud resource (database, cache, Kubernetes cluster, etc.). |
 | **Principal** | An identity (user or service account) for access control. |
 | **Grant** | A permission associating verbs with a scope for a principal. |
-| **Registry** | The embedded SQLite database storing all KVMQL state. |
-| **Driver** | A plugin that translates KVMQL operations to provider-specific API calls. |
+| **Registry** | The embedded SQLite database storing all Orbi state. |
+| **Driver** | A plugin that translates Orbi operations to provider-specific API calls. |
 
 ### Language Basics
 
@@ -118,7 +118,7 @@ orbi --registry /path/to/state.db init
 
 ## 3. Quick Start
 
-This walkthrough uses actual KVMQL syntax verified against the parser.
+This walkthrough uses actual Orbi syntax verified against the parser.
 
 ```sql
 -- 1. Register a provider
@@ -1262,7 +1262,7 @@ ROLLBACK RESOURCE 'postgres' 'prod-db';
 
 ## 9a. Plan Management
 
-KVMQL supports a database-backed plan workflow: generate a plan, review it, approve it, then apply it. Plans are stored in the registry with SHA-256 integrity verification.
+Orbi supports a database-backed plan workflow: generate a plan, review it, approve it, then apply it. Plans are stored in the registry with SHA-256 integrity verification.
 
 ### Generating a Plan
 
@@ -1788,14 +1788,14 @@ When enabled with `\timing`, output includes row count and execution time:
 
 ### Credential Backends
 
-KVMQL supports 9 credential backend schemes. The `auth` parameter on providers and principals uses a URI scheme to specify the backend.
+Orbi supports 9 credential backend schemes. The `auth` parameter on providers and principals uses a URI scheme to specify the backend.
 
 #### `env:VAR_NAME` -- Environment Variable
 
 Read a secret from one or more environment variables.
 
 ```
-auth = 'env:KVMQL_ADMIN_TOKEN'
+auth = 'env:ORBI_ADMIN_TOKEN'
 auth = 'env:AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY'
 ```
 
@@ -1868,13 +1868,13 @@ auth = 'k8s:default/my-secret#password'
 
 ### Access Control Model
 
-KVMQL uses a principal-grant model:
+Orbi uses a principal-grant model:
 
 1. **Principals** are identities (users or services) with an `id`, `type`, and `auth` reference.
 2. **Grants** associate a list of verbs with a scope (global, cluster, provider, microvms, volumes, images) and optionally conditions (WHERE clause).
 3. When `auth_enabled` is `true`, every statement is checked against the principal's grants before execution.
 
-**Bootstrap admin:** On first use, `ensure_bootstrap_admin()` creates an `admin` principal with credential `env:KVMQL_ADMIN_TOKEN` and a global grant covering all verbs.
+**Bootstrap admin:** On first use, `ensure_bootstrap_admin()` creates an `admin` principal with credential `env:ORBI_ADMIN_TOKEN` and a global grant covering all verbs.
 
 **Auth check flow:**
 1. Load grants for the current principal from the registry.
@@ -1950,7 +1950,7 @@ Every executed statement (except SET and SHOW) is recorded in query history with
 
 ### TCP Server Protocol
 
-The KVMQL server uses a length-prefixed JSON protocol over TCP (and optionally Unix domain sockets).
+The Orbi server uses a length-prefixed JSON protocol over TCP (and optionally Unix domain sockets).
 
 **Frame format:** 4-byte big-endian length header followed by JSON payload.
 

@@ -1,6 +1,6 @@
-# Contributing to KVMQL
+# Contributing to Orbi
 
-Thank you for your interest in contributing to KVMQL. This guide explains how to set up the project, understand the codebase, and submit changes.
+Thank you for your interest in contributing to Orbi. This guide explains how to set up the project, understand the codebase, and submit changes.
 
 ## Development Setup
 
@@ -18,7 +18,7 @@ cargo test --workspace
 
 ## Project Structure
 
-KVMQL is organized as a Cargo workspace with 8 crates:
+Orbi is organized as a Cargo workspace with 8 crates (the internal crates keep their historical `kvmql-*` prefix because KVMQL is the name of the DSL engine):
 
 | Crate | Purpose |
 |-------|---------|
@@ -134,7 +134,7 @@ chore: update rusqlite to 0.33
 
 When filing a bug report, include:
 
-- KVMQL version (`orbi version`)
+- Orbi version (`orbi version`)
 - OS and architecture
 - The DSL statement that failed
 - Full error output (with notification codes)

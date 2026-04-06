@@ -1,10 +1,13 @@
-# KVMQL Examples
+# Orbi Examples
 
 | File | Description | Requirements |
 |------|-------------|-------------|
 | demo.kvmql | General demo (works with --simulate) | None |
 | azure-stack.kvmql | Full Azure environment | `az login` |
 | aws-stack.kvmql | AWS VPC + RDS + EC2 | `aws configure` |
+| cloudflare-demo.kvmql | DNS, firewall, page rules | `CLOUDFLARE_API_TOKEN` |
+| github-project-setup.kvmql | Repo + ruleset + secrets + workflow | `gh auth login` |
+| kubernetes-deploy.kvmql | K8s namespace, deployment, service, ingress | `kubectl` + cluster |
 | multi-env.kvmql | Multi-environment setup | None (--simulate) |
 | dr-failover.kvmql | Disaster recovery workflow | Two providers |
 

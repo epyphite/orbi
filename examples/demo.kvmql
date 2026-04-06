@@ -1,6 +1,6 @@
--- KVMQL Demo — One file, any provider
--- Run: kvmql --simulate exec examples/demo.kvmql
--- Or:  KVMQL_PROVIDER=azure kvmql exec examples/demo.kvmql
+-- Orbi Demo — One file, any provider
+-- Run: orbi --simulate exec examples/demo.kvmql
+-- Or:  ORBI_PROVIDER=azure orbi exec examples/demo.kvmql
 
 -- 1. Configure environment
 SET @env = 'demo';
@@ -10,7 +10,7 @@ ADD PROVIDER
   id     = 'target'
   type   = 'kvm'
   driver = 'mock'
-  auth   = 'env:KVMQL_TOKEN';
+  auth   = 'env:ORBI_TOKEN';
 
 -- 3. Create networking
 CREATE RESOURCE 'vnet'

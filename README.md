@@ -1,5 +1,9 @@
 # Orbi
 
+**What if `kubectl` spoke SQL?**
+
+[![asciicast](https://asciinema.org/a/5fd4E7b0lYHQQ53h.svg)](https://asciinema.org/a/5fd4E7b0lYHQQ53h)
+
 **A SQL-like DSL for managing infrastructure across clouds.**
 
 Orbi replaces Terraform for VM, database, networking, and managed service lifecycle management. Write infrastructure as SQL-like statements, execute against any cloud provider with a single binary.

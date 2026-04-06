@@ -67,7 +67,7 @@ impl EngineContext {
         let _ = self.registry.insert_principal(
             "admin",
             "user",
-            "env:KVMQL_ADMIN_TOKEN",
+            "env:ORBI_ADMIN_TOKEN",
             true,
         );
 

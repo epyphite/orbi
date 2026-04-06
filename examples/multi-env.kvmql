@@ -1,6 +1,6 @@
 -- Multi-environment setup using variables
--- Usage: kvmql --simulate exec examples/multi-env.kvmql
---    or: kvmql --env staging exec examples/multi-env.kvmql
+-- Usage: orbi --simulate exec examples/multi-env.kvmql
+--    or: orbi --env staging exec examples/multi-env.kvmql
 
 SET @env = 'dev';
 
@@ -8,7 +8,7 @@ ADD PROVIDER
   id     = 'target'
   type   = 'kvm'
   driver = 'mock'
-  auth   = 'env:KVMQL_TOKEN';
+  auth   = 'env:ORBI_TOKEN';
 
 -- Networking
 CREATE RESOURCE 'vnet'
