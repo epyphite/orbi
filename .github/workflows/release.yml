@@ -21,7 +21,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive_suffix: linux-x86_64
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             archive_suffix: darwin-x86_64
           - os: macos-latest
@@ -94,6 +94,9 @@ jobs:
           echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test binary
+        # Skip for cross-compiled targets (x86_64 macOS built on Apple Silicon
+        # runner needs Rosetta 2 which may not be available in CI)
+        if: matrix.target != 'x86_64-apple-darwin'
         shell: bash
         run: |
           "target/${{ matrix.target }}/release/orbi" version
