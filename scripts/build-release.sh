@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 OUT_DIR="dist"
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 

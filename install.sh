@@ -12,7 +12,7 @@ set -e
 # Custom install dir:
 #   ORBI_INSTALL_DIR=~/.local/bin ./install.sh --local
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 INSTALL_DIR="${ORBI_INSTALL_DIR:-/usr/local/bin}"
 REPO_URL="https://github.com/epyphite/orbi/releases/download"
 LOCAL_MODE=false

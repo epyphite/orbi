@@ -7,13 +7,15 @@ use kvmql_engine::executor::Executor;
 use crate::formatter::{print_result, OutputFormat};
 use crate::meta_commands::{handle_meta_command, parse_meta_command, MetaAction};
 
-/// Run the interactive KVMQL REPL.
+/// Run the interactive Orbi REPL.
 pub async fn run_shell(
     ctx: &EngineContext,
     format: OutputFormat,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("KVMQL v0.2.0 | in-memory registry | cluster: none");
-    println!("Type \\h for help, \\q to quit\n");
+    println!(
+        "Orbi v{} | engine: kvmql | type \\h for help, \\q to quit\n",
+        env!("CARGO_PKG_VERSION")
+    );
 
     let mut rl = Editor::<(), rustyline::history::DefaultHistory>::new()?;
     let history_path = history_file_path();
@@ -31,9 +33,9 @@ pub async fn run_shell(
 
     loop {
         let prompt = if buffer.is_empty() {
-            "kvmql> "
+            "orbi> "
         } else {
-            "     > "
+            "    > "
         };
 
         match rl.readline(prompt) {

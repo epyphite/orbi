@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.1 (2026-04-07)
+
+Bug fixes and polish surfaced from the first real macOS install.
+
+### Fixes
+- `SHOW VERSION` now reports the actual binary version (was hardcoded to `0.2.0`)
+- Interactive shell banner now reads `Orbi v0.3.1 | engine: kvmql` (was `KVMQL v0.2.0`)
+- Shell prompt changed from `kvmql>` to `orbi>`
+- All version strings now read from `CARGO_PKG_VERSION` at compile time, no more drift
+
+### CI
+- GitHub Actions release workflow ships binaries for:
+  - `linux-x86_64`
+  - `darwin-aarch64` (Apple Silicon)
+  - `darwin-x86_64` (Intel Mac, cross-compiled)
+- Auto-triggers on `git push --tags` for any `v*` tag
+- Builds, tests, packages, and uploads to GitHub Release in ~5 minutes
+
+---
+
 ## v0.3.0 (2026-04-06)
 
 ### New Providers
