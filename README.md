@@ -1,8 +1,8 @@
-# KVMQL
+# Orbi
 
 **A SQL-like DSL for managing infrastructure across clouds.**
 
-KVMQL replaces Terraform for VM, database, networking, and managed service lifecycle management. Write infrastructure as SQL-like statements, execute against any cloud provider with a single binary.
+Orbi replaces Terraform for VM, database, networking, and managed service lifecycle management. Write infrastructure as SQL-like statements, execute against any cloud provider with a single binary.
 
 ```sql
 -- One file. Any cloud.
@@ -19,9 +19,9 @@ CREATE RESOURCE 'rds_postgres' id = 'dr-db'
 SELECT * FROM resources;
 ```
 
-## Why KVMQL?
+## Why Orbi?
 
-| | Terraform | KVMQL |
+| | Terraform | Orbi |
 |---|---|---|
 | Language | HCL (custom) | SQL-like (familiar) |
 | State | Separate .tfstate file | Embedded SQLite (queryable) |
@@ -35,7 +35,7 @@ SELECT * FROM resources;
 
 ```bash
 # Install
-curl -fsSL https://get.kvmql.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/epyphite/orbi/main/install.sh | sh
 
 # Try immediately -- no credentials needed
 orbi --simulate "CREATE RESOURCE 'postgres' id = 'test-db' version = '16';"
@@ -168,7 +168,7 @@ CREATE MICROVM
   hostname  = 'acme-api'
   admin_user = 'ops'
   ssh_key    = 'file:~/.ssh/id_ed25519.pub'
-  cloud_init = 'file:/etc/kvmql/cloud-init/base.yaml'
+  cloud_init = 'file:/etc/orbi/cloud-init/base.yaml'
   ON PROVIDER 'kvm.host-a';
 ```
 
@@ -269,7 +269,7 @@ SELECT * FROM audit_log
 ## Documentation
 
 - [User Manual](MANUAL.md) -- complete reference (17 sections)
-- [Examples](examples/) -- ready-to-run KVMQL files
+- [Examples](examples/) -- ready-to-run Orbi files
 - [Specification](docs/SPEC.md) -- original DSL specification
 - [Changelog](docs/CHANGELOG.md) -- release history
 
@@ -285,24 +285,26 @@ cargo build --release
 ## Project Structure
 
 ```
-kvmql/
+orbi/
 ├── crates/
 │   ├── kvmql-common/      # Shared types, notification codes, config
 │   ├── kvmql-parser/      # Lexer (logos), AST, recursive descent parser
 │   ├── kvmql-registry/    # SQLite registry, migrations, CRUD
-│   ├── kvmql-driver/      # Driver trait + Azure/AWS/GCP/Firecracker
+│   ├── kvmql-driver/      # Driver trait + Azure/AWS/Cloudflare/GitHub/K8s/Firecracker
 │   ├── kvmql-auth/        # 9 credential backends, access control
 │   ├── kvmql-engine/      # Execution pipeline, EXPLAIN, ROLLBACK
 │   ├── kvmql-agent/       # Per-host agent (heartbeat, state push)
-│   └── kvmql-cli/         # CLI binary, REPL shell, output formats
-├── examples/              # Demo KVMQL files
+│   └── kvmql-cli/         # CLI binary (orbi), REPL shell, output formats
+├── examples/              # Demo .kvmql files
 ├── scripts/               # Build and release scripts
-├── docs/                  # Specification and proposals
+├── docs/                  # Specification and changelog
 ├── MANUAL.md              # User manual
 ├── CONTRIBUTING.md        # Contribution guide
 ├── LICENSE                # Apache 2.0
 └── install.sh             # One-command installer
 ```
+
+The internal crates are prefixed `kvmql-*` because the engine name is KVMQL — the SQL-like DSL parser/runtime that powers Orbi. The user-facing binary is `orbi`.
 
 ## Stats
 
