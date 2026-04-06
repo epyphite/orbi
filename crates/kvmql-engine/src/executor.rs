@@ -2268,7 +2268,7 @@ impl<'a> Executor<'a> {
             }
             ShowTarget::Version => {
                 let val = serde_json::json!({
-                    "version": "0.2.0",
+                    "version": env!("CARGO_PKG_VERSION"),
                     "engine": "kvmql-engine",
                 });
                 Ok(StmtOutcome::ok_val(val))
@@ -4735,7 +4735,7 @@ mod tests {
         let r = exec.execute("SHOW VERSION").await;
         assert_eq!(r.status, ResultStatus::Ok);
         let val = r.result.unwrap();
-        assert_eq!(val["version"], "0.2.0");
+        assert_eq!(val["version"], env!("CARGO_PKG_VERSION"));
     }
 
     // ── SET execution_mode ────────────────────────────────────────────

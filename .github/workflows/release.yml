@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.3.1)'
+        required: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_suffix: linux-x86_64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive_suffix: darwin-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive_suffix: darwin-aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-cargo-
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --workspace --release
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Package tarball
+        id: package
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SUFFIX="${{ matrix.archive_suffix }}"
+          ARCHIVE="orbi-${VERSION}-${SUFFIX}"
+
+          mkdir -p "dist/$ARCHIVE"
+          cp "target/${{ matrix.target }}/release/orbi" "dist/$ARCHIVE/"
+          cp "target/${{ matrix.target }}/release/kvmql-agent" "dist/$ARCHIVE/"
+          cp MANUAL.md README.md LICENSE install.sh "dist/$ARCHIVE/"
+          cp -r examples "dist/$ARCHIVE/"
+
+          cd dist
+          tar -czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
+          rm -rf "$ARCHIVE"
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
+          else
+            shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
+          fi
+
+          ls -lh "${ARCHIVE}.tar.gz" "${ARCHIVE}.tar.gz.sha256"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test binary
+        shell: bash
+        run: |
+          "target/${{ matrix.target }}/release/orbi" version
+          "target/${{ matrix.target }}/release/orbi" --simulate "SHOW VERSION;"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbi-${{ steps.package.outputs.archive }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          retention-days: 7
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Extract tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+          append_body: true
+          body: |
+
+            ---
+
+            ### Binaries for this release
+
+            | Platform | Download |
+            |---|---|
+            | Linux x86_64 | `orbi-*-linux-x86_64.tar.gz` |
+            | macOS Intel | `orbi-*-darwin-x86_64.tar.gz` |
+            | macOS Apple Silicon | `orbi-*-darwin-aarch64.tar.gz` |
+
+            Verify with the `.sha256` file next to each tarball.
