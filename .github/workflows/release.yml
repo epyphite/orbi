@@ -74,6 +74,8 @@ jobs:
           SUFFIX="${{ matrix.archive_suffix }}"
           ARCHIVE="orbi-${VERSION}-${SUFFIX}"
 
+          # Always start with a clean dist/ to avoid leaking stale tarballs
+          rm -rf dist
           mkdir -p "dist/$ARCHIVE"
           cp "target/${{ matrix.target }}/release/orbi" "dist/$ARCHIVE/"
           cp "target/${{ matrix.target }}/release/kvmql-agent" "dist/$ARCHIVE/"
