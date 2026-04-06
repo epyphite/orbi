@@ -1,0 +1,55 @@
+-- GitHub Project Setup -- Proof of Value
+-- Recreates manual repo setup as a single Orbi file.
+-- Prerequisites:
+--   1. gh CLI installed (https://cli.github.com/) and authenticated (gh auth login)
+--   2. (optional) GITHUB_TOKEN env var if you want to override the ambient session
+-- Usage: orbi --simulate exec examples/github-project-setup.kvmql
+
+ADD IF NOT EXISTS PROVIDER
+  id   = 'github'
+  type = 'github'
+  auth = 'env:GITHUB_TOKEN';
+
+-- 1. Create the repo
+CREATE RESOURCE 'gh_repo' id = 'epiphyte-corp/my-service'
+  visibility  = 'private'
+  description = 'A new Epiphyte service managed by Orbi'
+  ON PROVIDER 'github';
+
+-- 2. Protect main branch via the modern rulesets API
+CREATE RESOURCE 'gh_ruleset' id = 'main-protection'
+  repo               = 'epiphyte-corp/my-service'
+  target             = 'branch'
+  enforcement        = 'active'
+  branches           = '~DEFAULT_BRANCH'
+  require_pr         = true
+  required_approvals = 1
+  linear_history     = true
+  ON PROVIDER 'github';
+
+-- 3. Add CI/CD secrets (values pulled from 1Password / env vars)
+CREATE RESOURCE 'gh_secret' id = 'ANTHROPIC_API_KEY'
+  repo  = 'epiphyte-corp/my-service'
+  value = 'op:Infrastructure/Claude-API-Key'
+  ON PROVIDER 'github';
+
+CREATE RESOURCE 'gh_secret' id = 'CF_API_TOKEN'
+  repo  = 'epiphyte-corp/my-service'
+  value = 'env:CLOUDFLARE_API_TOKEN'
+  ON PROVIDER 'github';
+
+-- 4. Add a non-secret variable
+CREATE RESOURCE 'gh_variable' id = 'DEPLOY_ENV'
+  repo  = 'epiphyte-corp/my-service'
+  value = 'staging'
+  ON PROVIDER 'github';
+
+-- 5. Install a Claude review workflow
+CREATE RESOURCE 'gh_workflow_file' id = 'claude-review.yml'
+  repo    = 'epiphyte-corp/my-service'
+  content = 'file:./workflows/claude-review.yml'
+  message = 'Add Claude reviewer workflow'
+  ON PROVIDER 'github';
+
+-- Verify
+SELECT id, resource_type, status FROM resources WHERE resource_type LIKE 'gh_%';

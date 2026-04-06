@@ -1,0 +1,43 @@
+-- Epiphyte AWS Stack
+SET @env = 'staging';
+
+ADD PROVIDER
+  id     = 'aws'
+  type   = 'aws'
+  region = 'us-east-1'
+  auth   = 'env:AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY';
+
+CREATE RESOURCE 'vpc'
+  id         = @env
+  cidr_block = '10.2.0.0/16'
+  ON PROVIDER 'aws';
+
+CREATE RESOURCE 'aws_subnet'
+  id         = 'app'
+  vpc_id     = @env
+  cidr_block = '10.2.0.0/20'
+  ON PROVIDER 'aws';
+
+CREATE RESOURCE 'security_group'
+  id          = @env
+  description = 'Main SG'
+  vpc_id      = @env
+  ON PROVIDER 'aws';
+
+CREATE RESOURCE 'sg_rule'
+  id                = 'allow-https'
+  security_group_id = @env
+  protocol          = 'tcp'
+  port              = 443
+  cidr              = '0.0.0.0/0';
+
+CREATE RESOURCE 'rds_postgres'
+  id              = @env
+  instance_class  = 'db.t3.medium'
+  engine_version  = '16'
+  master_username = 'admin'
+  master_password = 'changeme123'
+  storage_gb      = 50
+  ON PROVIDER 'aws';
+
+SELECT * FROM resources;

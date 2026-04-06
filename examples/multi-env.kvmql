@@ -1,0 +1,46 @@
+-- Multi-environment setup using variables
+-- Usage: kvmql --simulate exec examples/multi-env.kvmql
+--    or: kvmql --env staging exec examples/multi-env.kvmql
+
+SET @env = 'dev';
+
+ADD PROVIDER
+  id     = 'target'
+  type   = 'kvm'
+  driver = 'mock'
+  auth   = 'env:KVMQL_TOKEN';
+
+-- Networking
+CREATE RESOURCE 'vnet'
+  id            = @env
+  address_space = '10.0.0.0/16'
+  ON PROVIDER 'target';
+
+CREATE RESOURCE 'subnet'
+  id             = 'app'
+  vnet           = @env
+  address_prefix = '10.0.1.0/24'
+  ON PROVIDER 'target';
+
+CREATE RESOURCE 'subnet'
+  id             = 'db'
+  vnet           = @env
+  address_prefix = '10.0.2.0/24'
+  delegation     = 'Microsoft.DBforPostgreSQL/flexibleServers'
+  ON PROVIDER 'target';
+
+-- Database
+CREATE RESOURCE 'postgres'
+  id         = @env
+  version    = '16'
+  sku        = 'Standard_B1ms'
+  storage_gb = 32
+  ON PROVIDER 'target';
+
+CREATE RESOURCE 'pg_database'
+  id     = 'app'
+  server = @env
+  ON PROVIDER 'target';
+
+-- Verify
+SELECT * FROM resources;

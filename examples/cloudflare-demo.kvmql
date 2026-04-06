@@ -1,0 +1,42 @@
+-- Cloudflare Provider Demo
+-- Prerequisites: CLOUDFLARE_API_TOKEN env var set
+-- Usage: orbi --simulate exec examples/cloudflare-demo.kvmql
+
+ADD IF NOT EXISTS PROVIDER
+  id   = 'cloudflare'
+  type = 'cloudflare'
+  auth = 'env:CLOUDFLARE_API_TOKEN';
+
+-- DNS records for a new service
+CREATE RESOURCE 'cf_dns_record' id = 'api'
+  zone    = 'epy.digital'
+  type    = 'A'
+  content = '1.2.3.4'
+  proxied = true
+  ON PROVIDER 'cloudflare';
+
+CREATE RESOURCE 'cf_dns_record' id = 'www'
+  zone    = 'epy.digital'
+  type    = 'CNAME'
+  content = 'epy.digital'
+  proxied = true
+  ON PROVIDER 'cloudflare';
+
+-- Block bad traffic
+CREATE RESOURCE 'cf_firewall_rule' id = 'block-tor'
+  zone        = 'epy.digital'
+  expression  = '(ip.geoip.asnum eq 396507)'
+  action      = 'block'
+  description = 'Block Tor exit nodes'
+  ON PROVIDER 'cloudflare';
+
+-- Cache static assets
+CREATE RESOURCE 'cf_page_rule' id = 'cache-static'
+  zone        = 'epy.digital'
+  url         = '*epy.digital/static/*'
+  priority    = 1
+  cache_level = 'cache_everything'
+  ON PROVIDER 'cloudflare';
+
+-- Query everything
+SELECT * FROM resources WHERE resource_type LIKE 'cf_%';

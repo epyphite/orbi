@@ -1,0 +1,18 @@
+[package]
+name = "kvmql-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+kvmql-auth = { workspace = true }
+kvmql-common = { workspace = true }
+kvmql-parser = { workspace = true }
+kvmql-registry = { workspace = true }
+kvmql-driver = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }

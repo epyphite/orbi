@@ -1,0 +1,27 @@
+[package]
+name = "kvmql-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "orbi"
+path = "src/main.rs"
+
+[dependencies]
+kvmql-common = { workspace = true }
+kvmql-parser = { workspace = true }
+kvmql-engine = { workspace = true }
+kvmql-registry = { workspace = true }
+kvmql-driver = { workspace = true }
+kvmql-auth = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+clap = { workspace = true }
+rustyline = { workspace = true }
+comfy-table = { workspace = true }
+sha2 = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }

@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kvmql-common",
+    "crates/kvmql-parser",
+    "crates/kvmql-registry",
+    "crates/kvmql-driver",
+    "crates/kvmql-auth",
+    "crates/kvmql-engine",
+    "crates/kvmql-agent",
+    "crates/kvmql-cli",
+]
+
+[workspace.package]
+version = "0.3.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Epiphyte Corp"]
+description = "Orbi — SQL-like DSL for infrastructure management across clouds"
+repository = "https://github.com/epyphite/orbi"
+readme = "README.md"
+keywords = ["infrastructure", "iac", "devops", "multi-cloud", "dsl"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+# Shared
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Parser
+logos = "0.14"
+
+# Registry (SQLite — lightweight; swap to DuckDB for production)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Networking / TLS
+rustls = "0.23"
+rcgen = "0.13"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+rustyline = "14"
+comfy-table = "7"
+
+# Async trait
+async-trait = "0.1"
+
+# Crypto
+sha2 = "0.10"
+
+# Internal crates
+kvmql-common = { path = "crates/kvmql-common" }
+kvmql-parser = { path = "crates/kvmql-parser" }
+kvmql-registry = { path = "crates/kvmql-registry" }
+kvmql-driver = { path = "crates/kvmql-driver" }
+kvmql-auth = { path = "crates/kvmql-auth" }
+kvmql-engine = { path = "crates/kvmql-engine" }
+kvmql-agent = { path = "crates/kvmql-agent" }
+kvmql-cli = { path = "crates/kvmql-cli" }

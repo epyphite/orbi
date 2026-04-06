@@ -1,0 +1,45 @@
+-- Disaster Recovery: Backup and failover workflow
+-- Prerequisites: Azure and AWS providers configured
+-- Usage: kvmql --simulate exec examples/dr-failover.kvmql
+
+SET @snapshot_tag = 'pre-dr-drill';
+
+ADD PROVIDER
+  id     = 'azure-prod'
+  type   = 'azure'
+  region = 'eastus'
+  auth   = 'env:AZURE_CREDENTIALS';
+
+ADD PROVIDER
+  id     = 'aws-dr'
+  type   = 'aws'
+  region = 'us-west-2'
+  auth   = 'env:AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY';
+
+-- 1. Create a primary database on Azure
+CREATE RESOURCE 'postgres'
+  id         = 'prod-db'
+  version    = '16'
+  sku        = 'Standard_B2s'
+  storage_gb = 64
+  ON PROVIDER 'azure-prod';
+
+-- 2. Snapshot current state
+BACKUP RESOURCE 'postgres' 'prod-db' TAG 'dr-drill-2026';
+
+-- 3. Show what we'd create on AWS
+EXPLAIN CREATE RESOURCE 'rds_postgres'
+  id              = 'dr-db'
+  instance_class  = 'db.t3.medium'
+  engine_version  = '16'
+  master_username = 'admin'
+  master_password = 'env:DR_DB_PASSWORD'
+  storage_gb      = 64
+  ON PROVIDER 'aws-dr';
+
+-- 4. Verify infrastructure
+SELECT id, resource_type, status
+  FROM resources
+  ORDER BY resource_type;
+
+SHOW PROVIDERS;

@@ -1,0 +1,84 @@
+-- Kubernetes Deployment -- End-to-end example
+--
+-- This is the moat: declarative K8s management AND queryable cluster state
+-- via SELECT, all from one .kvmql file. Same syntax as Azure/AWS/Cloudflare
+-- providers.
+--
+-- Prerequisites:
+--   1. kubectl installed (https://kubernetes.io/docs/tasks/tools/) and
+--      configured with at least one context (any cluster will do: AKS,
+--      EKS, GKE, k3s, minikube, kind).
+--   2. (optional) KUBECONTEXT env var to pin to a specific context;
+--      otherwise the kubeconfig "current-context" is used.
+--
+-- Usage:
+--   orbi --simulate exec examples/kubernetes-deploy.kvmql   # dry run
+--   orbi exec examples/kubernetes-deploy.kvmql              # apply for real
+
+ADD IF NOT EXISTS PROVIDER
+  id     = 'k8s'
+  type   = 'kubernetes'
+  auth   = 'env:KUBECONTEXT'
+  region = 'prod-aks';
+
+-- ── Stack ────────────────────────────────────────────────────
+
+-- 1. Namespace
+CREATE RESOURCE 'k8s_namespace' id = 'orbital-pay'
+  ON PROVIDER 'k8s';
+
+-- 2. Config
+CREATE RESOURCE 'k8s_configmap' id = 'api-config'
+  namespace = 'orbital-pay'
+  data      = 'LOG_LEVEL=info,DEPLOY_ENV=production'
+  ON PROVIDER 'k8s';
+
+-- 3. Secrets (values pulled from 1Password at apply time)
+CREATE RESOURCE 'k8s_secret' id = 'api-secrets'
+  namespace = 'orbital-pay'
+  data      = 'DATABASE_URL=op:Infrastructure/PG-Prod#url,STRIPE_KEY=op:Payments/Stripe#live-key'
+  ON PROVIDER 'k8s';
+
+-- 4. Deployment
+CREATE RESOURCE 'k8s_deployment' id = 'api-deploy'
+  namespace = 'orbital-pay'
+  image     = 'epiphyteacr.azurecr.io/orbital-pay-api:latest'
+  replicas  = 3
+  port      = 8080
+  ON PROVIDER 'k8s';
+
+-- 5. Service (LoadBalancer fronts the deployment)
+CREATE RESOURCE 'k8s_service' id = 'api-svc'
+  namespace   = 'orbital-pay'
+  type        = 'LoadBalancer'
+  port        = 80
+  target_port = 8080
+  ON PROVIDER 'k8s';
+
+-- 6. Ingress (TLS terminated at the edge)
+CREATE RESOURCE 'k8s_ingress' id = 'api-ing'
+  namespace     = 'orbital-pay'
+  host          = 'api.orbital-pay.com'
+  service       = 'api-svc'
+  port          = 80
+  tls_secret    = 'api-tls'
+  ingress_class = 'nginx'
+  ON PROVIDER 'k8s';
+
+-- ── Live queries: the killer feature ─────────────────────────
+-- These hit the LIVE cluster, not the local registry.
+
+-- Find any pod that isn't healthy in the orbital-pay namespace
+SELECT name, status, restarts FROM k8s_pods
+  WHERE namespace = 'orbital-pay' AND status != 'Running';
+
+-- Spot deployments where ready_replicas lags behind desired
+SELECT name, replicas, ready_replicas FROM k8s_deployments
+  WHERE namespace = 'orbital-pay';
+
+-- See which services got an external load balancer IP
+SELECT name, type, cluster_ip FROM k8s_services
+  WHERE namespace = 'orbital-pay';
+
+-- Cluster-wide health: nodes that aren't Ready
+SELECT name, ready FROM k8s_nodes WHERE ready = false;

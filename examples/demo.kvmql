@@ -1,0 +1,76 @@
+-- KVMQL Demo — One file, any provider
+-- Run: kvmql --simulate exec examples/demo.kvmql
+-- Or:  KVMQL_PROVIDER=azure kvmql exec examples/demo.kvmql
+
+-- 1. Configure environment
+SET @env = 'demo';
+
+-- 2. Add a provider (simulation mode uses mock provider automatically)
+ADD PROVIDER
+  id     = 'target'
+  type   = 'kvm'
+  driver = 'mock'
+  auth   = 'env:KVMQL_TOKEN';
+
+-- 3. Create networking
+CREATE RESOURCE 'vnet'
+  id            = 'demo-vnet'
+  address_space = '10.0.0.0/16'
+  ON PROVIDER 'target';
+
+CREATE RESOURCE 'subnet'
+  id             = 'app-subnet'
+  vnet           = 'demo-vnet'
+  address_prefix = '10.0.1.0/24'
+  ON PROVIDER 'target';
+
+CREATE RESOURCE 'subnet'
+  id             = 'db-subnet'
+  vnet           = 'demo-vnet'
+  address_prefix = '10.0.2.0/24'
+  delegation     = 'Microsoft.DBforPostgreSQL/flexibleServers'
+  ON PROVIDER 'target';
+
+CREATE RESOURCE 'nsg'
+  id = 'demo-nsg'
+  ON PROVIDER 'target';
+
+CREATE RESOURCE 'nsg_rule'
+  id               = 'allow-https'
+  nsg              = 'demo-nsg'
+  priority         = 100
+  direction        = 'Inbound'
+  protocol         = 'Tcp'
+  source_address   = '*'
+  destination_port = 443
+  ON PROVIDER 'target';
+
+-- 4. Create a database
+CREATE RESOURCE 'postgres'
+  id         = 'demo-db'
+  version    = '16'
+  sku        = 'Standard_B1ms'
+  storage_gb = 32
+  ON PROVIDER 'target';
+
+CREATE RESOURCE 'pg_database'
+  id     = 'app'
+  server = 'demo-db'
+  ON PROVIDER 'target';
+
+-- 5. Create a VM
+CREATE MICROVM
+  tenant    = @env
+  vcpus     = 2
+  memory_mb = 4096
+  image     = 'ubuntu-24.04-lts'
+  hostname  = 'demo-api'
+  ON PROVIDER 'target';
+
+-- 6. Query everything
+SELECT * FROM resources;
+SELECT * FROM microvms;
+
+-- 7. Show what we built
+SHOW PROVIDERS;
+SHOW VERSION;

@@ -1,0 +1,111 @@
+-- Epiphyte Azure Stack
+-- Provisions a complete application environment on Azure
+-- Prerequisites: az login, resource group exists
+
+SET @env = 'staging';
+SET @region = 'eastus';
+
+ADD PROVIDER
+  id     = 'azure'
+  type   = 'azure'
+  region = @region
+  auth   = 'azure-kv:epiphyte-vault/deploy-creds';
+
+-- Networking
+CREATE RESOURCE 'vnet'
+  id            = @env
+  address_space = '10.1.0.0/16'
+  ON PROVIDER 'azure';
+
+CREATE RESOURCE 'subnet'
+  id             = 'app'
+  vnet           = @env
+  address_prefix = '10.1.0.0/20'
+  ON PROVIDER 'azure';
+
+CREATE RESOURCE 'subnet'
+  id             = 'db'
+  vnet           = @env
+  address_prefix = '10.1.32.0/20'
+  delegation     = 'Microsoft.DBforPostgreSQL/flexibleServers'
+  ON PROVIDER 'azure';
+
+-- Security
+CREATE RESOURCE 'nsg'
+  id = @env
+  ON PROVIDER 'azure';
+
+CREATE RESOURCE 'nsg_rule'
+  id               = 'allow-ssh'
+  nsg              = @env
+  priority         = 100
+  direction        = 'Inbound'
+  protocol         = 'Tcp'
+  source_address   = '10.0.0.0/8'
+  destination_port = 22;
+
+CREATE RESOURCE 'nsg_rule'
+  id               = 'allow-https'
+  nsg              = @env
+  priority         = 110
+  direction        = 'Inbound'
+  protocol         = 'Tcp'
+  source_address   = '*'
+  destination_port = 443;
+
+CREATE RESOURCE 'nsg_rule'
+  id               = 'allow-pg'
+  nsg              = @env
+  priority         = 120
+  direction        = 'Inbound'
+  protocol         = 'Tcp'
+  source_address   = '10.1.0.0/16'
+  destination_port = 5432;
+
+-- Database
+CREATE RESOURCE 'postgres'
+  id         = @env
+  version    = '16'
+  sku        = 'Standard_B2s'
+  storage_gb = 64
+  ON PROVIDER 'azure';
+
+CREATE RESOURCE 'pg_database' id = 'drivelog'   server = @env;
+CREATE RESOURCE 'pg_database' id = 'userdb'     server = @env;
+CREATE RESOURCE 'pg_database' id = 'analytics'  server = @env;
+
+-- DNS
+CREATE RESOURCE 'dns_zone'
+  id = 'epiphyte.internal'
+  ON PROVIDER 'azure';
+
+CREATE RESOURCE 'dns_vnet_link'
+  id        = 'pg-link'
+  zone_name = 'privatelink.postgres.database.azure.com'
+  vnet      = @env;
+
+-- Container Registry
+CREATE RESOURCE 'container_registry'
+  id  = 'epiphyteacr'
+  sku = 'Standard'
+  ON PROVIDER 'azure';
+
+-- Cache
+CREATE RESOURCE 'redis'
+  id  = @env
+  sku = 'Standard'
+  ON PROVIDER 'azure';
+
+-- Application
+CREATE RESOURCE 'container_app'
+  id           = 'api'
+  image        = 'epiphyteacr.azurecr.io/api:latest'
+  cpu          = 1
+  memory       = '2Gi'
+  min_replicas = 2
+  max_replicas = 10
+  ON PROVIDER 'azure';
+
+-- Verify
+SELECT * FROM resources ORDER BY resource_type;
+SHOW PROVIDERS;
