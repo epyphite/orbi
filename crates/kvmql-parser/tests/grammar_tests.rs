@@ -40,6 +40,47 @@ fn select_fields_with_where() {
 }
 
 #[test]
+fn select_count_star_in_projection() {
+    let stmt = first_stmt("SELECT count(*) FROM microvms;");
+    match stmt {
+        Statement::Select(s) => match s.fields {
+            FieldList::Fields(ref fs) => {
+                assert_eq!(fs.len(), 1);
+                match &fs[0] {
+                    kvmql_parser::ast::Field::FnCall { name, star, args } => {
+                        assert_eq!(name, "count");
+                        assert!(*star);
+                        assert!(args.is_empty());
+                    }
+                    other => panic!("expected FnCall, got {other:?}"),
+                }
+            }
+            _ => panic!("expected Fields"),
+        },
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn select_function_call_with_arg() {
+    let stmt = first_stmt("SELECT sum(size) FROM volumes;");
+    match stmt {
+        Statement::Select(s) => match s.fields {
+            FieldList::Fields(ref fs) => match &fs[0] {
+                kvmql_parser::ast::Field::FnCall { name, star, args } => {
+                    assert_eq!(name, "sum");
+                    assert!(!*star);
+                    assert_eq!(args.len(), 1);
+                }
+                other => panic!("expected FnCall, got {other:?}"),
+            },
+            _ => panic!("expected Fields"),
+        },
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
 fn select_on_cluster_order_limit() {
     let stmt = first_stmt(
         "SELECT id, provider_id, tenant, status, image_id, vcpus, memory_mb \

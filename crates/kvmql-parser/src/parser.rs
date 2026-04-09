@@ -1055,6 +1055,31 @@ impl Parser {
 
     fn parse_field(&mut self) -> Result<Field, ParseError> {
         let name = self.expect_ident_like()?;
+        // Function call in projection: `count(*)`, `sum(x)`, etc.
+        if self.check(&Token::LParen) {
+            self.expect(&Token::LParen)?;
+            if self.eat(&Token::Star) {
+                self.expect(&Token::RParen)?;
+                return Ok(Field::FnCall {
+                    name,
+                    star: true,
+                    args: vec![],
+                });
+            }
+            let mut args = Vec::new();
+            if !self.check(&Token::RParen) {
+                args.push(self.parse_expr()?);
+                while self.eat(&Token::Comma) {
+                    args.push(self.parse_expr()?);
+                }
+            }
+            self.expect(&Token::RParen)?;
+            return Ok(Field::FnCall {
+                name,
+                star: false,
+                args,
+            });
+        }
         if self.eat(&Token::Dot) {
             let sub = self.expect_ident_like()?;
             Ok(Field::Qualified(name, sub))

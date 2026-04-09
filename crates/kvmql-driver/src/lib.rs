@@ -11,6 +11,7 @@ pub mod azure;
 pub mod cloudflare;
 pub mod github;
 pub mod k8s;
+pub mod ssh;
 pub mod simulate;
 
 #[cfg(test)]

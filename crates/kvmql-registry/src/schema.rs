@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 -- 2. providers
 CREATE TABLE IF NOT EXISTS providers (
     id TEXT PRIMARY KEY,
-    type TEXT NOT NULL CHECK (type IN ('kvm','aws','gcp','azure','cloudflare','github','kubernetes')),
+    type TEXT NOT NULL CHECK (type IN ('kvm','aws','gcp','azure','cloudflare','github','kubernetes','ssh')),
     driver TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('healthy','degraded','offline','unknown')),
     enabled INTEGER NOT NULL DEFAULT 1,

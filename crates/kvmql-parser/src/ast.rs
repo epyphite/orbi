@@ -63,6 +63,14 @@ pub enum FieldList {
 pub enum Field {
     Simple(String),
     Qualified(String, String),
+    /// Aggregate or scalar function applied in a SELECT projection.
+    /// `count(*)` is represented as `FnCall { name: "count", star: true, args: [] }`.
+    /// Other forms like `sum(price)` carry their args in `args`.
+    FnCall {
+        name: String,
+        star: bool,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

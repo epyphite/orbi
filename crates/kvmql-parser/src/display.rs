@@ -87,6 +87,20 @@ impl fmt::Display for Field {
         match self {
             Field::Simple(name) => write!(f, "{name}"),
             Field::Qualified(table, field) => write!(f, "{table}.{field}"),
+            Field::FnCall { name, star, args } => {
+                write!(f, "{name}(")?;
+                if *star {
+                    write!(f, "*")?;
+                } else {
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{a}")?;
+                    }
+                }
+                write!(f, ")")
+            }
         }
     }
 }
