@@ -19,7 +19,7 @@ fn select_star() {
     match stmt {
         Statement::Select(s) => {
             assert_eq!(s.fields, FieldList::All);
-            assert_eq!(s.from, Noun::Microvms);
+            assert_eq!(s.from, SelectSource::Noun(Noun::Microvms));
         }
         _ => panic!("Expected Select"),
     }
@@ -71,7 +71,7 @@ fn select_from_audit_log() {
          FROM audit_log ORDER BY event_time DESC;",
     );
     match stmt {
-        Statement::Select(s) => assert_eq!(s.from, Noun::AuditLog),
+        Statement::Select(s) => assert_eq!(s.from, SelectSource::Noun(Noun::AuditLog)),
         _ => panic!("Expected Select"),
     }
 }
@@ -84,7 +84,7 @@ fn select_from_query_history_with_limit() {
     );
     match stmt {
         Statement::Select(s) => {
-            assert_eq!(s.from, Noun::QueryHistory);
+            assert_eq!(s.from, SelectSource::Noun(Noun::QueryHistory));
             assert_eq!(s.limit, Some(20));
         }
         _ => panic!("Expected Select"),
@@ -1097,7 +1097,7 @@ fn select_from_resources() {
     );
     match stmt {
         Statement::Select(s) => {
-            assert_eq!(s.from, Noun::Resources);
+            assert_eq!(s.from, SelectSource::Noun(Noun::Resources));
             assert!(s.where_clause.is_some());
         }
         _ => panic!("Expected Select"),
@@ -1109,7 +1109,7 @@ fn select_from_resources_no_where() {
     let stmt = first_stmt("SELECT * FROM resources;");
     match stmt {
         Statement::Select(s) => {
-            assert_eq!(s.from, Noun::Resources);
+            assert_eq!(s.from, SelectSource::Noun(Noun::Resources));
             assert!(s.where_clause.is_none());
         }
         _ => panic!("Expected Select"),
@@ -1648,7 +1648,7 @@ fn test_explain_select() {
         Statement::Explain(inner) => match *inner {
             Statement::Select(s) => {
                 assert_eq!(s.fields, FieldList::All);
-                assert_eq!(s.from, Noun::Microvms);
+                assert_eq!(s.from, SelectSource::Noun(Noun::Microvms));
             }
             _ => panic!("Expected Select inside Explain"),
         },
@@ -1946,7 +1946,7 @@ fn test_select_from_applied_files() {
     let stmt = first_stmt("SELECT * FROM applied_files;");
     match stmt {
         Statement::Select(s) => {
-            assert_eq!(s.from, Noun::AppliedFiles);
+            assert_eq!(s.from, SelectSource::Noun(Noun::AppliedFiles));
             assert_eq!(s.fields, FieldList::All);
         }
         _ => panic!("Expected Select"),
@@ -1962,7 +1962,7 @@ fn select_from_k8s_pods_with_where() {
     );
     match stmt {
         Statement::Select(s) => {
-            assert_eq!(s.from, Noun::K8sPods);
+            assert_eq!(s.from, SelectSource::Noun(Noun::K8sPods));
             assert!(s.where_clause.is_some());
         }
         _ => panic!("Expected Select"),
@@ -1976,7 +1976,7 @@ fn select_from_k8s_deployments() {
     );
     match stmt {
         Statement::Select(s) => {
-            assert_eq!(s.from, Noun::K8sDeployments);
+            assert_eq!(s.from, SelectSource::Noun(Noun::K8sDeployments));
         }
         _ => panic!("Expected Select"),
     }
@@ -1987,7 +1987,7 @@ fn select_from_k8s_nodes() {
     let stmt = first_stmt("SELECT name, ready FROM k8s_nodes WHERE ready = false;");
     match stmt {
         Statement::Select(s) => {
-            assert_eq!(s.from, Noun::K8sNodes);
+            assert_eq!(s.from, SelectSource::Noun(Noun::K8sNodes));
             assert!(s.where_clause.is_some());
         }
         _ => panic!("Expected Select"),

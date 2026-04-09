@@ -260,6 +260,8 @@ fn audit_event_for_statement(stmt: &Statement) -> Option<AuditEvent> {
                 _ => None,
             },
         }),
+        // ASSERT is verification, never a mutation — no audit entry.
+        Statement::Assert(_) => None,
     }
 }
 
@@ -303,12 +305,16 @@ fn verb_for_statement(stmt: &Statement) -> &'static str {
         Statement::Upgrade(_) => "UPGRADE",
         Statement::Explain(_) => "EXPLAIN",
         Statement::Rollback(_) => "ROLLBACK",
+        Statement::Assert(_) => "ASSERT",
     }
 }
 
 /// Returns true if this statement type should skip query-history recording.
 fn skip_history(stmt: &Statement) -> bool {
-    matches!(stmt, Statement::Set(_) | Statement::Show(_) | Statement::Explain(_))
+    matches!(
+        stmt,
+        Statement::Set(_) | Statement::Show(_) | Statement::Explain(_) | Statement::Assert(_)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +622,7 @@ impl<'a> Executor<'a> {
                     | Statement::Select(_)
                     | Statement::Show(_)
                     | Statement::Set(_)
+                    | Statement::Assert(_)
             )
         {
             return self.exec_explain(stmt).await;
@@ -639,7 +646,8 @@ impl<'a> Executor<'a> {
             Statement::AlterVolume(s) => self.exec_alter_volume(s).await,
             Statement::ImportImage(s) => self.exec_import_image(s).await,
             Statement::RemoveImage(s) => self.exec_remove_image(s).await,
-            Statement::Select(s) => self.exec_select(s),
+            Statement::Select(s) => self.exec_select(s).await,
+            Statement::Assert(s) => self.exec_assert(s).await,
             Statement::Show(s) => self.exec_show(s),
             Statement::Set(s) => self.exec_set(s),
             Statement::AddCluster(s) => self.exec_add_cluster(s),
@@ -649,7 +657,7 @@ impl<'a> Executor<'a> {
             Statement::AddPrincipal(s) => self.exec_add_principal(s),
             Statement::Grant(s) => self.exec_grant(s),
             Statement::Revoke(s) => self.exec_revoke(s),
-            Statement::Watch(s) => self.exec_watch(s),
+            Statement::Watch(s) => self.exec_watch(s).await,
             Statement::PublishImage(s) => self.exec_publish_image(s),
             Statement::CreateResource(s) => self.exec_create_resource(s),
             Statement::AlterResource(s) => self.exec_alter_resource(s),
@@ -1786,8 +1794,16 @@ impl<'a> Executor<'a> {
     // SELECT
     // =======================================================================
 
-    fn exec_select(&self, s: &SelectStmt) -> Result<StmtOutcome, String> {
-        let rows: Vec<serde_json::Value> = match s.from {
+    async fn exec_select(&self, s: &SelectStmt) -> Result<StmtOutcome, String> {
+        // Table-valued function sources (dns_lookup, tcp_probe, ...) live in
+        // a separate code path — no registry involvement.
+        let noun = match &s.from {
+            SelectSource::Noun(n) => n.clone(),
+            SelectSource::Function(fc) => {
+                return self.exec_select_function(s, fc).await;
+            }
+        };
+        let rows: Vec<serde_json::Value> = match noun {
             Noun::Microvms => {
                 let list = self
                     .ctx
@@ -2183,7 +2199,7 @@ impl<'a> Executor<'a> {
                     };
 
                     let engine = self.get_k8s_query_engine(&provider_id);
-                    let noun_str = format!("{}", s.from);
+                    let noun_str = format!("{}", noun);
                     // Future: extract a `namespace = '...'` filter from the
                     // WHERE clause and push it down via -n; for now we list
                     // across all namespaces and filter client-side.
@@ -3869,7 +3885,7 @@ impl<'a> Executor<'a> {
     // WATCH
     // =======================================================================
 
-    fn exec_watch(&self, s: &WatchStmt) -> Result<StmtOutcome, String> {
+    async fn exec_watch(&self, s: &WatchStmt) -> Result<StmtOutcome, String> {
         // WATCH is fundamentally a streaming operation.  In the single-shot
         // executor context (CLI / REST) we execute one sample of the
         // underlying SELECT query and return it with an informational
@@ -3877,7 +3893,7 @@ impl<'a> Executor<'a> {
         // continuous streaming.
         let select = SelectStmt {
             fields: s.metrics.clone(),
-            from: s.from.clone(),
+            from: SelectSource::Noun(s.from.clone()),
             on: None,
             where_clause: s.where_clause.clone(),
             group_by: None,
@@ -3885,7 +3901,7 @@ impl<'a> Executor<'a> {
             limit: None,
             offset: None,
         };
-        let mut outcome = self.exec_select(&select)?;
+        let mut outcome = self.exec_select(&select).await?;
         outcome.notifications.push(Notification {
             level: "INFO".into(),
             code: "STA_001".into(),
@@ -4276,6 +4292,166 @@ impl<'a> Executor<'a> {
 
         Ok(StmtOutcome::ok_val(val))
     }
+
+    // =======================================================================
+    // SELECT FROM <table-valued function>(...)
+    // =======================================================================
+
+    /// Execute `SELECT ... FROM <fn>(...)` against a network verification
+    /// function. Applies WHERE/LIMIT in-memory after the function returns.
+    async fn exec_select_function(
+        &self,
+        s: &SelectStmt,
+        fc: &kvmql_parser::ast::FunctionCall,
+    ) -> Result<StmtOutcome, String> {
+        let rows = run_table_function(fc).await?;
+
+        // WHERE filter
+        let filtered: Vec<serde_json::Value> = if let Some(ref pred) = s.where_clause {
+            rows.into_iter()
+                .filter(|row| eval_predicate(pred, row))
+                .collect()
+        } else {
+            rows
+        };
+
+        // LIMIT
+        let final_rows: Vec<serde_json::Value> = if let Some(limit) = s.limit {
+            filtered.into_iter().take(limit as usize).collect()
+        } else {
+            filtered
+        };
+
+        let n = final_rows.len() as i64;
+        Ok(StmtOutcome::ok_rows(serde_json::Value::Array(final_rows), n))
+    }
+
+    // =======================================================================
+    // ASSERT
+    // =======================================================================
+
+    /// Execute an `ASSERT <predicate>[, '<message>']` statement.
+    /// Pass → returns ok. Fail → returns Err carrying the failure message.
+    async fn exec_assert(
+        &self,
+        s: &kvmql_parser::ast::AssertStmt,
+    ) -> Result<StmtOutcome, String> {
+        let passed = self.eval_assertion_predicate(&s.condition).await?;
+        if passed {
+            Ok(StmtOutcome::ok_val(serde_json::json!({
+                "assertion": "passed",
+            })))
+        } else {
+            let msg = s
+                .message
+                .clone()
+                .unwrap_or_else(|| "assertion failed".to_string());
+            Err(format!("ASSERTION FAILED: {}", msg))
+        }
+    }
+
+    /// Async predicate evaluation that supports `EXISTS (SELECT ...)` and
+    /// scalar subqueries on either side of a comparison. Used by `ASSERT`.
+    fn eval_assertion_predicate<'b>(
+        &'b self,
+        pred: &'b Predicate,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + 'b>>
+    {
+        Box::pin(async move {
+            match pred {
+                Predicate::And(a, b) => Ok(self.eval_assertion_predicate(a).await?
+                    && self.eval_assertion_predicate(b).await?),
+                Predicate::Or(a, b) => Ok(self.eval_assertion_predicate(a).await?
+                    || self.eval_assertion_predicate(b).await?),
+                Predicate::Not(inner) => Ok(!self.eval_assertion_predicate(inner).await?),
+                Predicate::Grouped(inner) => self.eval_assertion_predicate(inner).await,
+                Predicate::Exists(select) => {
+                    let outcome = self.exec_select(select).await?;
+                    if let Some(serde_json::Value::Array(rows)) = outcome.result {
+                        Ok(!rows.is_empty())
+                    } else {
+                        Ok(false)
+                    }
+                }
+                Predicate::Comparison(cmp) => self.eval_assertion_comparison(cmp).await,
+            }
+        })
+    }
+
+    /// Evaluate a comparison where either side may be a scalar subquery.
+    async fn eval_assertion_comparison(
+        &self,
+        cmp: &Comparison,
+    ) -> Result<bool, String> {
+        let lhs = self.eval_expr_value(&cmp.left).await?;
+        let rhs = self.eval_expr_value(&cmp.right).await?;
+        Ok(compare_json(&lhs, &cmp.op, &rhs))
+    }
+
+    /// Evaluate an `Expr` to a JSON value, with subquery support.
+    fn eval_expr_value<'b>(
+        &'b self,
+        expr: &'b kvmql_parser::ast::Expr,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + 'b>,
+    > {
+        use kvmql_parser::ast::Expr;
+        Box::pin(async move {
+            match expr {
+                Expr::Subquery(select) => {
+                    let outcome = self.exec_select(select).await?;
+                    // Take the first row's first column (or the whole scalar
+                    // if the result is already a single value).
+                    match outcome.result {
+                        Some(serde_json::Value::Array(rows)) => {
+                            if let Some(first) = rows.first() {
+                                if let serde_json::Value::Object(obj) = first {
+                                    Ok(obj
+                                        .values()
+                                        .next()
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null))
+                                } else {
+                                    Ok(first.clone())
+                                }
+                            } else {
+                                Ok(serde_json::Value::Null)
+                            }
+                        }
+                        Some(other) => Ok(other),
+                        None => Ok(serde_json::Value::Null),
+                    }
+                }
+                Expr::Integer(n) => Ok(serde_json::json!(n)),
+                Expr::Float(f) => Ok(serde_json::json!(f)),
+                Expr::StringLit(s) => Ok(serde_json::json!(s)),
+                Expr::Boolean(b) => Ok(serde_json::json!(b)),
+                Expr::Null => Ok(serde_json::Value::Null),
+                Expr::Variable(name) => {
+                    let vars = self.ctx.variables.read().unwrap();
+                    Ok(vars
+                        .get(name)
+                        .map(|v| serde_json::Value::String(v.clone()))
+                        .unwrap_or(serde_json::Value::Null))
+                }
+                Expr::BinaryOp { left, op, right } => {
+                    let l = self.eval_expr_value(left).await?;
+                    let r = self.eval_expr_value(right).await?;
+                    Ok(eval_binary_op(&l, op, &r))
+                }
+                Expr::Grouped(inner) => self.eval_expr_value(inner).await,
+                Expr::Identifier(name) => {
+                    // Bare identifiers in ASSERT context are treated as
+                    // string literals (column refs only make sense in WHERE).
+                    Ok(serde_json::Value::String(name.clone()))
+                }
+                Expr::FunctionCall(_) | Expr::Duration(_) => Err(format!(
+                    "expression not supported in ASSERT context: {:?}",
+                    expr
+                )),
+            }
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4407,6 +4583,10 @@ fn eval_predicate(pred: &Predicate, row: &serde_json::Value) -> bool {
         Predicate::Not(a) => !eval_predicate(a, row),
         Predicate::Grouped(inner) => eval_predicate(inner, row),
         Predicate::Comparison(cmp) => eval_comparison(cmp, row),
+        // EXISTS subqueries don't have a meaningful row-level interpretation.
+        // They are evaluated in the ASSERT path via the async helper; in the
+        // WHERE-clause path we conservatively treat them as true (no-op).
+        Predicate::Exists(_) => true,
     }
 }
 
@@ -4489,6 +4669,172 @@ fn simple_like(hay: &str, pattern: &str) -> bool {
         return hay.starts_with(prefix);
     }
     hay == pattern
+}
+
+// ---------------------------------------------------------------------------
+// Table-valued functions (network verification)
+// ---------------------------------------------------------------------------
+
+/// Dispatch a `SELECT * FROM <fn>(...)` call to the network verification
+/// module. Each function returns a `Vec<serde_json::Value>` of rows.
+async fn run_table_function(
+    fc: &kvmql_parser::ast::FunctionCall,
+) -> Result<Vec<serde_json::Value>, String> {
+    use crate::network::NetworkFunctions;
+
+    fn arg_str(args: &[Expr], idx: usize) -> Result<String, String> {
+        match args.get(idx) {
+            Some(Expr::StringLit(s)) => Ok(s.clone()),
+            Some(other) => Err(format!(
+                "expected string literal at arg {}, got {:?}",
+                idx, other
+            )),
+            None => Err(format!("missing required arg {}", idx)),
+        }
+    }
+
+    fn arg_int(args: &[Expr], idx: usize) -> Result<i64, String> {
+        match args.get(idx) {
+            Some(Expr::Integer(n)) => Ok(*n),
+            Some(other) => Err(format!(
+                "expected integer at arg {}, got {:?}",
+                idx, other
+            )),
+            None => Err(format!("missing required arg {}", idx)),
+        }
+    }
+
+    fn arg_str_opt(args: &[Expr], idx: usize) -> Option<String> {
+        match args.get(idx) {
+            Some(Expr::StringLit(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    fn arg_int_opt(args: &[Expr], idx: usize) -> Option<i64> {
+        match args.get(idx) {
+            Some(Expr::Integer(n)) => Some(*n),
+            _ => None,
+        }
+    }
+
+    match fc.name.as_str() {
+        "dns_lookup" => {
+            let name = arg_str(&fc.args, 0)?;
+            let record_type = arg_str_opt(&fc.args, 1);
+            // 3rd arg (resolver override) is reserved for future hickory-resolver work.
+            NetworkFunctions::dns_lookup(&name, record_type.as_deref()).await
+        }
+        "reverse_dns" => {
+            let ip = arg_str(&fc.args, 0)?;
+            NetworkFunctions::reverse_dns(&ip).await
+        }
+        "tcp_probe" => {
+            let host = arg_str(&fc.args, 0)?;
+            let port = arg_int(&fc.args, 1)? as u16;
+            let timeout_ms = arg_int_opt(&fc.args, 2).map(|n| n as u64);
+            NetworkFunctions::tcp_probe(&host, port, timeout_ms).await
+        }
+        "http_probe" => {
+            let url = arg_str(&fc.args, 0)?;
+            NetworkFunctions::http_probe(&url).await
+        }
+        "tls_cert" => {
+            let host = arg_str(&fc.args, 0)?;
+            let port = arg_int(&fc.args, 1)? as u16;
+            NetworkFunctions::tls_cert(&host, port).await
+        }
+        other => Err(format!("unknown table function: {}", other)),
+    }
+}
+
+/// Compare two JSON scalar values using a `ComparisonOp`. Used by ASSERT
+/// when both sides of a comparison have been resolved to concrete values.
+fn compare_json(lhs: &serde_json::Value, op: &ComparisonOp, rhs: &serde_json::Value) -> bool {
+    match op {
+        ComparisonOp::Eq => lhs == rhs,
+        ComparisonOp::NotEq => lhs != rhs,
+        ComparisonOp::IsNull => lhs.is_null(),
+        ComparisonOp::IsNotNull => !lhs.is_null(),
+        ComparisonOp::Gt | ComparisonOp::Lt | ComparisonOp::GtEq | ComparisonOp::LtEq => {
+            let l = lhs.as_f64();
+            let r = rhs.as_f64();
+            // Fall back to string comparison for date-like strings
+            if let (Some(a), Some(b)) = (l, r) {
+                match op {
+                    ComparisonOp::Gt => a > b,
+                    ComparisonOp::Lt => a < b,
+                    ComparisonOp::GtEq => a >= b,
+                    ComparisonOp::LtEq => a <= b,
+                    _ => unreachable!(),
+                }
+            } else if let (Some(a), Some(b)) = (lhs.as_str(), rhs.as_str()) {
+                match op {
+                    ComparisonOp::Gt => a > b,
+                    ComparisonOp::Lt => a < b,
+                    ComparisonOp::GtEq => a >= b,
+                    ComparisonOp::LtEq => a <= b,
+                    _ => unreachable!(),
+                }
+            } else {
+                false
+            }
+        }
+        ComparisonOp::Like => {
+            if let (Some(h), Some(p)) = (lhs.as_str(), rhs.as_str()) {
+                simple_like(h, p)
+            } else {
+                false
+            }
+        }
+        ComparisonOp::In | ComparisonOp::NotIn => {
+            // IN/NOT IN against a scalar RHS reduces to equality
+            let eq = lhs == rhs;
+            if matches!(op, ComparisonOp::In) {
+                eq
+            } else {
+                !eq
+            }
+        }
+    }
+}
+
+/// Apply a binary operator (`+`, `-`, `||`) to two resolved JSON values.
+fn eval_binary_op(
+    lhs: &serde_json::Value,
+    op: &kvmql_parser::ast::BinaryOp,
+    rhs: &serde_json::Value,
+) -> serde_json::Value {
+    use kvmql_parser::ast::BinaryOp;
+    match op {
+        BinaryOp::Concat => {
+            let ls = json_to_concat_string(lhs);
+            let rs = json_to_concat_string(rhs);
+            serde_json::Value::String(format!("{}{}", ls, rs))
+        }
+        BinaryOp::Add => {
+            if let (Some(a), Some(b)) = (lhs.as_f64(), rhs.as_f64()) {
+                serde_json::json!(a + b)
+            } else {
+                serde_json::Value::Null
+            }
+        }
+        BinaryOp::Subtract => {
+            if let (Some(a), Some(b)) = (lhs.as_f64(), rhs.as_f64()) {
+                serde_json::json!(a - b)
+            } else {
+                serde_json::Value::Null
+            }
+        }
+    }
+}
+
+fn json_to_concat_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
