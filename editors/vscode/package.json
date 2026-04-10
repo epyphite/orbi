@@ -1,0 +1,50 @@
+{
+  "name": "orbi-kvmql",
+  "displayName": "Orbi (KVMQL)",
+  "description": "Syntax highlighting for Orbi/KVMQL — SQL-like DSL for infrastructure management",
+  "version": "0.4.0",
+  "publisher": "epyphite",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/epyphite/orbi"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "orbi",
+    "kvmql",
+    "infrastructure",
+    "iac",
+    "devops",
+    "sql"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "kvmql",
+        "aliases": [
+          "KVMQL",
+          "Orbi",
+          "kvmql"
+        ],
+        "extensions": [
+          ".kvmql",
+          ".kvml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "kvmql",
+        "scopeName": "source.kvmql",
+        "path": "./syntaxes/kvmql.tmLanguage.json"
+      }
+    ]
+  }
+}

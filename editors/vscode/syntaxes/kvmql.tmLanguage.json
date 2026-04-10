@@ -1,0 +1,162 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "KVMQL",
+  "scopeName": "source.kvmql",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#variables" },
+    { "include": "#numbers" },
+    { "include": "#durations" },
+    { "include": "#constants" },
+    { "include": "#operators" },
+    { "include": "#functions" },
+    { "include": "#resource-types" },
+    { "include": "#verbs" },
+    { "include": "#clauses" },
+    { "include": "#nouns" },
+    { "include": "#keywords" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-dash.kvmql",
+          "match": "--.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.kvmql",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.kvmql",
+              "match": "''"
+            },
+            {
+              "name": "variable.other.credential.kvmql",
+              "match": "(?:op|env|file|vault|aws-sm|gcp-sm|azure-kv|sops|k8s):[^']*"
+            }
+          ]
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "name": "variable.other.kvmql",
+          "match": "@[a-zA-Z_][a-zA-Z0-9_]*"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.kvmql",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.kvmql",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "durations": {
+      "patterns": [
+        {
+          "name": "constant.numeric.duration.kvmql",
+          "match": "\\b[0-9]+[smhd]\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.kvmql",
+          "match": "(?i)\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.kvmql",
+          "match": "(?i)\\bNULL\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.kvmql",
+          "match": "(?i)\\b(AND|OR|NOT|IN|LIKE|IS|EXISTS)\\b"
+        },
+        {
+          "name": "keyword.operator.comparison.kvmql",
+          "match": "!=|>=|<=|>|<|="
+        },
+        {
+          "name": "keyword.operator.concatenation.kvmql",
+          "match": "\\|\\|"
+        },
+        {
+          "name": "keyword.operator.arithmetic.kvmql",
+          "match": "[+\\-*]"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "support.function.table-valued.kvmql",
+          "match": "(?i)\\b(dns_lookup|reverse_dns|tcp_probe|http_probe|tls_cert|file_stat|systemd_services|nginx_vhosts|nginx_config_test|docker_containers)(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.aggregate.kvmql",
+          "match": "(?i)\\b(count|sum|avg|min|max)(?=\\s*\\()"
+        }
+      ]
+    },
+    "resource-types": {
+      "patterns": [
+        {
+          "comment": "Resource type after CREATE RESOURCE or DESTROY RESOURCE",
+          "name": "entity.name.type.resource.kvmql",
+          "match": "(?i)(?<=RESOURCE\\s)'(?:file|directory|symlink|systemd_service|systemd_timer|nginx_vhost|nginx_proxy|docker_container|docker_volume|docker_network|docker_compose|letsencrypt_cert|vm|cf_dns_record|cf_zone|cf_firewall_rule|cf_page_rule|rds_postgres|vpc|aws_subnet|security_group|sg_rule|gh_repo|gh_ruleset|gh_secret|gh_variable|gh_workflow_file|gh_branch_protection|k8s_namespace|k8s_deployment|k8s_service|k8s_configmap|k8s_secret|k8s_ingress|k8s_hpa|k8s_pvc|k8s_job|k8s_cronjob|k8s_networkpolicy|k8s_serviceaccount|k8s_clusterrole|k8s_clusterrolebinding|k8s_role|k8s_rolebinding)'"
+        }
+      ]
+    },
+    "verbs": {
+      "patterns": [
+        {
+          "name": "keyword.control.verb.kvmql",
+          "match": "(?i)\\b(SELECT|CREATE|ALTER|DESTROY|PAUSE|RESUME|SNAPSHOT|RESTORE|WATCH|ATTACH|DETACH|RESIZE|IMPORT|PUBLISH|REMOVE|ADD|GRANT|REVOKE|SET|SHOW|BACKUP|SCALE|UPGRADE|EXPLAIN|ROLLBACK|ASSERT)\\b"
+        }
+      ]
+    },
+    "clauses": {
+      "patterns": [
+        {
+          "name": "keyword.other.clause.kvmql",
+          "match": "(?i)\\b(FROM|WHERE|ORDER|BY|LIMIT|OFFSET|GROUP|ON|LIVE|FORCE|INTO|TAG|AS|TO|FOR|LAST|IF|NOT|INTERVAL|HAVING)\\b"
+        }
+      ]
+    },
+    "nouns": {
+      "patterns": [
+        {
+          "name": "storage.type.noun.kvmql",
+          "match": "(?i)\\b(MICROVM|MICROVMS|VOLUME|VOLUMES|IMAGE|IMAGES|PROVIDER|PROVIDERS|CLUSTER|CLUSTERS|PRINCIPAL|RESOURCE|MEMBERS|MEMBER|CAPABILITIES|GRANTS|VERSION|PLACEMENT|POLICY|REQUIRE|METRIC|GB)\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.other.sort.kvmql",
+          "match": "(?i)\\b(ASC|DESC)\\b"
+        }
+      ]
+    }
+  }
+}
