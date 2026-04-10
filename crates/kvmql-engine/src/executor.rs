@@ -2791,7 +2791,20 @@ impl<'a> Executor<'a> {
                 || s.resource_type.starts_with("k8s_");
 
             let is_ssh = provider_type == "ssh"
-                || matches!(s.resource_type.as_str(), "file" | "directory" | "symlink");
+                || matches!(
+                    s.resource_type.as_str(),
+                    "file"
+                        | "directory"
+                        | "symlink"
+                        | "systemd_service"
+                        | "systemd_timer"
+                        | "nginx_vhost"
+                        | "nginx_proxy"
+                        | "docker_container"
+                        | "docker_volume"
+                        | "docker_network"
+                        | "docker_compose"
+                );
 
             if is_ssh {
                 // Pre-resolve `content` if it's a credential/file reference
@@ -4430,11 +4443,26 @@ impl<'a> Executor<'a> {
 
         // Host-aware functions need access to the provider registry, so
         // we handle them here before falling through to the free-function
-        // dispatcher.  Currently just `file_stat`, but this will grow.
-        let rows = if fc_resolved.name == "file_stat" {
-            self.run_file_stat(&fc_resolved)?
-        } else {
-            run_table_function(&fc_resolved).await?
+        // dispatcher for network-only functions.
+        let rows = match fc_resolved.name.as_str() {
+            "file_stat" => self.run_file_stat(&fc_resolved)?,
+            "systemd_services" => self.run_ssh_query(&fc_resolved, |p| {
+                kvmql_driver::ssh::systemd::SystemdProvisioner::new(&p.client)
+                    .list_services()
+            })?,
+            "nginx_vhosts" => self.run_ssh_query(&fc_resolved, |p| {
+                kvmql_driver::ssh::nginx::NginxProvisioner::new(&p.client)
+                    .list_vhosts()
+            })?,
+            "nginx_config_test" => self.run_ssh_query(&fc_resolved, |p| {
+                kvmql_driver::ssh::nginx::NginxProvisioner::new(&p.client)
+                    .config_test_row()
+            })?,
+            "docker_containers" => self.run_ssh_query(&fc_resolved, |p| {
+                kvmql_driver::ssh::docker::DockerProvisioner::new(&p.client)
+                    .list_containers()
+            })?,
+            _ => run_table_function(&fc_resolved).await?,
         };
 
         // WHERE filter
@@ -4460,6 +4488,83 @@ impl<'a> Executor<'a> {
 
         let n = projected.len() as i64;
         Ok(StmtOutcome::ok_rows(serde_json::Value::Array(projected), n))
+    }
+
+    /// Generic SSH query dispatcher.  Takes a function call and a closure
+    /// that runs on each SSH provisioner.  If the call has one string arg,
+    /// treat it as an explicit `provider_id`; if zero args, fan out across
+    /// every SSH provider.  Each call's rows get a `host` and `provider_id`
+    /// column injected.
+    fn run_ssh_query(
+        &self,
+        fc: &kvmql_parser::ast::FunctionCall,
+        query_fn: impl Fn(
+            &kvmql_driver::ssh::SshResourceProvisioner,
+        ) -> Result<Vec<serde_json::Value>, String>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        use kvmql_parser::ast::Expr;
+
+        let provider_ids: Vec<String> = match fc.args.first() {
+            Some(Expr::StringLit(pid)) => vec![pid.clone()],
+            None | Some(_) => {
+                // Fan-out across every ssh provider
+                self.ctx
+                    .registry
+                    .list_providers()
+                    .map_err(|e| format!("list providers: {e}"))?
+                    .into_iter()
+                    .filter(|r| r.provider_type == "ssh")
+                    .map(|r| r.id)
+                    .collect()
+            }
+        };
+
+        if self.ctx.simulate {
+            // In simulate mode, return empty — these queries require a
+            // real SSH connection.
+            return Ok(vec![]);
+        }
+
+        let mut all_rows = Vec::new();
+        for pid in &provider_ids {
+            let provisioner = self
+                .get_ssh_provisioner(pid)
+                .map_err(|e| format!("ssh provisioner for {pid}: {e}"))?;
+            let host = self
+                .ctx
+                .registry
+                .get_provider(pid)
+                .ok()
+                .and_then(|p| p.host.clone());
+            match query_fn(&provisioner) {
+                Ok(mut rows) => {
+                    // Inject host/provider_id into each row
+                    for row in &mut rows {
+                        if let Some(obj) = row.as_object_mut() {
+                            obj.insert(
+                                "provider_id".into(),
+                                serde_json::Value::String(pid.clone()),
+                            );
+                            obj.insert(
+                                "host".into(),
+                                host.as_ref()
+                                    .map(|h| serde_json::Value::String(h.clone()))
+                                    .unwrap_or(serde_json::Value::Null),
+                            );
+                        }
+                    }
+                    all_rows.extend(rows);
+                }
+                Err(e) => {
+                    all_rows.push(serde_json::json!({
+                        "provider_id": pid,
+                        "host": host,
+                        "error": e,
+                    }));
+                }
+            }
+        }
+        Ok(all_rows)
     }
 
     /// Clone a `FunctionCall` with every `Expr::Variable(@name)`

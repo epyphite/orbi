@@ -1,18 +1,22 @@
 //! SSH provider for Orbi.
 //!
-//! Manages files, directories, and symlinks on remote hosts by shelling out
-//! to the OpenSSH client.  Auth, `~/.ssh/config`, `ProxyJump`, and agent
-//! forwarding all come "for free" because we delegate to `ssh`/`scp`
-//! themselves rather than reimplementing the protocol.
+//! Manages files, directories, symlinks, systemd units, nginx vhosts,
+//! and Docker containers on remote hosts by shelling out to the OpenSSH
+//! client.  Auth, `~/.ssh/config`, `ProxyJump`, and agent forwarding
+//! all come "for free" because we delegate to `ssh`/`scp` themselves
+//! rather than reimplementing the protocol.
 //!
 //! Resource types handled by [`SshResourceProvisioner`]:
-//! - `file` — arbitrary remote file, content from literal, file://, or
-//!   credential URI (op://, env://, vault://, ...).  Idempotent via SHA-256.
-//! - `directory` — `mkdir -p` with owner/group/mode.
-//! - `symlink` — `ln -sfn target link`, compared via `readlink`.
+//! - `file`, `directory`, `symlink` — filesystem primitives (see `resources.rs`)
+//! - `systemd_service`, `systemd_timer` — systemd unit management
+//! - `nginx_vhost`, `nginx_proxy` — nginx site management
+//! - `docker_container`, `docker_volume`, `docker_network`, `docker_compose`
 
 pub mod client;
+pub mod docker;
+pub mod nginx;
 pub mod resources;
+pub mod systemd;
 
 pub use client::{SshClient, SshError, SshExec, StatInfo};
 pub use resources::SshResourceProvisioner;

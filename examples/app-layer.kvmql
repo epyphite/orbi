@@ -1,0 +1,109 @@
+-- Application-layer provisioning example.
+-- Deploys a full stack on a remote host: files, systemd services,
+-- nginx reverse proxy, and Docker containers — then verifies everything.
+--
+-- Run (simulated): orbi --simulate exec examples/app-layer.kvmql
+
+SET @host = 'earth.epy.digital';
+
+-- ── Provider ──────────────────────────────────────────────────────
+
+ADD IF NOT EXISTS PROVIDER id='earth-ssh'
+  type='ssh'
+  host='earth.epy.digital'
+  auth='op:Infrastructure/dev-workload-vm-ssh-key'
+  labels='{"ssh_user":"azureuser"}';
+
+-- ── Foundation: directories and files ─────────────────────────────
+
+CREATE RESOURCE 'directory' id='/opt/orbitalpay/bin'
+  owner='orbitalpay' group='orbitalpay' mode='0755'
+  ON PROVIDER 'earth-ssh';
+
+CREATE RESOURCE 'file' id='/etc/systemd/system/gee-api.service'
+  content='file:./units/gee-api.service'
+  mode='0644'
+  ON PROVIDER 'earth-ssh';
+
+CREATE RESOURCE 'file' id='/data/GEE-download-Epy/.env'
+  content='op:Infrastructure/gee-env'
+  owner='azureuser' group='azureuser' mode='0600'
+  ON PROVIDER 'earth-ssh';
+
+-- ── systemd services ──────────────────────────────────────────────
+
+CREATE RESOURCE 'systemd_service' id='gee-api'
+  enabled=true started=true
+  after_file='/etc/systemd/system/gee-api.service'
+  ON PROVIDER 'earth-ssh';
+
+CREATE RESOURCE 'systemd_service' id='gee-frontend'
+  enabled=true started=true
+  after_file='/etc/systemd/system/gee-frontend.service'
+  ON PROVIDER 'earth-ssh';
+
+CREATE RESOURCE 'systemd_timer' id='cert-renew'
+  schedule='daily'
+  unit='cert-renew.service'
+  enabled=true
+  ON PROVIDER 'earth-ssh';
+
+-- ── nginx reverse proxy ───────────────────────────────────────────
+
+CREATE RESOURCE 'nginx_proxy' id='earth.epy.digital'
+  server_name='earth.epy.digital'
+  upstream='http://127.0.0.1:3001'
+  tls=true
+  tls_cert_from='letsencrypt:earth.epy.digital'
+  ON PROVIDER 'earth-ssh';
+
+-- ── Docker containers ─────────────────────────────────────────────
+
+CREATE RESOURCE 'docker_volume' id='satellite-pg-data'
+  ON PROVIDER 'earth-ssh';
+
+CREATE RESOURCE 'docker_container' id='satellite_imagery_db'
+  image='postgis/postgis:15-3.4'
+  ports=['5433:5432']
+  volumes=['satellite-pg-data:/var/lib/postgresql/data']
+  restart_policy='unless-stopped'
+  ON PROVIDER 'earth-ssh';
+
+CREATE RESOURCE 'docker_container' id='satellite-redis'
+  image='redis:7-alpine'
+  ports=['6380:6379']
+  restart_policy='unless-stopped'
+  ON PROVIDER 'earth-ssh';
+
+CREATE RESOURCE 'docker_network' id='passport-net'
+  driver='bridge'
+  ON PROVIDER 'earth-ssh';
+
+-- ── Verify ────────────────────────────────────────────────────────
+
+-- DNS resolves to the expected IP
+ASSERT EXISTS (
+  SELECT 1 FROM dns_lookup(@host, 'A')
+), 'DNS does not resolve';
+
+-- Port 443 is reachable
+ASSERT EXISTS (
+  SELECT 1 FROM tcp_probe(@host, 443) WHERE status = 'open'
+), 'port 443 not reachable';
+
+-- .env file is present and secure
+ASSERT EXISTS (
+  SELECT 1 FROM file_stat('earth-ssh', '/data/GEE-download-Epy/.env')
+  WHERE present = true AND mode = '0600'
+), '.env missing or has wrong permissions';
+
+-- ── Query functions (for troubleshooting) ─────────────────────────
+
+-- SELECT * FROM systemd_services('earth-ssh')
+--   WHERE active_state = 'failed';
+--
+-- SELECT * FROM docker_containers('earth-ssh');
+--
+-- SELECT valid, errors FROM nginx_config_test('earth-ssh');
+--
+-- SELECT * FROM nginx_vhosts('earth-ssh');

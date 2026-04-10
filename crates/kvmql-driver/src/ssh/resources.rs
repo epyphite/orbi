@@ -47,9 +47,37 @@ impl SshResourceProvisioner {
         params: &Value,
     ) -> Result<ProvisionResult, String> {
         match resource_type {
+            // Filesystem primitives
             "file" => self.create_file(params),
             "directory" => self.create_directory(params),
             "symlink" => self.create_symlink(params),
+            // systemd
+            "systemd_service" | "systemd_timer" => {
+                let p = super::systemd::SystemdProvisioner::new(&self.client);
+                let r = p.create(resource_type, params)?;
+                Ok(ProvisionResult {
+                    status: r.status,
+                    outputs: r.outputs,
+                })
+            }
+            // nginx
+            "nginx_vhost" | "nginx_proxy" => {
+                let p = super::nginx::NginxProvisioner::new(&self.client);
+                let r = p.create(resource_type, params)?;
+                Ok(ProvisionResult {
+                    status: r.status,
+                    outputs: r.outputs,
+                })
+            }
+            // docker
+            "docker_container" | "docker_volume" | "docker_network" | "docker_compose" => {
+                let p = super::docker::DockerProvisioner::new(&self.client);
+                let r = p.create(resource_type, params)?;
+                Ok(ProvisionResult {
+                    status: r.status,
+                    outputs: r.outputs,
+                })
+            }
             other => Err(format!("unsupported ssh resource type: {other}")),
         }
     }
@@ -58,7 +86,7 @@ impl SshResourceProvisioner {
         &self,
         resource_type: &str,
         id: &str,
-        _params: &Value,
+        params: &Value,
     ) -> Result<(), String> {
         match resource_type {
             "file" => self
@@ -73,6 +101,18 @@ impl SshResourceProvisioner {
                 .client
                 .remove(id)
                 .map_err(|e| format!("failed to delete symlink {id}: {e}")),
+            "systemd_service" | "systemd_timer" => {
+                super::systemd::SystemdProvisioner::new(&self.client)
+                    .delete(resource_type, id, params)
+            }
+            "nginx_vhost" | "nginx_proxy" => {
+                super::nginx::NginxProvisioner::new(&self.client)
+                    .delete(resource_type, id, params)
+            }
+            "docker_container" | "docker_volume" | "docker_network" | "docker_compose" => {
+                super::docker::DockerProvisioner::new(&self.client)
+                    .delete(resource_type, id, params)
+            }
             other => Err(format!("unsupported ssh resource type: {other}")),
         }
     }
@@ -510,7 +550,7 @@ mod tests {
         let exec = ScriptedExec::new(vec![]);
         let client = SshClient::new(Box::new(exec));
         let p = SshResourceProvisioner::new(client);
-        let err = p.create("nginx_proxy", &json!({})).unwrap_err();
+        let err = p.create("unknown_thing", &json!({})).unwrap_err();
         assert!(err.contains("unsupported"));
     }
 }
