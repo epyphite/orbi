@@ -994,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "kvmql-agent"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1013,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "kvmql-auth"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "kvmql-common",
  "reqwest",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "kvmql-cli"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1050,7 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "kvmql-common"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1061,7 +1061,7 @@ dependencies = [
 
 [[package]]
 name = "kvmql-driver"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "kvmql-engine"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "kvmql-auth",
@@ -1097,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "kvmql-parser"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "kvmql-common",
  "logos",
@@ -1107,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "kvmql-registry"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "kvmql-common",
