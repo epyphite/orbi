@@ -1,0 +1,59 @@
+-- Network verification examples
+-- Run: orbi --simulate exec examples/network-verification.kvmql
+--
+-- Table-valued functions (dns_lookup, tcp_probe, http_probe, tls_cert,
+-- reverse_dns) are callable from SELECT ... FROM <fn>(...) just like
+-- PostgreSQL's generate_series() or unnest(). Combine with ASSERT to
+-- verify infrastructure in the same DSL that declared it.
+
+-- ── Basic queries ──────────────────────────────────────────────────
+
+-- DNS lookup — system resolver
+SELECT * FROM dns_lookup('localhost');
+
+-- Filter by record type
+SELECT content FROM dns_lookup('localhost', 'A');
+
+-- TCP probe against a closed port (returns status = 'closed' or 'timeout')
+SELECT * FROM tcp_probe('127.0.0.1', 1);
+
+-- Reverse DNS (MVP stub — surfaces the limitation rather than silently failing)
+SELECT * FROM reverse_dns('127.0.0.1');
+
+-- ── Assertions ─────────────────────────────────────────────────────
+
+-- EXISTS subquery — pass if the inner SELECT returns at least one row
+ASSERT EXISTS (
+  SELECT 1 FROM dns_lookup('localhost')
+);
+
+-- Scalar subquery comparison — pass if localhost resolves to 127.0.0.1
+ASSERT (
+  SELECT content FROM dns_lookup('localhost', 'A')
+) = '127.0.0.1', 'localhost should resolve to 127.0.0.1';
+
+-- Count with GROUP BY-like pattern
+ASSERT (
+  SELECT count(*) FROM dns_lookup('localhost')
+) >= 1, 'localhost should always resolve';
+
+-- String concatenation in function arguments
+SET @subdomain = 'localhost';
+SELECT * FROM dns_lookup(@subdomain);
+
+-- ── The deploy-and-verify pattern ──────────────────────────────────
+-- This is the payoff: declare infrastructure, then assert it works,
+-- all in the same .kvmql file. When any assertion fails, the script
+-- exits non-zero with the failure message.
+--
+--   CREATE RESOURCE 'cf_dns_record' id = 'api' ...
+--       ON PROVIDER 'cloudflare';
+--
+--   ASSERT EXISTS (
+--     SELECT 1 FROM dns_lookup('api.example.com', 'A')
+--     WHERE content = '203.0.113.42'
+--   ), 'DNS record did not propagate';
+--
+--   ASSERT (
+--     SELECT status_code FROM http_probe('https://api.example.com/health')
+--   ) = 200, 'API health check failing';

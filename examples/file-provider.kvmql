@@ -1,0 +1,84 @@
+-- File provider example — manage files, directories, and symlinks
+-- on a remote host over SSH.
+--
+-- Run (simulated): orbi --simulate exec examples/file-provider.kvmql
+--
+-- The ssh provider shells out to your OpenSSH client, so ~/.ssh/config,
+-- ProxyJump, agent forwarding, and known_hosts all work out of the box.
+-- Auth accepts any credential scheme Orbi supports: op:, env:, file:,
+-- vault:, aws-sm:, gcp-sm:, azure-kv:, sops:, k8s:.
+
+-- ── Provider ──────────────────────────────────────────────────────
+
+-- Private key stored in 1Password; Orbi writes it to a mode-0600
+-- tempfile and passes -i to ssh.
+ADD IF NOT EXISTS PROVIDER id='earth-ssh'
+  type='ssh'
+  host='earth.epy.digital'
+  auth='op:Infrastructure/dev-workload-vm-ssh-key'
+  labels='{"ssh_user":"azureuser","ssh_port":22}';
+
+-- ── Directory → file → symlink chain ─────────────────────────────
+
+CREATE RESOURCE 'directory' id='/opt/orbitalpay/bin'
+  owner='orbitalpay' group='orbitalpay' mode='0755'
+  ON PROVIDER 'earth-ssh';
+
+-- Content from a local file checked into the repo.
+-- file: scheme means "read local path verbatim" — no trim, no secret handling.
+CREATE RESOURCE 'file' id='/etc/nginx/sites-available/earth.epy.digital'
+  content='file:./configs/earth-nginx.conf'
+  owner='root' group='root' mode='0644'
+  ON PROVIDER 'earth-ssh';
+
+-- Enable the vhost by symlinking into sites-enabled.
+CREATE RESOURCE 'symlink' id='/etc/nginx/sites-enabled/earth.epy.digital'
+  target='/etc/nginx/sites-available/earth.epy.digital'
+  ON PROVIDER 'earth-ssh';
+
+-- Secrets from 1Password — content is fetched and uploaded with
+-- mode 0600 so it's never world-readable on the host.
+CREATE RESOURCE 'file' id='/opt/orbitalpay/.env'
+  content='op:Infrastructure/orbitalpay-prod-env'
+  owner='orbitalpay' group='orbitalpay' mode='0600'
+  ON PROVIDER 'earth-ssh';
+
+-- Literal inline content for a small config shim.
+CREATE RESOURCE 'file' id='/etc/orbitalpay/version'
+  content='1.0.0
+'
+  owner='orbitalpay' group='orbitalpay' mode='0644'
+  ON PROVIDER 'earth-ssh';
+
+-- ── Verify with file_stat ────────────────────────────────────────
+--
+-- file_stat is a table-valued function. Two signatures:
+--   file_stat(path)               -- fan-out across every ssh provider
+--   file_stat(provider_id, path)  -- single-host query
+
+-- Basic: inspect a single file on a single host.
+SELECT * FROM file_stat('earth-ssh', '/opt/orbitalpay/.env');
+
+-- Filter for drift across the fleet.
+SELECT provider_id, host, mode, owner FROM file_stat('/opt/orbitalpay/.env')
+  WHERE present = true AND mode != '0600';
+
+-- ── Assertions — post-deploy checks ──────────────────────────────
+
+-- The .env must exist and be 0600.
+ASSERT EXISTS (
+  SELECT 1 FROM file_stat('earth-ssh', '/opt/orbitalpay/.env')
+  WHERE present = true AND mode = '0600'
+), '.env missing or has wrong permissions';
+
+-- The nginx config must be owned by root.
+ASSERT (
+  SELECT owner FROM file_stat('earth-ssh', '/etc/nginx/sites-available/earth.epy.digital')
+) = 'root', 'nginx config not owned by root';
+
+-- Every host that should have the .env must have it at the right size
+-- (count-based check; adjust the expected number to fleet size).
+ASSERT (
+  SELECT count(*) FROM file_stat('/opt/orbitalpay/.env')
+  WHERE present = true
+) >= 1, '.env not present on any host';

@@ -260,6 +260,8 @@ fn audit_event_for_statement(stmt: &Statement) -> Option<AuditEvent> {
                 _ => None,
             },
         }),
+        // ASSERT is verification, never a mutation — no audit entry.
+        Statement::Assert(_) => None,
     }
 }
 
@@ -303,12 +305,16 @@ fn verb_for_statement(stmt: &Statement) -> &'static str {
         Statement::Upgrade(_) => "UPGRADE",
         Statement::Explain(_) => "EXPLAIN",
         Statement::Rollback(_) => "ROLLBACK",
+        Statement::Assert(_) => "ASSERT",
     }
 }
 
 /// Returns true if this statement type should skip query-history recording.
 fn skip_history(stmt: &Statement) -> bool {
-    matches!(stmt, Statement::Set(_) | Statement::Show(_) | Statement::Explain(_))
+    matches!(
+        stmt,
+        Statement::Set(_) | Statement::Show(_) | Statement::Explain(_) | Statement::Assert(_)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +622,7 @@ impl<'a> Executor<'a> {
                     | Statement::Select(_)
                     | Statement::Show(_)
                     | Statement::Set(_)
+                    | Statement::Assert(_)
             )
         {
             return self.exec_explain(stmt).await;
@@ -639,7 +646,8 @@ impl<'a> Executor<'a> {
             Statement::AlterVolume(s) => self.exec_alter_volume(s).await,
             Statement::ImportImage(s) => self.exec_import_image(s).await,
             Statement::RemoveImage(s) => self.exec_remove_image(s).await,
-            Statement::Select(s) => self.exec_select(s),
+            Statement::Select(s) => self.exec_select(s).await,
+            Statement::Assert(s) => self.exec_assert(s).await,
             Statement::Show(s) => self.exec_show(s),
             Statement::Set(s) => self.exec_set(s),
             Statement::AddCluster(s) => self.exec_add_cluster(s),
@@ -649,7 +657,7 @@ impl<'a> Executor<'a> {
             Statement::AddPrincipal(s) => self.exec_add_principal(s),
             Statement::Grant(s) => self.exec_grant(s),
             Statement::Revoke(s) => self.exec_revoke(s),
-            Statement::Watch(s) => self.exec_watch(s),
+            Statement::Watch(s) => self.exec_watch(s).await,
             Statement::PublishImage(s) => self.exec_publish_image(s),
             Statement::CreateResource(s) => self.exec_create_resource(s),
             Statement::AlterResource(s) => self.exec_alter_resource(s),
@@ -902,6 +910,52 @@ impl<'a> Executor<'a> {
                 .or_else(|| std::env::var("GH_TOKEN").ok())
         };
         kvmql_driver::github::GithubResourceProvisioner::new(token.as_deref())
+    }
+
+    /// Build an [`SshResourceProvisioner`] for the given provider.
+    ///
+    /// Resolves the provider's `auth_ref` (expected to be a credential URI
+    /// pointing at a private key) and writes the key to a mode-0600
+    /// tempfile so OpenSSH can consume it via `-i`.  The tempfile is
+    /// leaked intentionally — its path is handed to `ssh`, and we want
+    /// it to outlive this helper.  Callers should treat the path as
+    /// process-scoped and never pass it elsewhere.
+    ///
+    /// When `auth_ref` is absent, empty, or "none", we fall back on the
+    /// user's ambient SSH config (`~/.ssh/config`, agent, default keys).
+    fn get_ssh_provisioner(
+        &self,
+        provider_id: &str,
+    ) -> Result<kvmql_driver::ssh::SshResourceProvisioner, String> {
+        let p = self
+            .ctx
+            .registry
+            .get_provider(provider_id)
+            .map_err(|e| format!("ssh provider '{provider_id}' not found: {e}"))?;
+        let host = p
+            .host
+            .clone()
+            .ok_or_else(|| format!("ssh provider '{provider_id}' is missing host="))?;
+        // Labels JSON may hold user/port overrides; parse conservatively.
+        let (user, port) = parse_ssh_connection_hints(p.labels.as_deref());
+
+        let key_path = if p.auth_ref.is_empty() || p.auth_ref == "none" {
+            None
+        } else {
+            match kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref) {
+                Ok(key_material) => Some(write_ephemeral_key(&key_material)?),
+                Err(e) => {
+                    return Err(format!(
+                        "failed to resolve ssh key '{}' for provider '{}': {}",
+                        p.auth_ref, provider_id, e
+                    ));
+                }
+            }
+        };
+
+        let client =
+            kvmql_driver::ssh::SshClient::from_openssh(&host, user.as_deref(), port, key_path);
+        Ok(kvmql_driver::ssh::SshResourceProvisioner::new(client))
     }
 
     fn get_k8s_provisioner(
@@ -1786,8 +1840,16 @@ impl<'a> Executor<'a> {
     // SELECT
     // =======================================================================
 
-    fn exec_select(&self, s: &SelectStmt) -> Result<StmtOutcome, String> {
-        let rows: Vec<serde_json::Value> = match s.from {
+    async fn exec_select(&self, s: &SelectStmt) -> Result<StmtOutcome, String> {
+        // Table-valued function sources (dns_lookup, tcp_probe, ...) live in
+        // a separate code path — no registry involvement.
+        let noun = match &s.from {
+            SelectSource::Noun(n) => n.clone(),
+            SelectSource::Function(fc) => {
+                return self.exec_select_function(s, fc).await;
+            }
+        };
+        let rows: Vec<serde_json::Value> = match noun {
             Noun::Microvms => {
                 let list = self
                     .ctx
@@ -2183,7 +2245,7 @@ impl<'a> Executor<'a> {
                     };
 
                     let engine = self.get_k8s_query_engine(&provider_id);
-                    let noun_str = format!("{}", s.from);
+                    let noun_str = format!("{}", noun);
                     // Future: extract a `namespace = '...'` filter from the
                     // WHERE clause and push it down via -n; for now we list
                     // across all namespaces and filter client-side.
@@ -2728,7 +2790,127 @@ impl<'a> Executor<'a> {
             let is_k8s = provider_type == "kubernetes"
                 || s.resource_type.starts_with("k8s_");
 
-            if is_k8s {
+            let is_ssh = provider_type == "ssh"
+                || matches!(
+                    s.resource_type.as_str(),
+                    "file"
+                        | "directory"
+                        | "symlink"
+                        | "systemd_service"
+                        | "systemd_timer"
+                        | "nginx_vhost"
+                        | "nginx_proxy"
+                        | "docker_container"
+                        | "docker_volume"
+                        | "docker_network"
+                        | "docker_compose"
+                        | "letsencrypt_cert"
+                );
+
+            if is_ssh {
+                // Pre-resolve `content` if it's a credential/file reference
+                // so the provisioner gets raw bytes.  We do this here (not
+                // in resolve_credential_params) because the `content` key
+                // is file-provider-specific and the generic credential
+                // walker skips unknown keys on purpose.
+                let mut cfg_with_content = config_value.clone();
+                if s.resource_type == "file" {
+                    if let Some(raw_content) = cfg_with_content
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                    {
+                        match resolve_content_reference(&raw_content) {
+                            Ok(bytes) => {
+                                if let Some(obj) = cfg_with_content.as_object_mut() {
+                                    obj.insert(
+                                        "__content_bytes".into(),
+                                        serde_json::Value::String(bytes),
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                notifications.push(Notification {
+                                    level: "ERROR".into(),
+                                    code: "SSH_CONTENT_RESOLVE_FAILED".into(),
+                                    provider_id: Some(provider_id.clone()),
+                                    message: format!(
+                                        "failed to resolve content for '{}': {}",
+                                        id, e
+                                    ),
+                                });
+                                return Err(format!(
+                                    "failed to resolve content reference: {e}"
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // For letsencrypt_cert with dns_provider='cf', resolve the
+                // Cloudflare API token from the 'cf' provider and inject
+                // it so the certbot plugin can authenticate.
+                if s.resource_type == "letsencrypt_cert" {
+                    let dns_prov = cfg_with_content
+                        .get("dns_provider")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("cf");
+                    if dns_prov == "cf" {
+                        if let Some(obj) = cfg_with_content.as_object_mut() {
+                            if !obj.contains_key("cf_api_token") {
+                                // Look up the 'cf' provider's auth_ref
+                                let token = self
+                                    .ctx
+                                    .registry
+                                    .get_provider("cf")
+                                    .ok()
+                                    .map(|p| p.auth_ref.clone())
+                                    .and_then(|a| {
+                                        kvmql_auth::resolver::CredentialResolver::resolve(&a).ok()
+                                    });
+                                if let Some(t) = token {
+                                    obj.insert(
+                                        "cf_api_token".into(),
+                                        serde_json::Value::String(t),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let provisioner = self
+                    .get_ssh_provisioner(&provider_id)
+                    .map_err(|e| format!("ssh provisioner setup failed: {e}"))?;
+
+                match provisioner.create(&s.resource_type, &cfg_with_content) {
+                    Ok(result) => (
+                        result.status,
+                        result.outputs.map(|o| o.to_string()),
+                    ),
+                    Err(e) => {
+                        let remediation_msg = with_remediation(
+                            "SSH_PROVISION_FAILED",
+                            &format!(
+                                "SSH provisioning failed, resource registered as pending: {e}"
+                            ),
+                            &ErrorContext {
+                                resource_id: Some(id.clone()),
+                                resource_type: Some(s.resource_type.clone()),
+                                provider_id: Some(provider_id.clone()),
+                                ..Default::default()
+                            },
+                        );
+                        notifications.push(Notification {
+                            level: "WARN".into(),
+                            code: "SSH_PROVISION_FAILED".into(),
+                            provider_id: Some(provider_id.clone()),
+                            message: remediation_msg,
+                        });
+                        ("pending".into(), None)
+                    }
+                }
+            } else if is_k8s {
                 let provisioner = self.get_k8s_provisioner(&provider_id);
 
                 match provisioner.create(&s.resource_type, &config_value) {
@@ -3869,7 +4051,7 @@ impl<'a> Executor<'a> {
     // WATCH
     // =======================================================================
 
-    fn exec_watch(&self, s: &WatchStmt) -> Result<StmtOutcome, String> {
+    async fn exec_watch(&self, s: &WatchStmt) -> Result<StmtOutcome, String> {
         // WATCH is fundamentally a streaming operation.  In the single-shot
         // executor context (CLI / REST) we execute one sample of the
         // underlying SELECT query and return it with an informational
@@ -3877,7 +4059,7 @@ impl<'a> Executor<'a> {
         // continuous streaming.
         let select = SelectStmt {
             fields: s.metrics.clone(),
-            from: s.from.clone(),
+            from: SelectSource::Noun(s.from.clone()),
             on: None,
             where_clause: s.where_clause.clone(),
             group_by: None,
@@ -3885,7 +4067,7 @@ impl<'a> Executor<'a> {
             limit: None,
             offset: None,
         };
-        let mut outcome = self.exec_select(&select)?;
+        let mut outcome = self.exec_select(&select).await?;
         outcome.notifications.push(Notification {
             level: "INFO".into(),
             code: "STA_001".into(),
@@ -4276,6 +4458,430 @@ impl<'a> Executor<'a> {
 
         Ok(StmtOutcome::ok_val(val))
     }
+
+    // =======================================================================
+    // SELECT FROM <table-valued function>(...)
+    // =======================================================================
+
+    /// Execute `SELECT ... FROM <fn>(...)` against a network verification
+    /// function. Applies WHERE/LIMIT in-memory after the function returns.
+    async fn exec_select_function(
+        &self,
+        s: &SelectStmt,
+        fc: &kvmql_parser::ast::FunctionCall,
+    ) -> Result<StmtOutcome, String> {
+        // Resolve any `@var` references in the args against the session
+        // variable pool so functions only ever see concrete literals.
+        let fc_resolved = self.resolve_function_call_args(fc);
+
+        // Host-aware functions need access to the provider registry, so
+        // we handle them here before falling through to the free-function
+        // dispatcher for network-only functions.
+        let rows = match fc_resolved.name.as_str() {
+            "file_stat" => self.run_file_stat(&fc_resolved)?,
+            "systemd_services" => self.run_ssh_query(&fc_resolved, |p| {
+                kvmql_driver::ssh::systemd::SystemdProvisioner::new(&p.client)
+                    .list_services()
+            })?,
+            "nginx_vhosts" => self.run_ssh_query(&fc_resolved, |p| {
+                kvmql_driver::ssh::nginx::NginxProvisioner::new(&p.client)
+                    .list_vhosts()
+            })?,
+            "nginx_config_test" => self.run_ssh_query(&fc_resolved, |p| {
+                kvmql_driver::ssh::nginx::NginxProvisioner::new(&p.client)
+                    .config_test_row()
+            })?,
+            "docker_containers" => self.run_ssh_query(&fc_resolved, |p| {
+                kvmql_driver::ssh::docker::DockerProvisioner::new(&p.client)
+                    .list_containers()
+            })?,
+            _ => run_table_function(&fc_resolved).await?,
+        };
+
+        // WHERE filter
+        let filtered: Vec<serde_json::Value> = if let Some(ref pred) = s.where_clause {
+            rows.into_iter()
+                .filter(|row| eval_predicate(pred, row))
+                .collect()
+        } else {
+            rows
+        };
+
+        // LIMIT
+        let limited: Vec<serde_json::Value> = if let Some(limit) = s.limit {
+            filtered.into_iter().take(limit as usize).collect()
+        } else {
+            filtered
+        };
+
+        // Projection — apply the SELECT field list.  Supports `*`, simple
+        // column names, and a small set of aggregate functions used in
+        // ASSERT expressions (`count(*)`).
+        let projected = project_rows(&s.fields, limited)?;
+
+        let n = projected.len() as i64;
+        Ok(StmtOutcome::ok_rows(serde_json::Value::Array(projected), n))
+    }
+
+    /// Generic SSH query dispatcher.  Takes a function call and a closure
+    /// that runs on each SSH provisioner.  If the call has one string arg,
+    /// treat it as an explicit `provider_id`; if zero args, fan out across
+    /// every SSH provider.  Each call's rows get a `host` and `provider_id`
+    /// column injected.
+    fn run_ssh_query(
+        &self,
+        fc: &kvmql_parser::ast::FunctionCall,
+        query_fn: impl Fn(
+            &kvmql_driver::ssh::SshResourceProvisioner,
+        ) -> Result<Vec<serde_json::Value>, String>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        use kvmql_parser::ast::Expr;
+
+        let provider_ids: Vec<String> = match fc.args.first() {
+            Some(Expr::StringLit(pid)) => vec![pid.clone()],
+            None | Some(_) => {
+                // Fan-out across every ssh provider
+                self.ctx
+                    .registry
+                    .list_providers()
+                    .map_err(|e| format!("list providers: {e}"))?
+                    .into_iter()
+                    .filter(|r| r.provider_type == "ssh")
+                    .map(|r| r.id)
+                    .collect()
+            }
+        };
+
+        if self.ctx.simulate {
+            // In simulate mode, return empty — these queries require a
+            // real SSH connection.
+            return Ok(vec![]);
+        }
+
+        let mut all_rows = Vec::new();
+        for pid in &provider_ids {
+            let provisioner = self
+                .get_ssh_provisioner(pid)
+                .map_err(|e| format!("ssh provisioner for {pid}: {e}"))?;
+            let host = self
+                .ctx
+                .registry
+                .get_provider(pid)
+                .ok()
+                .and_then(|p| p.host.clone());
+            match query_fn(&provisioner) {
+                Ok(mut rows) => {
+                    // Inject host/provider_id into each row
+                    for row in &mut rows {
+                        if let Some(obj) = row.as_object_mut() {
+                            obj.insert(
+                                "provider_id".into(),
+                                serde_json::Value::String(pid.clone()),
+                            );
+                            obj.insert(
+                                "host".into(),
+                                host.as_ref()
+                                    .map(|h| serde_json::Value::String(h.clone()))
+                                    .unwrap_or(serde_json::Value::Null),
+                            );
+                        }
+                    }
+                    all_rows.extend(rows);
+                }
+                Err(e) => {
+                    all_rows.push(serde_json::json!({
+                        "provider_id": pid,
+                        "host": host,
+                        "error": e,
+                    }));
+                }
+            }
+        }
+        Ok(all_rows)
+    }
+
+    /// Clone a `FunctionCall` with every `Expr::Variable(@name)`
+    /// replaced by a concrete literal resolved from the session variable
+    /// pool.  Variables that don't exist are left alone so the downstream
+    /// dispatcher can report a proper error.
+    fn resolve_function_call_args(
+        &self,
+        fc: &kvmql_parser::ast::FunctionCall,
+    ) -> kvmql_parser::ast::FunctionCall {
+        use kvmql_parser::ast::{Expr, FunctionCall};
+        let vars = self.ctx.variables.read().unwrap();
+        let mut new_args = Vec::with_capacity(fc.args.len());
+        for a in &fc.args {
+            let replaced = match a {
+                Expr::Variable(name) => match vars.get(name) {
+                    Some(v) => {
+                        // Prefer integer if the value parses cleanly,
+                        // otherwise treat as a string literal.
+                        if let Ok(n) = v.parse::<i64>() {
+                            Expr::Integer(n)
+                        } else {
+                            Expr::StringLit(v.clone())
+                        }
+                    }
+                    None => a.clone(),
+                },
+                other => other.clone(),
+            };
+            new_args.push(replaced);
+        }
+        FunctionCall {
+            name: fc.name.clone(),
+            args: new_args,
+        }
+    }
+
+    /// Host-aware file_stat table function.
+    ///
+    /// Signatures:
+    /// - `file_stat(provider_id, path)` — stat a single file on a single
+    ///   SSH host and return one row.
+    /// - `file_stat(path)` — iterate every SSH provider in the registry
+    ///   and return one row per host.  Useful with a `WHERE host='...'`
+    ///   predicate or with `count(*)` to check rollout.
+    ///
+    /// Returns columns: `path`, `provider_id`, `host`, `present`, `size`,
+    /// `owner`, `group`, `mode`, `sha256`, `modified_at`.  Missing files
+    /// produce a row with `present = false` and nulls for the rest.
+    /// (The column is `present` rather than `exists` because `EXISTS` is
+    /// a reserved keyword used in subqueries.)
+    fn run_file_stat(
+        &self,
+        fc: &kvmql_parser::ast::FunctionCall,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        use kvmql_parser::ast::Expr;
+
+        fn arg_str(args: &[Expr], idx: usize) -> Option<String> {
+            match args.get(idx) {
+                Some(Expr::StringLit(s)) => Some(s.clone()),
+                _ => None,
+            }
+        }
+
+        let (provider_ids, path) = match fc.args.len() {
+            1 => {
+                // file_stat(path) — fan out across all ssh providers
+                let p = arg_str(&fc.args, 0)
+                    .ok_or("file_stat(path): path must be a string literal")?;
+                let providers = self
+                    .ctx
+                    .registry
+                    .list_providers()
+                    .map_err(|e| format!("failed to list providers: {e}"))?;
+                let ssh: Vec<String> = providers
+                    .into_iter()
+                    .filter(|row| row.provider_type == "ssh")
+                    .map(|row| row.id)
+                    .collect();
+                if ssh.is_empty() {
+                    return Ok(vec![]);
+                }
+                (ssh, p)
+            }
+            2 => {
+                let pid = arg_str(&fc.args, 0)
+                    .ok_or("file_stat(provider_id, path): first arg must be a string literal")?;
+                let p = arg_str(&fc.args, 1)
+                    .ok_or("file_stat(provider_id, path): second arg must be a string literal")?;
+                (vec![pid], p)
+            }
+            n => {
+                return Err(format!(
+                    "file_stat expects 1 or 2 args, got {n}"
+                ))
+            }
+        };
+
+        // In simulate mode we never reach a real SSH host.  Return one
+        // deterministic fake row per provider_id so assertions in example
+        // scripts still evaluate, and so dry-runs stay offline.
+        if self.ctx.simulate {
+            let rows = provider_ids
+                .into_iter()
+                .map(|pid| {
+                    let host = self
+                        .ctx
+                        .registry
+                        .get_provider(&pid)
+                        .ok()
+                        .and_then(|p| p.host.clone());
+                    serde_json::json!({
+                        "provider_id": pid,
+                        "host": host,
+                        "path": path,
+                        "present": true,
+                        "size": 0_i64,
+                        "owner": "root",
+                        "group": "root",
+                        "mode": "0600",
+                        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "modified_at": "1970-01-01T00:00:00Z",
+                        "simulated": true,
+                    })
+                })
+                .collect();
+            return Ok(rows);
+        }
+
+        let mut rows: Vec<serde_json::Value> = Vec::with_capacity(provider_ids.len());
+        for pid in provider_ids {
+            let provisioner = match self.get_ssh_provisioner(&pid) {
+                Ok(p) => p,
+                Err(e) => {
+                    // Surface the error as a row with an error field so
+                    // the caller can filter on it if they want; avoids
+                    // aborting the whole SELECT.
+                    rows.push(serde_json::json!({
+                        "provider_id": pid,
+                        "host": null,
+                        "path": path,
+                        "present": false,
+                        "error": e,
+                    }));
+                    continue;
+                }
+            };
+            let host = self
+                .ctx
+                .registry
+                .get_provider(&pid)
+                .ok()
+                .and_then(|p| p.host.clone());
+            rows.push(build_file_stat_row(&provisioner, &pid, host.as_deref(), &path));
+        }
+        Ok(rows)
+    }
+
+    // =======================================================================
+    // ASSERT
+    // =======================================================================
+
+    /// Execute an `ASSERT <predicate>[, '<message>']` statement.
+    /// Pass → returns ok. Fail → returns Err carrying the failure message.
+    async fn exec_assert(
+        &self,
+        s: &kvmql_parser::ast::AssertStmt,
+    ) -> Result<StmtOutcome, String> {
+        let passed = self.eval_assertion_predicate(&s.condition).await?;
+        if passed {
+            Ok(StmtOutcome::ok_val(serde_json::json!({
+                "assertion": "passed",
+            })))
+        } else {
+            let msg = s
+                .message
+                .clone()
+                .unwrap_or_else(|| "assertion failed".to_string());
+            Err(format!("ASSERTION FAILED: {}", msg))
+        }
+    }
+
+    /// Async predicate evaluation that supports `EXISTS (SELECT ...)` and
+    /// scalar subqueries on either side of a comparison. Used by `ASSERT`.
+    fn eval_assertion_predicate<'b>(
+        &'b self,
+        pred: &'b Predicate,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + 'b>>
+    {
+        Box::pin(async move {
+            match pred {
+                Predicate::And(a, b) => Ok(self.eval_assertion_predicate(a).await?
+                    && self.eval_assertion_predicate(b).await?),
+                Predicate::Or(a, b) => Ok(self.eval_assertion_predicate(a).await?
+                    || self.eval_assertion_predicate(b).await?),
+                Predicate::Not(inner) => Ok(!self.eval_assertion_predicate(inner).await?),
+                Predicate::Grouped(inner) => self.eval_assertion_predicate(inner).await,
+                Predicate::Exists(select) => {
+                    let outcome = self.exec_select(select).await?;
+                    if let Some(serde_json::Value::Array(rows)) = outcome.result {
+                        Ok(!rows.is_empty())
+                    } else {
+                        Ok(false)
+                    }
+                }
+                Predicate::Comparison(cmp) => self.eval_assertion_comparison(cmp).await,
+            }
+        })
+    }
+
+    /// Evaluate a comparison where either side may be a scalar subquery.
+    async fn eval_assertion_comparison(
+        &self,
+        cmp: &Comparison,
+    ) -> Result<bool, String> {
+        let lhs = self.eval_expr_value(&cmp.left).await?;
+        let rhs = self.eval_expr_value(&cmp.right).await?;
+        Ok(compare_json(&lhs, &cmp.op, &rhs))
+    }
+
+    /// Evaluate an `Expr` to a JSON value, with subquery support.
+    fn eval_expr_value<'b>(
+        &'b self,
+        expr: &'b kvmql_parser::ast::Expr,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + 'b>,
+    > {
+        use kvmql_parser::ast::Expr;
+        Box::pin(async move {
+            match expr {
+                Expr::Subquery(select) => {
+                    let outcome = self.exec_select(select).await?;
+                    // Take the first row's first column (or the whole scalar
+                    // if the result is already a single value).
+                    match outcome.result {
+                        Some(serde_json::Value::Array(rows)) => {
+                            if let Some(first) = rows.first() {
+                                if let serde_json::Value::Object(obj) = first {
+                                    Ok(obj
+                                        .values()
+                                        .next()
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null))
+                                } else {
+                                    Ok(first.clone())
+                                }
+                            } else {
+                                Ok(serde_json::Value::Null)
+                            }
+                        }
+                        Some(other) => Ok(other),
+                        None => Ok(serde_json::Value::Null),
+                    }
+                }
+                Expr::Integer(n) => Ok(serde_json::json!(n)),
+                Expr::Float(f) => Ok(serde_json::json!(f)),
+                Expr::StringLit(s) => Ok(serde_json::json!(s)),
+                Expr::Boolean(b) => Ok(serde_json::json!(b)),
+                Expr::Null => Ok(serde_json::Value::Null),
+                Expr::Variable(name) => {
+                    let vars = self.ctx.variables.read().unwrap();
+                    Ok(vars
+                        .get(name)
+                        .map(|v| serde_json::Value::String(v.clone()))
+                        .unwrap_or(serde_json::Value::Null))
+                }
+                Expr::BinaryOp { left, op, right } => {
+                    let l = self.eval_expr_value(left).await?;
+                    let r = self.eval_expr_value(right).await?;
+                    Ok(eval_binary_op(&l, op, &r))
+                }
+                Expr::Grouped(inner) => self.eval_expr_value(inner).await,
+                Expr::Identifier(name) => {
+                    // Bare identifiers in ASSERT context are treated as
+                    // string literals (column refs only make sense in WHERE).
+                    Ok(serde_json::Value::String(name.clone()))
+                }
+                Expr::FunctionCall(_) | Expr::Duration(_) => Err(format!(
+                    "expression not supported in ASSERT context: {:?}",
+                    expr
+                )),
+            }
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4366,6 +4972,287 @@ fn simulate_outputs(resource_type: &str, id: &str, config: &serde_json::Value) -
 // Helpers: extract params
 // ---------------------------------------------------------------------------
 
+/// Apply a SELECT field list to a set of rows returned from a
+/// table-valued function.
+///
+/// Supported shapes:
+/// - `*` — pass rows through untouched.
+/// - a list of simple/qualified column names — pluck those keys out of
+///   each row; missing keys become `null`.
+/// - an aggregate like `count(*)` — returns a single row containing one
+///   field named after the aggregate.
+///
+/// Projections that mix aggregates and plain columns are not supported
+/// and produce an error pointing at the specific field.
+fn project_rows(
+    fields: &kvmql_parser::ast::FieldList,
+    rows: Vec<serde_json::Value>,
+) -> Result<Vec<serde_json::Value>, String> {
+    use kvmql_parser::ast::{Field, FieldList};
+
+    match fields {
+        FieldList::All => Ok(rows),
+        FieldList::Fields(fs) => {
+            // Detect aggregate mode: any FnCall whose name is a known
+            // aggregate.  In that mode we return exactly one row.
+            let has_aggregate = fs
+                .iter()
+                .any(|f| matches!(f, Field::FnCall { name, .. } if is_aggregate(name)));
+
+            if has_aggregate {
+                let mut row = serde_json::Map::new();
+                for f in fs {
+                    match f {
+                        Field::FnCall { name, star, args } => {
+                            let val = eval_aggregate(name, *star, args, &rows)?;
+                            row.insert(name.clone(), val);
+                        }
+                        other => {
+                            return Err(format!(
+                                "mixing aggregate and non-aggregate projections is not supported (got {other:?})"
+                            ));
+                        }
+                    }
+                }
+                return Ok(vec![serde_json::Value::Object(row)]);
+            }
+
+            // Non-aggregate projection: pluck fields from every row.
+            let mut out = Vec::with_capacity(rows.len());
+            for row in rows {
+                let obj = row.as_object().cloned().unwrap_or_default();
+                let mut new_row = serde_json::Map::new();
+                for f in fs {
+                    match f {
+                        Field::Simple(name) => {
+                            let v = obj.get(name).cloned().unwrap_or(serde_json::Value::Null);
+                            new_row.insert(name.clone(), v);
+                        }
+                        Field::Qualified(_, name) => {
+                            let v = obj.get(name).cloned().unwrap_or(serde_json::Value::Null);
+                            new_row.insert(name.clone(), v);
+                        }
+                        Field::FnCall { name, .. } => {
+                            return Err(format!(
+                                "function '{name}' is not supported in non-aggregate projection"
+                            ));
+                        }
+                    }
+                }
+                out.push(serde_json::Value::Object(new_row));
+            }
+            Ok(out)
+        }
+    }
+}
+
+fn is_aggregate(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "count" | "sum" | "avg" | "min" | "max"
+    )
+}
+
+fn eval_aggregate(
+    name: &str,
+    star: bool,
+    args: &[kvmql_parser::ast::Expr],
+    rows: &[serde_json::Value],
+) -> Result<serde_json::Value, String> {
+    use kvmql_parser::ast::Expr;
+
+    let lname = name.to_ascii_lowercase();
+    if lname == "count" {
+        if star || args.is_empty() {
+            return Ok(serde_json::json!(rows.len() as i64));
+        }
+        // count(column) — count non-null values
+        if let Expr::Identifier(col) = &args[0] {
+            let n = rows
+                .iter()
+                .filter_map(|r| r.get(col))
+                .filter(|v| !v.is_null())
+                .count();
+            return Ok(serde_json::json!(n as i64));
+        }
+        return Err("count(expr) only supports count(*) and count(column)".into());
+    }
+
+    // For sum/avg/min/max we need a column reference.
+    let col = match args.first() {
+        Some(Expr::Identifier(name)) => name.clone(),
+        Some(other) => {
+            return Err(format!(
+                "aggregate {lname}() requires a column name, got {other:?}"
+            ))
+        }
+        None => return Err(format!("aggregate {lname}() requires one argument")),
+    };
+
+    let values: Vec<f64> = rows
+        .iter()
+        .filter_map(|r| r.get(&col))
+        .filter_map(|v| v.as_f64().or_else(|| v.as_i64().map(|n| n as f64)))
+        .collect();
+
+    if values.is_empty() {
+        return Ok(serde_json::Value::Null);
+    }
+
+    let result = match lname.as_str() {
+        "sum" => values.iter().sum::<f64>(),
+        "avg" => values.iter().sum::<f64>() / values.len() as f64,
+        "min" => values.iter().cloned().fold(f64::INFINITY, f64::min),
+        "max" => values.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+        _ => unreachable!(),
+    };
+    Ok(serde_json::json!(result))
+}
+
+/// Run `stat` + `sha256sum` on a remote path via the given provisioner
+/// and produce one JSON row.  Errors at either step produce a row with
+/// `exists=false` and an `error` field — individual failures never abort
+/// the whole `SELECT`.
+fn build_file_stat_row(
+    provisioner: &kvmql_driver::ssh::SshResourceProvisioner,
+    provider_id: &str,
+    host: Option<&str>,
+    path: &str,
+) -> serde_json::Value {
+    let stat_res = provisioner.client.stat(path);
+    match stat_res {
+        Err(e) => serde_json::json!({
+            "provider_id": provider_id,
+            "host": host,
+            "path": path,
+            "present": false,
+            "error": format!("stat failed: {e}"),
+        }),
+        Ok(None) => serde_json::json!({
+            "provider_id": provider_id,
+            "host": host,
+            "path": path,
+            "present": false,
+            "size": null,
+            "owner": null,
+            "group": null,
+            "mode": null,
+            "sha256": null,
+            "modified_at": null,
+        }),
+        Ok(Some(stat)) => {
+            // SHA-256 is best-effort — a permission denied on a file we
+            // can stat but not read shouldn't turn the whole row into an
+            // error.  Propagate it as a null with a warning on the row.
+            let sha = provisioner
+                .client
+                .sha256(path)
+                .ok()
+                .flatten();
+            serde_json::json!({
+                "provider_id": provider_id,
+                "host": host,
+                "path": path,
+                "present": true,
+                "size": stat.size,
+                "owner": stat.owner,
+                "group": stat.group,
+                "mode": stat.mode,
+                "sha256": sha,
+                "modified_at": stat.modified_at,
+            })
+        }
+    }
+}
+
+/// Resolve a `file` resource `content` parameter into raw bytes (returned
+/// as a String because all our tracked content is UTF-8 right now).
+///
+/// Three cases, disambiguated by the leading scheme:
+/// - `file:./local/path` or `file:/abs/path` — read the local file
+///   verbatim, NO trim and NO world-readable check.  This is the common
+///   case for config files checked into the repo.
+/// - `env:...`, `op:...`, `vault:...`, etc. — delegate to
+///   [`CredentialResolver`], which handles secrets (trimmed, permission-
+///   checked for `file:` scheme, but we reach it only for non-file
+///   schemes here).
+/// - anything else — treat as a literal string and pass through.
+fn resolve_content_reference(raw: &str) -> Result<String, String> {
+    if let Some(rest) = raw.strip_prefix("file:") {
+        return std::fs::read_to_string(rest)
+            .map_err(|e| format!("failed to read {rest}: {e}"));
+    }
+    // Any other recognised credential scheme goes through the resolver.
+    let is_credential_scheme = ["env:", "op:", "vault:", "aws-sm:", "gcp-sm:", "azure-kv:", "sops:", "k8s:"]
+        .iter()
+        .any(|p| raw.starts_with(p));
+    if is_credential_scheme {
+        return kvmql_auth::resolver::CredentialResolver::resolve(raw)
+            .map_err(|e| format!("credential resolve failed: {e}"));
+    }
+    // Literal string (nginx conf inlined in the .kvmql file, etc.).
+    Ok(raw.to_string())
+}
+
+/// Parse optional SSH connection hints out of the provider's `labels`
+/// JSON (the same column we reuse for provider metadata across drivers).
+/// Recognised keys: `ssh_user`, `ssh_port`.  The DSL can set them via
+/// `ADD PROVIDER ... labels='{"ssh_user":"azureuser","ssh_port":22}'`.
+fn parse_ssh_connection_hints(labels: Option<&str>) -> (Option<String>, Option<u16>) {
+    let Some(raw) = labels else {
+        return (None, None);
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return (None, None);
+    };
+    let user = v
+        .get("ssh_user")
+        .and_then(|x| x.as_str())
+        .map(String::from);
+    let port = v
+        .get("ssh_port")
+        .and_then(|x| x.as_u64())
+        .and_then(|p| u16::try_from(p).ok());
+    (user, port)
+}
+
+/// Write resolved private-key material to a mode-0600 tempfile and return
+/// its path.  The file is leaked intentionally — OpenSSH needs a real
+/// path, and callers want the key to stay valid for the lifetime of the
+/// SSH client.
+fn write_ephemeral_key(key_material: &str) -> Result<std::path::PathBuf, String> {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir();
+    let filename = format!("orbi-ssh-{}.pem", uuid::Uuid::new_v4());
+    let path = dir.join(filename);
+
+    // Create with 0600 up-front so no other user ever sees the bytes.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts
+        .open(&path)
+        .map_err(|e| format!("failed to create ssh key tempfile: {e}"))?;
+    f.write_all(key_material.as_bytes())
+        .map_err(|e| format!("failed to write ssh key tempfile: {e}"))?;
+    // OpenSSH also requires the file to end with a newline for some
+    // key formats; add one if missing.
+    if !key_material.ends_with('\n') {
+        f.write_all(b"\n")
+            .map_err(|e| format!("failed to write ssh key tempfile newline: {e}"))?;
+    }
+    // Belt-and-braces: re-apply 0600 in case the create_new path ran
+    // without OpenOptionsExt on a platform that silently ignored it.
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    Ok(path)
+}
+
 fn get_param(params: &[Param], key: &str) -> Option<String> {
     params.iter().find(|p| p.key == key).and_then(|p| match &p.value {
         Value::String(s) => Some(s.clone()),
@@ -4407,6 +5294,10 @@ fn eval_predicate(pred: &Predicate, row: &serde_json::Value) -> bool {
         Predicate::Not(a) => !eval_predicate(a, row),
         Predicate::Grouped(inner) => eval_predicate(inner, row),
         Predicate::Comparison(cmp) => eval_comparison(cmp, row),
+        // EXISTS subqueries don't have a meaningful row-level interpretation.
+        // They are evaluated in the ASSERT path via the async helper; in the
+        // WHERE-clause path we conservatively treat them as true (no-op).
+        Predicate::Exists(_) => true,
     }
 }
 
@@ -4489,6 +5380,172 @@ fn simple_like(hay: &str, pattern: &str) -> bool {
         return hay.starts_with(prefix);
     }
     hay == pattern
+}
+
+// ---------------------------------------------------------------------------
+// Table-valued functions (network verification)
+// ---------------------------------------------------------------------------
+
+/// Dispatch a `SELECT * FROM <fn>(...)` call to the network verification
+/// module. Each function returns a `Vec<serde_json::Value>` of rows.
+async fn run_table_function(
+    fc: &kvmql_parser::ast::FunctionCall,
+) -> Result<Vec<serde_json::Value>, String> {
+    use crate::network::NetworkFunctions;
+
+    fn arg_str(args: &[Expr], idx: usize) -> Result<String, String> {
+        match args.get(idx) {
+            Some(Expr::StringLit(s)) => Ok(s.clone()),
+            Some(other) => Err(format!(
+                "expected string literal at arg {}, got {:?}",
+                idx, other
+            )),
+            None => Err(format!("missing required arg {}", idx)),
+        }
+    }
+
+    fn arg_int(args: &[Expr], idx: usize) -> Result<i64, String> {
+        match args.get(idx) {
+            Some(Expr::Integer(n)) => Ok(*n),
+            Some(other) => Err(format!(
+                "expected integer at arg {}, got {:?}",
+                idx, other
+            )),
+            None => Err(format!("missing required arg {}", idx)),
+        }
+    }
+
+    fn arg_str_opt(args: &[Expr], idx: usize) -> Option<String> {
+        match args.get(idx) {
+            Some(Expr::StringLit(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    fn arg_int_opt(args: &[Expr], idx: usize) -> Option<i64> {
+        match args.get(idx) {
+            Some(Expr::Integer(n)) => Some(*n),
+            _ => None,
+        }
+    }
+
+    match fc.name.as_str() {
+        "dns_lookup" => {
+            let name = arg_str(&fc.args, 0)?;
+            let record_type = arg_str_opt(&fc.args, 1);
+            // 3rd arg (resolver override) is reserved for future hickory-resolver work.
+            NetworkFunctions::dns_lookup(&name, record_type.as_deref()).await
+        }
+        "reverse_dns" => {
+            let ip = arg_str(&fc.args, 0)?;
+            NetworkFunctions::reverse_dns(&ip).await
+        }
+        "tcp_probe" => {
+            let host = arg_str(&fc.args, 0)?;
+            let port = arg_int(&fc.args, 1)? as u16;
+            let timeout_ms = arg_int_opt(&fc.args, 2).map(|n| n as u64);
+            NetworkFunctions::tcp_probe(&host, port, timeout_ms).await
+        }
+        "http_probe" => {
+            let url = arg_str(&fc.args, 0)?;
+            NetworkFunctions::http_probe(&url).await
+        }
+        "tls_cert" => {
+            let host = arg_str(&fc.args, 0)?;
+            let port = arg_int(&fc.args, 1)? as u16;
+            NetworkFunctions::tls_cert(&host, port).await
+        }
+        other => Err(format!("unknown table function: {}", other)),
+    }
+}
+
+/// Compare two JSON scalar values using a `ComparisonOp`. Used by ASSERT
+/// when both sides of a comparison have been resolved to concrete values.
+fn compare_json(lhs: &serde_json::Value, op: &ComparisonOp, rhs: &serde_json::Value) -> bool {
+    match op {
+        ComparisonOp::Eq => lhs == rhs,
+        ComparisonOp::NotEq => lhs != rhs,
+        ComparisonOp::IsNull => lhs.is_null(),
+        ComparisonOp::IsNotNull => !lhs.is_null(),
+        ComparisonOp::Gt | ComparisonOp::Lt | ComparisonOp::GtEq | ComparisonOp::LtEq => {
+            let l = lhs.as_f64();
+            let r = rhs.as_f64();
+            // Fall back to string comparison for date-like strings
+            if let (Some(a), Some(b)) = (l, r) {
+                match op {
+                    ComparisonOp::Gt => a > b,
+                    ComparisonOp::Lt => a < b,
+                    ComparisonOp::GtEq => a >= b,
+                    ComparisonOp::LtEq => a <= b,
+                    _ => unreachable!(),
+                }
+            } else if let (Some(a), Some(b)) = (lhs.as_str(), rhs.as_str()) {
+                match op {
+                    ComparisonOp::Gt => a > b,
+                    ComparisonOp::Lt => a < b,
+                    ComparisonOp::GtEq => a >= b,
+                    ComparisonOp::LtEq => a <= b,
+                    _ => unreachable!(),
+                }
+            } else {
+                false
+            }
+        }
+        ComparisonOp::Like => {
+            if let (Some(h), Some(p)) = (lhs.as_str(), rhs.as_str()) {
+                simple_like(h, p)
+            } else {
+                false
+            }
+        }
+        ComparisonOp::In | ComparisonOp::NotIn => {
+            // IN/NOT IN against a scalar RHS reduces to equality
+            let eq = lhs == rhs;
+            if matches!(op, ComparisonOp::In) {
+                eq
+            } else {
+                !eq
+            }
+        }
+    }
+}
+
+/// Apply a binary operator (`+`, `-`, `||`) to two resolved JSON values.
+fn eval_binary_op(
+    lhs: &serde_json::Value,
+    op: &kvmql_parser::ast::BinaryOp,
+    rhs: &serde_json::Value,
+) -> serde_json::Value {
+    use kvmql_parser::ast::BinaryOp;
+    match op {
+        BinaryOp::Concat => {
+            let ls = json_to_concat_string(lhs);
+            let rs = json_to_concat_string(rhs);
+            serde_json::Value::String(format!("{}{}", ls, rs))
+        }
+        BinaryOp::Add => {
+            if let (Some(a), Some(b)) = (lhs.as_f64(), rhs.as_f64()) {
+                serde_json::json!(a + b)
+            } else {
+                serde_json::Value::Null
+            }
+        }
+        BinaryOp::Subtract => {
+            if let (Some(a), Some(b)) = (lhs.as_f64(), rhs.as_f64()) {
+                serde_json::json!(a - b)
+            } else {
+                serde_json::Value::Null
+            }
+        }
+    }
+}
+
+fn json_to_concat_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------

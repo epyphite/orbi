@@ -58,6 +58,7 @@ impl fmt::Display for Statement {
             Statement::Upgrade(s) => write!(f, "{s}"),
             Statement::Explain(inner) => write!(f, "EXPLAIN {inner}"),
             Statement::Rollback(s) => write!(f, "{s}"),
+            Statement::Assert(s) => write!(f, "{s}"),
         }
     }
 }
@@ -86,6 +87,20 @@ impl fmt::Display for Field {
         match self {
             Field::Simple(name) => write!(f, "{name}"),
             Field::Qualified(table, field) => write!(f, "{table}.{field}"),
+            Field::FnCall { name, star, args } => {
+                write!(f, "{name}(")?;
+                if *star {
+                    write!(f, "*")?;
+                } else {
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{a}")?;
+                    }
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -170,6 +185,7 @@ impl fmt::Display for Predicate {
             Predicate::Not(inner) => write!(f, "NOT {inner}"),
             Predicate::Comparison(cmp) => write!(f, "{cmp}"),
             Predicate::Grouped(inner) => write!(f, "({inner})"),
+            Predicate::Exists(select) => write!(f, "EXISTS ({select})"),
         }
     }
 }
@@ -219,6 +235,7 @@ impl fmt::Display for Expr {
             Expr::BinaryOp { left, op, right } => write!(f, "{left} {op} {right}"),
             Expr::Grouped(inner) => write!(f, "({inner})"),
             Expr::Variable(s) => write!(f, "@{s}"),
+            Expr::Subquery(select) => write!(f, "({select})"),
         }
     }
 }
@@ -228,6 +245,7 @@ impl fmt::Display for BinaryOp {
         match self {
             BinaryOp::Add => write!(f, "+"),
             BinaryOp::Subtract => write!(f, "-"),
+            BinaryOp::Concat => write!(f, "||"),
         }
     }
 }
@@ -311,6 +329,25 @@ impl fmt::Display for Param {
 }
 
 // ── Statement Display Impls ────────────────────────────────────────
+
+impl fmt::Display for SelectSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SelectSource::Noun(n) => write!(f, "{n}"),
+            SelectSource::Function(fc) => write!(f, "{fc}"),
+        }
+    }
+}
+
+impl fmt::Display for AssertStmt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ASSERT {}", self.condition)?;
+        if let Some(ref msg) = self.message {
+            write!(f, ", {}", quote_string(msg))?;
+        }
+        Ok(())
+    }
+}
 
 impl fmt::Display for SelectStmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -877,7 +914,7 @@ mod tests {
     fn display_select_simple() {
         let stmt = SelectStmt {
             fields: FieldList::All,
-            from: Noun::Microvms,
+            from: SelectSource::Noun(Noun::Microvms),
             on: None,
             where_clause: None,
             group_by: None,
@@ -895,7 +932,7 @@ mod tests {
                 Field::Simple("id".into()),
                 Field::Simple("status".into()),
             ]),
-            from: Noun::Microvms,
+            from: SelectSource::Noun(Noun::Microvms),
             on: Some(TargetSpec {
                 target: TargetKind::Provider("aws-east".into()),
                 live: true,
@@ -1072,7 +1109,7 @@ mod tests {
         let program = Parser::parse("SELECT * FROM plans;").unwrap();
         assert_eq!(program.statements.len(), 1);
         if let Statement::Select(ref s) = program.statements[0] {
-            assert_eq!(s.from, Noun::Plans);
+            assert_eq!(s.from, SelectSource::Noun(Noun::Plans));
             assert_eq!(s.to_string(), "SELECT * FROM plans");
         } else {
             panic!("expected SELECT statement");

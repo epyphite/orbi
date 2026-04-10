@@ -231,8 +231,9 @@ impl Parser {
             Some(Token::Scale) => self.parse_scale().map(Statement::Scale),
             Some(Token::Upgrade) => self.parse_upgrade().map(Statement::Upgrade),
             Some(Token::Rollback) => self.parse_rollback().map(Statement::Rollback),
+            Some(Token::Assert) => self.parse_assert().map(Statement::Assert),
             Some(_) => Err(self.error_expected(
-                "statement keyword (SELECT, CREATE, ALTER, DESTROY, BACKUP, SCALE, UPGRADE, ROLLBACK, ...)",
+                "statement keyword (SELECT, CREATE, ALTER, DESTROY, BACKUP, SCALE, UPGRADE, ROLLBACK, ASSERT, ...)",
             )),
             None => Err(self.error_here(ParseErrorKind::UnexpectedEof)),
         }
@@ -368,7 +369,7 @@ impl Parser {
         self.expect(&Token::Select)?;
         let fields = self.parse_field_list()?;
         self.expect(&Token::From)?;
-        let from = self.parse_noun()?;
+        let from = self.parse_select_source()?;
 
         let on = if self.check(&Token::On) {
             Some(self.parse_target_spec()?)
@@ -740,6 +741,17 @@ impl Parser {
         };
         Ok(RollbackStmt { target })
     }
+
+    fn parse_assert(&mut self) -> Result<AssertStmt, ParseError> {
+        self.expect(&Token::Assert)?;
+        let condition = self.parse_predicate()?;
+        let message = if self.eat(&Token::Comma) {
+            Some(self.expect_string()?)
+        } else {
+            None
+        };
+        Ok(AssertStmt { condition, message })
+    }
 }
 
 // ── WATCH ────────────────────────────────────────────────────────────
@@ -1043,12 +1055,62 @@ impl Parser {
 
     fn parse_field(&mut self) -> Result<Field, ParseError> {
         let name = self.expect_ident_like()?;
+        // Function call in projection: `count(*)`, `sum(x)`, etc.
+        if self.check(&Token::LParen) {
+            self.expect(&Token::LParen)?;
+            if self.eat(&Token::Star) {
+                self.expect(&Token::RParen)?;
+                return Ok(Field::FnCall {
+                    name,
+                    star: true,
+                    args: vec![],
+                });
+            }
+            let mut args = Vec::new();
+            if !self.check(&Token::RParen) {
+                args.push(self.parse_expr()?);
+                while self.eat(&Token::Comma) {
+                    args.push(self.parse_expr()?);
+                }
+            }
+            self.expect(&Token::RParen)?;
+            return Ok(Field::FnCall {
+                name,
+                star: false,
+                args,
+            });
+        }
         if self.eat(&Token::Dot) {
             let sub = self.expect_ident_like()?;
             Ok(Field::Qualified(name, sub))
         } else {
             Ok(Field::Simple(name))
         }
+    }
+
+    /// Parse the target of a `FROM` clause: either a built-in noun or a
+    /// table-valued function call (e.g. `dns_lookup('example.com', 'A')`).
+    fn parse_select_source(&mut self) -> Result<SelectSource, ParseError> {
+        // Look-ahead: if we see an identifier-like token immediately followed
+        // by `(`, it's a table-valued function. Otherwise parse a noun.
+        let is_function = self.peek_ident_like().is_some()
+            && self.peek_at(1) == Some(&Token::LParen);
+
+        if !is_function {
+            return self.parse_noun().map(SelectSource::Noun);
+        }
+
+        let name = self.expect_ident_like()?;
+        self.expect(&Token::LParen)?;
+        let mut args = Vec::new();
+        if !self.check(&Token::RParen) {
+            args.push(self.parse_expr()?);
+            while self.eat(&Token::Comma) {
+                args.push(self.parse_expr()?);
+            }
+        }
+        self.expect(&Token::RParen)?;
+        Ok(SelectSource::Function(FunctionCall { name, args }))
     }
 
     fn parse_noun(&mut self) -> Result<Noun, ParseError> {
@@ -1204,6 +1266,20 @@ impl Parser {
     }
 
     fn parse_primary_predicate(&mut self) -> Result<Predicate, ParseError> {
+        // EXISTS ( SELECT ... )
+        if self.check(&Token::Exists) {
+            self.advance();
+            self.expect(&Token::LParen)?;
+            let select = self.parse_select()?;
+            self.expect(&Token::RParen)?;
+            return Ok(Predicate::Exists(Box::new(select)));
+        }
+        // `( SELECT ... )` at this position is a scalar subquery that belongs
+        // to a comparison expression, not a grouped predicate. Defer to
+        // `parse_comparison` so the expression parser can handle it.
+        if self.check(&Token::LParen) && matches!(self.peek_at(1), Some(Token::Select)) {
+            return self.parse_comparison().map(Predicate::Comparison);
+        }
         if self.eat(&Token::LParen) {
             let inner = self.parse_predicate()?;
             self.expect(&Token::RParen)?;
@@ -1269,29 +1345,24 @@ impl Parser {
 
 impl Parser {
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        let left = self.parse_primary_expr()?;
+        let mut left = self.parse_primary_expr()?;
 
-        // Check for arithmetic operators (+ / -)
-        match self.peek() {
-            Some(Token::Plus) => {
-                self.advance();
-                let right = self.parse_primary_expr()?;
-                Ok(Expr::BinaryOp {
-                    left: Box::new(left),
-                    op: BinaryOp::Add,
-                    right: Box::new(right),
-                })
-            }
-            Some(Token::Minus) => {
-                self.advance();
-                let right = self.parse_primary_expr()?;
-                Ok(Expr::BinaryOp {
-                    left: Box::new(left),
-                    op: BinaryOp::Subtract,
-                    right: Box::new(right),
-                })
-            }
-            _ => Ok(left),
+        // Left-fold chains of `+`, `-`, and `||` at the same precedence
+        // level. For our use case keeping concat at arithmetic level is fine.
+        loop {
+            let op = match self.peek() {
+                Some(Token::Plus) => BinaryOp::Add,
+                Some(Token::Minus) => BinaryOp::Subtract,
+                Some(Token::Concat) => BinaryOp::Concat,
+                _ => return Ok(left),
+            };
+            self.advance();
+            let right = self.parse_primary_expr()?;
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
         }
     }
 
@@ -1299,6 +1370,12 @@ impl Parser {
         match self.peek().cloned() {
             Some(Token::LParen) => {
                 self.advance();
+                // `( SELECT ... )` is a scalar subquery.
+                if matches!(self.peek(), Some(Token::Select)) {
+                    let select = self.parse_select()?;
+                    self.expect(&Token::RParen)?;
+                    return Ok(Expr::Subquery(Box::new(select)));
+                }
                 let inner = self.parse_expr()?;
                 self.expect(&Token::RParen)?;
                 Ok(Expr::Grouped(Box::new(inner)))

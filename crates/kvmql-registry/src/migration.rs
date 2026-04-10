@@ -178,6 +178,38 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
         info!("registry schema v6 applied successfully");
     }
 
+    if current_version < 7 {
+        info!("applying registry schema v7 — add ssh provider type");
+        // Expand the providers type CHECK constraint to accept 'ssh'.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS providers_v7 (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL CHECK (type IN ('kvm','aws','gcp','azure','cloudflare','github','kubernetes','ssh')),
+                driver TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('healthy','degraded','offline','unknown')),
+                enabled INTEGER NOT NULL DEFAULT 1,
+                host TEXT,
+                region TEXT,
+                auth_ref TEXT NOT NULL,
+                labels TEXT,
+                latency_ms INTEGER,
+                added_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_seen TEXT
+            );
+            INSERT INTO providers_v7 SELECT * FROM providers;
+            DROP TABLE providers;
+            ALTER TABLE providers_v7 RENAME TO providers;"
+        )
+        .map_err(|e| RegistryError::Migration(format!("v7 DDL failed: {e}")))?;
+
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) VALUES (?1, datetime('now'), ?2)",
+            rusqlite::params![7, "add ssh provider type for file/directory/symlink resources"],
+        )?;
+
+        info!("registry schema v7 applied successfully");
+    }
+
     Ok(())
 }
 
@@ -195,6 +227,6 @@ mod tests {
         let version: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
     }
 }

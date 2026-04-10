@@ -94,6 +94,8 @@ pub enum Token {
     Explain,
     #[token("ROLLBACK", ignore(ascii_case))]
     Rollback,
+    #[token("ASSERT", ignore(ascii_case))]
+    Assert,
 
     // ── Clause keywords ──────────────────────────────────────────────
     #[token("FROM", ignore(ascii_case))]
@@ -216,6 +218,10 @@ pub enum Token {
     Plus,
     #[token("-")]
     Minus,
+
+    // ── String concatenation (must come before any other `|` token) ───
+    #[token("||")]
+    Concat,
 
     // ── OFFSET keyword ────────────────────────────────────────────────
     #[token("OFFSET", ignore(ascii_case))]
@@ -346,6 +352,8 @@ impl fmt::Display for Token {
             Token::Is => write!(f, "IS"),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
+            Token::Concat => write!(f, "||"),
+            Token::Assert => write!(f, "ASSERT"),
             Token::Offset => write!(f, "OFFSET"),
             Token::Duration(s) => write!(f, "{s}"),
             Token::Float(v) => write!(f, "{v}"),

@@ -48,6 +48,7 @@ pub enum Statement {
     Upgrade(UpgradeStmt),
     Explain(Box<Statement>),
     Rollback(RollbackStmt),
+    Assert(AssertStmt),
 }
 
 // ── Fields and Selection ───────────────────────────────────────────
@@ -62,6 +63,14 @@ pub enum FieldList {
 pub enum Field {
     Simple(String),
     Qualified(String, String),
+    /// Aggregate or scalar function applied in a SELECT projection.
+    /// `count(*)` is represented as `FnCall { name: "count", star: true, args: [] }`.
+    /// Other forms like `sum(price)` carry their args in `args`.
+    FnCall {
+        name: String,
+        star: bool,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +148,8 @@ pub enum Predicate {
     Not(Box<Predicate>),
     Comparison(Comparison),
     Grouped(Box<Predicate>),
+    /// `EXISTS ( SELECT ... )` — true iff the inner SELECT returns >=1 row.
+    Exists(Box<SelectStmt>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -182,12 +193,17 @@ pub enum Expr {
     },
     Grouped(Box<Expr>),
     Variable(String),
+    /// A scalar subquery `( SELECT ... )`. Evaluates to the first column of
+    /// the first row, or NULL if the subquery returned no rows.
+    Subquery(Box<SelectStmt>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
     Add,
     Subtract,
+    /// SQL string concatenation (`||`).
+    Concat,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -241,16 +257,32 @@ pub type SetItem = Param;
 
 // ── Statement Structs ──────────────────────────────────────────────
 
+/// A SELECT `FROM` clause can target either a built-in noun (registry/k8s
+/// table) or a table-valued function call such as `dns_lookup('example.com')`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectSource {
+    Noun(Noun),
+    Function(FunctionCall),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStmt {
     pub fields: FieldList,
-    pub from: Noun,
+    pub from: SelectSource,
     pub on: Option<TargetSpec>,
     pub where_clause: Option<Predicate>,
     pub group_by: Option<FieldList>,
     pub order_by: Option<Vec<OrderItem>>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssertStmt {
+    /// The condition must hold. If it evaluates to false, the ASSERT fails
+    /// and the engine returns an error (optionally carrying `message`).
+    pub condition: Predicate,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
