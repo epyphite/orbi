@@ -14,6 +14,7 @@
 
 pub mod client;
 pub mod docker;
+pub mod letsencrypt;
 pub mod nginx;
 pub mod resources;
 pub mod systemd;

@@ -2804,6 +2804,7 @@ impl<'a> Executor<'a> {
                         | "docker_volume"
                         | "docker_network"
                         | "docker_compose"
+                        | "letsencrypt_cert"
                 );
 
             if is_ssh {
@@ -2841,6 +2842,38 @@ impl<'a> Executor<'a> {
                                 return Err(format!(
                                     "failed to resolve content reference: {e}"
                                 ));
+                            }
+                        }
+                    }
+                }
+
+                // For letsencrypt_cert with dns_provider='cf', resolve the
+                // Cloudflare API token from the 'cf' provider and inject
+                // it so the certbot plugin can authenticate.
+                if s.resource_type == "letsencrypt_cert" {
+                    let dns_prov = cfg_with_content
+                        .get("dns_provider")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("cf");
+                    if dns_prov == "cf" {
+                        if let Some(obj) = cfg_with_content.as_object_mut() {
+                            if !obj.contains_key("cf_api_token") {
+                                // Look up the 'cf' provider's auth_ref
+                                let token = self
+                                    .ctx
+                                    .registry
+                                    .get_provider("cf")
+                                    .ok()
+                                    .map(|p| p.auth_ref.clone())
+                                    .and_then(|a| {
+                                        kvmql_auth::resolver::CredentialResolver::resolve(&a).ok()
+                                    });
+                                if let Some(t) = token {
+                                    obj.insert(
+                                        "cf_api_token".into(),
+                                        serde_json::Value::String(t),
+                                    );
+                                }
                             }
                         }
                     }

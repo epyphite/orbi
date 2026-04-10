@@ -78,6 +78,15 @@ impl SshResourceProvisioner {
                     outputs: r.outputs,
                 })
             }
+            // letsencrypt
+            "letsencrypt_cert" => {
+                let p = super::letsencrypt::LetsencryptProvisioner::new(&self.client);
+                let r = p.create(resource_type, params)?;
+                Ok(ProvisionResult {
+                    status: r.status,
+                    outputs: r.outputs,
+                })
+            }
             other => Err(format!("unsupported ssh resource type: {other}")),
         }
     }
@@ -111,6 +120,10 @@ impl SshResourceProvisioner {
             }
             "docker_container" | "docker_volume" | "docker_network" | "docker_compose" => {
                 super::docker::DockerProvisioner::new(&self.client)
+                    .delete(resource_type, id, params)
+            }
+            "letsencrypt_cert" => {
+                super::letsencrypt::LetsencryptProvisioner::new(&self.client)
                     .delete(resource_type, id, params)
             }
             other => Err(format!("unsupported ssh resource type: {other}")),

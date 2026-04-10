@@ -48,6 +48,22 @@ CREATE RESOURCE 'systemd_timer' id='cert-renew'
   enabled=true
   ON PROVIDER 'earth-ssh';
 
+-- ── TLS certificate ───────────────────────────────────────────────
+
+-- Cloudflare provider for DNS-01 challenge (cross-provider composition)
+ADD IF NOT EXISTS PROVIDER id='cf'
+  type='cloudflare'
+  auth='op:Infrastructure/Cloudflare-API-Token';
+
+CREATE RESOURCE 'letsencrypt_cert' id='cert-earth'
+  domains=['earth.epy.digital']
+  email='admin@epy.digital'
+  challenge='dns-01'
+  dns_provider='cf'
+  auto_renew=true
+  renew_before_days=30
+  ON PROVIDER 'earth-ssh';
+
 -- ── nginx reverse proxy ───────────────────────────────────────────
 
 CREATE RESOURCE 'nginx_proxy' id='earth.epy.digital'
