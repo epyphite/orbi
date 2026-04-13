@@ -309,6 +309,94 @@ impl CloudflareResourceProvisioner {
         Ok(())
     }
 
+    // ── Discovery ────────────────────────────────────────────
+
+    /// Discover existing Cloudflare resources: zones and their DNS records.
+    pub fn discover(&self) -> Result<Vec<Value>, String> {
+        let client = self.client()?;
+        let mut results = Vec::new();
+
+        // Discover zones
+        let zones_raw = client
+            .get("/zones?per_page=50")
+            .map_err(|e| format!("failed to list zones: {e}"))?;
+
+        let zones = match zones_raw.as_array() {
+            Some(arr) => arr.clone(),
+            None => return Ok(results),
+        };
+
+        for zone in &zones {
+            let zone_id = zone.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let zone_name = zone.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if zone_id.is_empty() || zone_name.is_empty() {
+                continue;
+            }
+
+            let plan_name = zone
+                .get("plan")
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            results.push(json!({
+                "id": zone_name,
+                "resource_type": "cf_zone",
+                "name": zone_name,
+                "config": {
+                    "type": zone.get("type").and_then(|v| v.as_str()).unwrap_or("full"),
+                },
+                "outputs": {
+                    "zone_id": zone_id,
+                    "name": zone_name,
+                    "status": zone.get("status"),
+                    "plan": plan_name,
+                    "name_servers": zone.get("name_servers"),
+                },
+            }));
+
+            // Discover DNS records for this zone
+            let records_raw = client
+                .get(&format!("/zones/{}/dns_records?per_page=100", zone_id))
+                .map_err(|e| format!("failed to list dns records for {}: {e}", zone_name))?;
+
+            if let Some(records) = records_raw.as_array() {
+                for record in records {
+                    let record_id = record.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let record_name = record.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let record_type = record.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    if record_id.is_empty() {
+                        continue;
+                    }
+
+                    results.push(json!({
+                        "id": record_id,
+                        "resource_type": "cf_dns_record",
+                        "name": record_name,
+                        "config": {
+                            "zone": zone_name,
+                            "type": record_type,
+                            "content": record.get("content"),
+                            "ttl": record.get("ttl"),
+                            "proxied": record.get("proxied"),
+                        },
+                        "outputs": {
+                            "record_id": record_id,
+                            "zone_id": zone_id,
+                            "name": record_name,
+                            "type": record_type,
+                            "content": record.get("content"),
+                            "ttl": record.get("ttl"),
+                            "proxied": record.get("proxied"),
+                        },
+                    }));
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     // ── build_create_args (for EXPLAIN / dry-run) ────────────
 
     /// Build a human-readable description of the API calls a create would

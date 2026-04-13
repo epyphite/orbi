@@ -1169,6 +1169,257 @@ impl AzureResourceProvisioner {
         }
         Ok(args)
     }
+
+    // ── Discovery ───────────────────────────────────────────────────
+
+    /// Discover all Azure resources across supported types by shelling out to
+    /// `az` CLI list commands.  Returns a flat `Vec<Value>` where each entry
+    /// has at minimum: `id`, `resource_type`, `name`, `config`, `outputs`.
+    pub fn discover(&self) -> Result<Vec<Value>, String> {
+        let mut all: Vec<Value> = Vec::new();
+
+        let collectors: Vec<(&str, fn(&Self) -> Result<Vec<Value>, String>)> = vec![
+            ("vm", Self::discover_vms),
+            ("postgres", Self::discover_postgres),
+            ("redis", Self::discover_redis),
+            ("aks", Self::discover_aks),
+            ("vnet", Self::discover_vnets),
+            ("nsg", Self::discover_nsgs),
+            ("storage_account", Self::discover_storage_accounts),
+            ("keyvault", Self::discover_keyvaults),
+        ];
+
+        for (resource_type, collector) in collectors {
+            match collector(self) {
+                Ok(items) => all.extend(items),
+                Err(e) => {
+                    // Log the failure as a warning entry so callers can see
+                    // which types failed without aborting the whole discovery.
+                    all.push(serde_json::json!({
+                        "id": format!("_warning_{resource_type}"),
+                        "resource_type": resource_type,
+                        "name": format!("_warning_{resource_type}"),
+                        "config": {},
+                        "outputs": {
+                            "warning": format!("discovery failed for {resource_type}: {e}")
+                        }
+                    }));
+                }
+            }
+        }
+
+        Ok(all)
+    }
+
+    /// Run an `az ... list` command and return the parsed JSON array, or an
+    /// empty vec when the output is empty/null.
+    fn run_az_list(&self, args: &[&str]) -> Result<Vec<Value>, String> {
+        let result = self.run_az(args)?;
+        match result {
+            Value::Array(arr) => Ok(arr),
+            Value::Null => Ok(Vec::new()),
+            other => Ok(vec![other]),
+        }
+    }
+
+    fn discover_vms(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["vm", "list", "-d"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "vm",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "size": v.get("hardwareProfile")
+                        .and_then(|hp| hp.get("vmSize"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(""),
+                    "os": v.get("storageProfile")
+                        .and_then(|sp| sp.get("osDisk"))
+                        .and_then(|od| od.get("osType"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(""),
+                    "location": str_field(&v, "location"),
+                },
+                "outputs": {
+                    "state": str_field(&v, "powerState"),
+                    "public_ip": str_field(&v, "publicIps"),
+                    "private_ip": str_field(&v, "privateIps"),
+                }
+            })
+        }).collect())
+    }
+
+    fn discover_postgres(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["postgres", "flexible-server", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "postgres",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "version": str_field(&v, "version"),
+                    "sku": v.get("sku").and_then(|s| s.get("name"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                    "storage_gb": v.get("storage")
+                        .and_then(|s| s.get("storageSizeGb"))
+                        .and_then(|s| s.as_u64()).unwrap_or(0),
+                },
+                "outputs": {
+                    "state": str_field(&v, "state"),
+                    "fqdn": str_field(&v, "fullyQualifiedDomainName"),
+                }
+            })
+        }).collect())
+    }
+
+    fn discover_redis(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["redis", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "redis",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "sku": v.get("sku").and_then(|s| s.get("name"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                    "minimum_tls_version": str_field(&v, "minimumTlsVersion"),
+                },
+                "outputs": {
+                    "host_name": str_field(&v, "hostName"),
+                    "ssl_port": v.get("sslPort").and_then(|s| s.as_u64()).unwrap_or(0),
+                }
+            })
+        }).collect())
+    }
+
+    fn discover_aks(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["aks", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            let node_count = v.get("agentPoolProfiles")
+                .and_then(|a| a.as_array())
+                .and_then(|a| a.first())
+                .and_then(|p| p.get("count"))
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
+            let vm_size = v.get("agentPoolProfiles")
+                .and_then(|a| a.as_array())
+                .and_then(|a| a.first())
+                .and_then(|p| p.get("vmSize"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "aks",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "kubernetes_version": str_field(&v, "kubernetesVersion"),
+                    "node_count": node_count,
+                    "vm_size": vm_size,
+                },
+                "outputs": {
+                    "fqdn": str_field(&v, "fqdn"),
+                    "state": v.get("powerState")
+                        .and_then(|ps| ps.get("code"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(""),
+                }
+            })
+        }).collect())
+    }
+
+    fn discover_vnets(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["network", "vnet", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            let address_space = v.get("addressSpace")
+                .and_then(|a| a.get("addressPrefixes"))
+                .cloned()
+                .unwrap_or(Value::Array(Vec::new()));
+            let subnet_count = v.get("subnets")
+                .and_then(|s| s.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            serde_json::json!({
+                "id": name,
+                "resource_type": "vnet",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "address_space": address_space,
+                    "subnet_count": subnet_count,
+                },
+                "outputs": {}
+            })
+        }).collect())
+    }
+
+    fn discover_nsgs(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["network", "nsg", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            let rule_count = v.get("securityRules")
+                .and_then(|s| s.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            serde_json::json!({
+                "id": name,
+                "resource_type": "nsg",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "rule_count": rule_count,
+                    "location": str_field(&v, "location"),
+                },
+                "outputs": {}
+            })
+        }).collect())
+    }
+
+    fn discover_storage_accounts(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["storage", "account", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "storage_account",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "sku": v.get("sku").and_then(|s| s.get("name"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                    "location": str_field(&v, "location"),
+                    "minimum_tls_version": str_field(&v, "minimumTlsVersion"),
+                },
+                "outputs": {}
+            })
+        }).collect())
+    }
+
+    fn discover_keyvaults(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["keyvault", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "keyvault",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "location": str_field(&v, "location"),
+                },
+                "outputs": {}
+            })
+        }).collect())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1189,6 +1440,11 @@ fn param_str_or(params: &Value, key: &str, default: &str) -> String {
         .and_then(|v| v.as_str())
         .unwrap_or(default)
         .to_string()
+}
+
+/// Extract a string field from a JSON object, returning `""` when missing.
+fn str_field<'a>(v: &'a Value, key: &str) -> &'a str {
+    v.get(key).and_then(|s| s.as_str()).unwrap_or("")
 }
 
 /// Convert a JSON value to a string suitable for command-line arguments.
@@ -1978,5 +2234,410 @@ mod tests {
         let params = serde_json::json!({"kubernetes_version": "1.29"});
         let err = p.build_upgrade_args("redis", "cache1", &params).unwrap_err();
         assert!(err.contains("upgrade not supported"));
+    }
+
+    // ── Discovery parsing tests ─────────────────────────────────────
+
+    #[test]
+    fn test_discover_parse_vm_output() {
+        let sample = serde_json::json!([
+            {
+                "name": "web-vm-01",
+                "resourceGroup": "rg-prod",
+                "hardwareProfile": { "vmSize": "Standard_D4s_v3" },
+                "storageProfile": { "osDisk": { "osType": "Linux" } },
+                "powerState": "VM running",
+                "publicIps": "20.1.2.3",
+                "privateIps": "10.0.0.5",
+                "location": "eastus2"
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "vm",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "size": v.get("hardwareProfile")
+                        .and_then(|hp| hp.get("vmSize"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(""),
+                    "os": v.get("storageProfile")
+                        .and_then(|sp| sp.get("osDisk"))
+                        .and_then(|od| od.get("osType"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(""),
+                    "location": str_field(v, "location"),
+                },
+                "outputs": {
+                    "state": str_field(v, "powerState"),
+                    "public_ip": str_field(v, "publicIps"),
+                    "private_ip": str_field(v, "privateIps"),
+                }
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["id"], "web-vm-01");
+        assert_eq!(items[0]["resource_type"], "vm");
+        assert_eq!(items[0]["config"]["size"], "Standard_D4s_v3");
+        assert_eq!(items[0]["config"]["os"], "Linux");
+        assert_eq!(items[0]["config"]["location"], "eastus2");
+        assert_eq!(items[0]["outputs"]["state"], "VM running");
+        assert_eq!(items[0]["outputs"]["public_ip"], "20.1.2.3");
+        assert_eq!(items[0]["outputs"]["private_ip"], "10.0.0.5");
+    }
+
+    #[test]
+    fn test_discover_parse_postgres_output() {
+        let sample = serde_json::json!([
+            {
+                "name": "acme-pg",
+                "resourceGroup": "rg-data",
+                "version": "16",
+                "sku": { "name": "Standard_B1ms", "tier": "Burstable" },
+                "storage": { "storageSizeGb": 128 },
+                "state": "Ready",
+                "fullyQualifiedDomainName": "acme-pg.postgres.database.azure.com"
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "postgres",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "version": str_field(v, "version"),
+                    "sku": v.get("sku").and_then(|s| s.get("name"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                    "storage_gb": v.get("storage")
+                        .and_then(|s| s.get("storageSizeGb"))
+                        .and_then(|s| s.as_u64()).unwrap_or(0),
+                },
+                "outputs": {
+                    "state": str_field(v, "state"),
+                    "fqdn": str_field(v, "fullyQualifiedDomainName"),
+                }
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "acme-pg");
+        assert_eq!(items[0]["config"]["version"], "16");
+        assert_eq!(items[0]["config"]["sku"], "Standard_B1ms");
+        assert_eq!(items[0]["config"]["storage_gb"], 128);
+        assert_eq!(items[0]["outputs"]["state"], "Ready");
+        assert_eq!(items[0]["outputs"]["fqdn"], "acme-pg.postgres.database.azure.com");
+    }
+
+    #[test]
+    fn test_discover_parse_aks_output() {
+        let sample = serde_json::json!([
+            {
+                "name": "prod-k8s",
+                "resourceGroup": "rg-k8s",
+                "kubernetesVersion": "1.28.5",
+                "agentPoolProfiles": [
+                    { "count": 5, "vmSize": "Standard_D8s_v3" }
+                ],
+                "fqdn": "prod-k8s-dns-abc123.hcp.eastus.azmk8s.io",
+                "powerState": { "code": "Running" }
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            let node_count = v.get("agentPoolProfiles")
+                .and_then(|a| a.as_array())
+                .and_then(|a| a.first())
+                .and_then(|p| p.get("count"))
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
+            let vm_size = v.get("agentPoolProfiles")
+                .and_then(|a| a.as_array())
+                .and_then(|a| a.first())
+                .and_then(|p| p.get("vmSize"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "aks",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "kubernetes_version": str_field(v, "kubernetesVersion"),
+                    "node_count": node_count,
+                    "vm_size": vm_size,
+                },
+                "outputs": {
+                    "fqdn": str_field(v, "fqdn"),
+                    "state": v.get("powerState")
+                        .and_then(|ps| ps.get("code"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(""),
+                }
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "prod-k8s");
+        assert_eq!(items[0]["config"]["kubernetes_version"], "1.28.5");
+        assert_eq!(items[0]["config"]["node_count"], 5);
+        assert_eq!(items[0]["config"]["vm_size"], "Standard_D8s_v3");
+        assert_eq!(items[0]["outputs"]["fqdn"], "prod-k8s-dns-abc123.hcp.eastus.azmk8s.io");
+        assert_eq!(items[0]["outputs"]["state"], "Running");
+    }
+
+    #[test]
+    fn test_discover_parse_vnet_output() {
+        let sample = serde_json::json!([
+            {
+                "name": "acme-vnet",
+                "resourceGroup": "rg-net",
+                "addressSpace": { "addressPrefixes": ["10.0.0.0/16"] },
+                "subnets": [
+                    { "name": "subnet-a" },
+                    { "name": "subnet-b" }
+                ]
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            let address_space = v.get("addressSpace")
+                .and_then(|a| a.get("addressPrefixes"))
+                .cloned()
+                .unwrap_or(Value::Array(Vec::new()));
+            let subnet_count = v.get("subnets")
+                .and_then(|s| s.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            serde_json::json!({
+                "id": name,
+                "resource_type": "vnet",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "address_space": address_space,
+                    "subnet_count": subnet_count,
+                },
+                "outputs": {}
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "acme-vnet");
+        assert_eq!(items[0]["config"]["address_space"][0], "10.0.0.0/16");
+        assert_eq!(items[0]["config"]["subnet_count"], 2);
+    }
+
+    #[test]
+    fn test_discover_parse_empty_array() {
+        // Simulate empty az output — should produce zero entries.
+        let sample: Vec<Value> = serde_json::from_str("[]").unwrap();
+        assert!(sample.is_empty());
+    }
+
+    #[test]
+    fn test_discover_parse_nsg_output() {
+        let sample = serde_json::json!([
+            {
+                "name": "web-nsg",
+                "resourceGroup": "rg-sec",
+                "securityRules": [
+                    { "name": "allow-http" },
+                    { "name": "allow-https" },
+                    { "name": "deny-all" }
+                ],
+                "location": "westus2"
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            let rule_count = v.get("securityRules")
+                .and_then(|s| s.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            serde_json::json!({
+                "id": name,
+                "resource_type": "nsg",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "rule_count": rule_count,
+                    "location": str_field(v, "location"),
+                },
+                "outputs": {}
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "web-nsg");
+        assert_eq!(items[0]["config"]["rule_count"], 3);
+        assert_eq!(items[0]["config"]["location"], "westus2");
+    }
+
+    #[test]
+    fn test_discover_parse_storage_account_output() {
+        let sample = serde_json::json!([
+            {
+                "name": "acmestorage",
+                "resourceGroup": "rg-data",
+                "sku": { "name": "Standard_LRS" },
+                "location": "eastus",
+                "minimumTlsVersion": "TLS1_2"
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "storage_account",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "sku": v.get("sku").and_then(|s| s.get("name"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                    "location": str_field(v, "location"),
+                    "minimum_tls_version": str_field(v, "minimumTlsVersion"),
+                },
+                "outputs": {}
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "acmestorage");
+        assert_eq!(items[0]["config"]["sku"], "Standard_LRS");
+        assert_eq!(items[0]["config"]["minimum_tls_version"], "TLS1_2");
+    }
+
+    #[test]
+    fn test_discover_parse_keyvault_output() {
+        let sample = serde_json::json!([
+            {
+                "name": "acme-kv",
+                "resourceGroup": "rg-sec",
+                "location": "centralus"
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "keyvault",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "location": str_field(v, "location"),
+                },
+                "outputs": {}
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "acme-kv");
+        assert_eq!(items[0]["config"]["resource_group"], "rg-sec");
+        assert_eq!(items[0]["config"]["location"], "centralus");
+    }
+
+    #[test]
+    fn test_discover_parse_redis_output() {
+        let sample = serde_json::json!([
+            {
+                "name": "acme-cache",
+                "resourceGroup": "rg-cache",
+                "sku": { "name": "Premium" },
+                "hostName": "acme-cache.redis.cache.windows.net",
+                "sslPort": 6380,
+                "minimumTlsVersion": "1.2"
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "redis",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "sku": v.get("sku").and_then(|s| s.get("name"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                    "minimum_tls_version": str_field(v, "minimumTlsVersion"),
+                },
+                "outputs": {
+                    "host_name": str_field(v, "hostName"),
+                    "ssl_port": v.get("sslPort").and_then(|s| s.as_u64()).unwrap_or(0),
+                }
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "acme-cache");
+        assert_eq!(items[0]["config"]["sku"], "Premium");
+        assert_eq!(items[0]["config"]["minimum_tls_version"], "1.2");
+        assert_eq!(items[0]["outputs"]["host_name"], "acme-cache.redis.cache.windows.net");
+        assert_eq!(items[0]["outputs"]["ssl_port"], 6380);
+    }
+
+    #[test]
+    fn test_discover_parse_multiple_vms() {
+        let sample = serde_json::json!([
+            {
+                "name": "vm-01",
+                "resourceGroup": "rg-prod",
+                "hardwareProfile": { "vmSize": "Standard_D2s_v3" },
+                "storageProfile": { "osDisk": { "osType": "Linux" } },
+                "powerState": "VM running",
+                "publicIps": "20.1.2.3",
+                "privateIps": "10.0.0.5",
+                "location": "eastus"
+            },
+            {
+                "name": "vm-02",
+                "resourceGroup": "rg-prod",
+                "hardwareProfile": { "vmSize": "Standard_D4s_v3" },
+                "storageProfile": { "osDisk": { "osType": "Windows" } },
+                "powerState": "VM deallocated",
+                "publicIps": "",
+                "privateIps": "10.0.0.6",
+                "location": "eastus"
+            }
+        ]);
+        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
+            let name = str_field(v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "vm",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(v, "resourceGroup"),
+                    "size": v.get("hardwareProfile")
+                        .and_then(|hp| hp.get("vmSize"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(""),
+                    "os": v.get("storageProfile")
+                        .and_then(|sp| sp.get("osDisk"))
+                        .and_then(|od| od.get("osType"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(""),
+                    "location": str_field(v, "location"),
+                },
+                "outputs": {
+                    "state": str_field(v, "powerState"),
+                    "public_ip": str_field(v, "publicIps"),
+                    "private_ip": str_field(v, "privateIps"),
+                }
+            })
+        }).collect();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["name"], "vm-01");
+        assert_eq!(items[0]["config"]["os"], "Linux");
+        assert_eq!(items[0]["outputs"]["state"], "VM running");
+        assert_eq!(items[1]["name"], "vm-02");
+        assert_eq!(items[1]["config"]["os"], "Windows");
+        assert_eq!(items[1]["outputs"]["state"], "VM deallocated");
     }
 }

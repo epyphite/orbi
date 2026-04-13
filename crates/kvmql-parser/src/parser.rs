@@ -219,7 +219,14 @@ impl Parser {
             Some(Token::Attach) => self.parse_attach().map(Statement::Attach),
             Some(Token::Detach) => self.parse_detach().map(Statement::Detach),
             Some(Token::Resize) => self.parse_resize().map(Statement::Resize),
-            Some(Token::Import) => self.parse_import_image().map(Statement::ImportImage),
+            Some(Token::Import) => {
+                // IMPORT IMAGE ... or IMPORT RESOURCES ...
+                if self.peek_at(1) == Some(&Token::Resources) {
+                    self.parse_import_resources().map(Statement::ImportResources)
+                } else {
+                    self.parse_import_image().map(Statement::ImportImage)
+                }
+            }
             Some(Token::Publish) => self.parse_publish_image().map(Statement::PublishImage),
             Some(Token::Remove) => self.parse_remove(),
             Some(Token::Add) => self.parse_add(),
@@ -836,6 +843,65 @@ impl Parser {
         self.expect(&Token::Image)?;
         let params = self.parse_param_list()?;
         Ok(ImportImageStmt { params })
+    }
+
+    /// Parse `IMPORT RESOURCES FROM ...`
+    ///
+    /// Variants:
+    /// - `IMPORT RESOURCES FROM PROVIDER '<id>' [WHERE resource_type = '<type>']`
+    /// - `IMPORT RESOURCES FROM PROVIDER '<id>' [WHERE resource_type IN ('<a>', '<b>')]`
+    /// - `IMPORT RESOURCES FROM PROVIDERS WHERE type = '<type>'`
+    /// - `IMPORT RESOURCES FROM ALL PROVIDERS`
+    fn parse_import_resources(&mut self) -> Result<ImportResourcesStmt, ParseError> {
+        self.expect(&Token::Import)?;
+        self.expect(&Token::Resources)?;
+        self.expect(&Token::From)?;
+
+        let source = if self.eat(&Token::All) {
+            // IMPORT RESOURCES FROM ALL PROVIDERS
+            self.expect(&Token::Providers)?;
+            ImportSource::AllProviders
+        } else if self.check(&Token::Providers) {
+            // IMPORT RESOURCES FROM PROVIDERS WHERE type = '...'
+            self.advance();
+            self.expect(&Token::Where)?;
+            // Expect: type = '<provider_type>'
+            let _key = self.expect_ident_like()?; // "type"
+            self.expect(&Token::Eq)?;
+            let ptype = self.expect_string()?;
+            ImportSource::ProvidersByType(ptype)
+        } else {
+            // IMPORT RESOURCES FROM PROVIDER '<id>'
+            self.expect(&Token::Provider)?;
+            let id = self.expect_string()?;
+            ImportSource::SingleProvider(id)
+        };
+
+        // Optional WHERE resource_type = '...' or IN ('...', '...')
+        let resource_type_filter = if self.eat(&Token::Where) {
+            let _key = self.expect_ident_like()?; // "resource_type"
+            if self.eat(&Token::Eq) {
+                let rt = self.expect_string()?;
+                Some(vec![rt])
+            } else if self.eat(&Token::In) {
+                self.expect(&Token::LParen)?;
+                let mut types = vec![self.expect_string()?];
+                while self.eat(&Token::Comma) {
+                    types.push(self.expect_string()?);
+                }
+                self.expect(&Token::RParen)?;
+                Some(types)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(ImportResourcesStmt {
+            source,
+            resource_type_filter,
+        })
     }
 
     fn parse_publish_image(&mut self) -> Result<PublishImageStmt, ParseError> {

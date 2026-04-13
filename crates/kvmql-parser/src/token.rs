@@ -145,6 +145,12 @@ pub enum Token {
     #[token("RESOURCE", ignore(ascii_case))]
     Resource,
 
+    // ── IMPORT RESOURCES keywords ────────────────────────────────────
+    #[token("RESOURCES", ignore(ascii_case))]
+    Resources,
+    #[token("ALL", ignore(ascii_case))]
+    All,
+
     // ── Additional keywords ──────────────────────────────────────────
     #[token("MEMBERS", ignore(ascii_case))]
     Members,
@@ -323,6 +329,8 @@ impl fmt::Display for Token {
             Token::Cluster => write!(f, "CLUSTER"),
             Token::Principal => write!(f, "PRINCIPAL"),
             Token::Resource => write!(f, "RESOURCE"),
+            Token::Resources => write!(f, "RESOURCES"),
+            Token::All => write!(f, "ALL"),
             Token::Members => write!(f, "MEMBERS"),
             Token::Member => write!(f, "MEMBER"),
             Token::Policy => write!(f, "POLICY"),

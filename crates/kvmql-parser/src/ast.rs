@@ -49,6 +49,7 @@ pub enum Statement {
     Explain(Box<Statement>),
     Rollback(RollbackStmt),
     Assert(AssertStmt),
+    ImportResources(ImportResourcesStmt),
 }
 
 // ── Fields and Selection ───────────────────────────────────────────
@@ -283,6 +284,28 @@ pub struct AssertStmt {
     /// and the engine returns an error (optionally carrying `message`).
     pub condition: Predicate,
     pub message: Option<String>,
+}
+
+// ── IMPORT RESOURCES ──────────────────────────────────────────────
+
+/// `IMPORT RESOURCES FROM PROVIDER 'x' [WHERE resource_type = '...']`
+/// `IMPORT RESOURCES FROM PROVIDERS WHERE type = '...'`
+/// `IMPORT RESOURCES FROM ALL PROVIDERS`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportResourcesStmt {
+    pub source: ImportSource,
+    /// Optional filter on resource_type(s) to import.
+    pub resource_type_filter: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportSource {
+    /// `FROM PROVIDER 'provider-id'`
+    SingleProvider(String),
+    /// `FROM PROVIDERS WHERE type = 'aws'`
+    ProvidersByType(String),
+    /// `FROM ALL PROVIDERS`
+    AllProviders,
 }
 
 #[derive(Debug, Clone, PartialEq)]
