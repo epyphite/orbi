@@ -146,6 +146,133 @@ impl KubernetesResourceProvisioner {
         })
     }
 
+    // ── Discovery ────────────────────────────────────────────
+
+    /// Discover existing Kubernetes resources: namespaces, deployments,
+    /// and services across all namespaces.
+    pub fn discover(&self) -> Result<Vec<Value>, String> {
+        let cli = self.cli()?;
+        let mut results = Vec::new();
+
+        // Discover namespaces
+        if let Ok(raw) = cli.run(&["get", "namespaces", "-o", "json"]) {
+            if let Some(items) = raw.get("items").and_then(|v| v.as_array()) {
+                for item in items {
+                    let name = item
+                        .pointer("/metadata/name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let phase = item
+                        .pointer("/status/phase")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    results.push(json!({
+                        "id": name,
+                        "resource_type": "k8s_namespace",
+                        "name": name,
+                        "config": {},
+                        "outputs": {
+                            "kind": "namespace",
+                            "name": name,
+                            "phase": phase,
+                        },
+                    }));
+                }
+            }
+        }
+
+        // Discover deployments (all namespaces)
+        if let Ok(raw) = cli.run(&["get", "deployments", "--all-namespaces", "-o", "json"]) {
+            if let Some(items) = raw.get("items").and_then(|v| v.as_array()) {
+                for item in items {
+                    let name = item
+                        .pointer("/metadata/name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let namespace = item
+                        .pointer("/metadata/namespace")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let replicas = item
+                        .pointer("/spec/replicas")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let ready_replicas = item
+                        .pointer("/status/readyReplicas")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    results.push(json!({
+                        "id": name,
+                        "resource_type": "k8s_deployment",
+                        "name": name,
+                        "config": {
+                            "namespace": namespace,
+                            "replicas": replicas,
+                        },
+                        "outputs": {
+                            "kind": "deployment",
+                            "name": name,
+                            "namespace": namespace,
+                            "replicas": replicas,
+                            "ready_replicas": ready_replicas,
+                        },
+                    }));
+                }
+            }
+        }
+
+        // Discover services (all namespaces)
+        if let Ok(raw) = cli.run(&["get", "services", "--all-namespaces", "-o", "json"]) {
+            if let Some(items) = raw.get("items").and_then(|v| v.as_array()) {
+                for item in items {
+                    let name = item
+                        .pointer("/metadata/name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let namespace = item
+                        .pointer("/metadata/namespace")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let svc_type = item
+                        .pointer("/spec/type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ClusterIP");
+                    let cluster_ip = item
+                        .pointer("/spec/clusterIP")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    results.push(json!({
+                        "id": name,
+                        "resource_type": "k8s_service",
+                        "name": name,
+                        "config": {
+                            "namespace": namespace,
+                            "type": svc_type,
+                        },
+                        "outputs": {
+                            "kind": "service",
+                            "name": name,
+                            "namespace": namespace,
+                            "type": svc_type,
+                            "cluster_ip": cluster_ip,
+                        },
+                    }));
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     // ── YAML builders ────────────────────────────────────────
     // Each builder returns a YAML string ready for `kubectl apply -f -`.
     // We deliberately avoid `serde_yaml` — these shapes are small and the

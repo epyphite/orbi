@@ -191,7 +191,20 @@ CREATE TABLE IF NOT EXISTS resources (
     labels TEXT
 );
 
--- 16. grants
+-- 16. import_log
+CREATE TABLE IF NOT EXISTS import_log (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('new','existing','missing','error')),
+    details TEXT,
+    imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_import_log_provider ON import_log(provider_id);
+CREATE INDEX IF NOT EXISTS idx_import_log_action ON import_log(action);
+
+-- 17. grants
 CREATE TABLE IF NOT EXISTS grants (
     id TEXT PRIMARY KEY,
     principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,

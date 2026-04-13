@@ -2043,3 +2043,93 @@ fn round_trip_select_k8s_pods() {
     let ast2 = parse(&format!("{text};"));
     assert_eq!(ast1, ast2);
 }
+
+// ── IMPORT RESOURCES tests ───────────────────────────────────────
+
+#[test]
+fn import_resources_single_provider() {
+    let stmt = first_stmt("IMPORT RESOURCES FROM PROVIDER 'aws-prod';");
+    match stmt {
+        Statement::ImportResources(s) => {
+            assert_eq!(s.source, ImportSource::SingleProvider("aws-prod".into()));
+            assert!(s.resource_type_filter.is_none());
+        }
+        _ => panic!("expected ImportResources"),
+    }
+}
+
+#[test]
+fn import_resources_with_type_filter() {
+    let stmt = first_stmt(
+        "IMPORT RESOURCES FROM PROVIDER 'aws-prod' WHERE resource_type = 'ec2';",
+    );
+    match stmt {
+        Statement::ImportResources(s) => {
+            assert_eq!(s.source, ImportSource::SingleProvider("aws-prod".into()));
+            assert_eq!(s.resource_type_filter, Some(vec!["ec2".into()]));
+        }
+        _ => panic!("expected ImportResources"),
+    }
+}
+
+#[test]
+fn import_resources_with_in_filter() {
+    let stmt = first_stmt(
+        "IMPORT RESOURCES FROM PROVIDER 'aws-prod' WHERE resource_type IN ('ec2', 'rds_postgres', 'vpc');",
+    );
+    match stmt {
+        Statement::ImportResources(s) => {
+            assert_eq!(s.resource_type_filter, Some(vec![
+                "ec2".into(),
+                "rds_postgres".into(),
+                "vpc".into(),
+            ]));
+        }
+        _ => panic!("expected ImportResources"),
+    }
+}
+
+#[test]
+fn import_resources_providers_by_type() {
+    let stmt = first_stmt("IMPORT RESOURCES FROM PROVIDERS WHERE type = 'aws';");
+    match stmt {
+        Statement::ImportResources(s) => {
+            assert_eq!(s.source, ImportSource::ProvidersByType("aws".into()));
+        }
+        _ => panic!("expected ImportResources"),
+    }
+}
+
+#[test]
+fn import_resources_all_providers() {
+    let stmt = first_stmt("IMPORT RESOURCES FROM ALL PROVIDERS;");
+    match stmt {
+        Statement::ImportResources(s) => {
+            assert_eq!(s.source, ImportSource::AllProviders);
+            assert!(s.resource_type_filter.is_none());
+        }
+        _ => panic!("expected ImportResources"),
+    }
+}
+
+#[test]
+fn import_resources_case_insensitive() {
+    let stmt = first_stmt("import resources from all providers;");
+    assert!(matches!(stmt, Statement::ImportResources(_)));
+}
+
+#[test]
+fn import_resources_round_trip() {
+    let input = "IMPORT RESOURCES FROM PROVIDER 'azure' WHERE resource_type IN ('vm', 'postgres');";
+    let ast1 = parse(input);
+    let text = format!("{}", ast1.statements[0]);
+    let ast2 = parse(&format!("{text};"));
+    assert_eq!(ast1, ast2);
+}
+
+#[test]
+fn import_image_still_works() {
+    // Verify IMPORT IMAGE didn't break
+    let stmt = first_stmt("IMPORT IMAGE source='https://example.com/image.qcow2';");
+    assert!(matches!(stmt, Statement::ImportImage(_)));
+}

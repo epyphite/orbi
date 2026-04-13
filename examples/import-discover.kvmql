@@ -1,0 +1,66 @@
+-- IMPORT RESOURCES — auto-populate registry from live cloud state
+--
+-- Run: orbi exec examples/import-discover.kvmql
+-- (simulated): orbi --simulate exec examples/import-discover.kvmql
+--
+-- This is the inverse of CREATE — "tell me what's there" instead of
+-- "make this exist."  IMPORT is read-only: it never modifies cloud
+-- resources, only writes to the local registry.
+
+-- ── Register providers ────────────────────────────────────────────
+
+ADD IF NOT EXISTS PROVIDER id='azure'
+  type='azure'
+  auth='env:AZURE_SUBSCRIPTION_ID';
+
+ADD IF NOT EXISTS PROVIDER id='aws-default'
+  type='aws'
+  auth='env:AWS_PROFILE'
+  region='us-east-1';
+
+ADD IF NOT EXISTS PROVIDER id='cf'
+  type='cloudflare'
+  auth='op:Infrastructure/Cloudflare-API-Token';
+
+ADD IF NOT EXISTS PROVIDER id='gh-epyphite'
+  type='github'
+  auth='env:GITHUB_TOKEN';
+
+ADD IF NOT EXISTS PROVIDER id='earth-ssh'
+  type='ssh'
+  host='earth.epy.digital'
+  auth='op:Infrastructure/dev-workload-vm-ssh-key'
+  labels='{"ssh_user":"azureuser"}';
+
+-- ── Discover everything ───────────────────────────────────────────
+
+-- Import from a single provider
+IMPORT RESOURCES FROM PROVIDER 'azure';
+
+-- Import specific resource types only
+IMPORT RESOURCES FROM PROVIDER 'aws-default' WHERE resource_type IN ('ec2', 'rds_postgres', 's3_bucket');
+
+-- Import from all providers of one type
+IMPORT RESOURCES FROM PROVIDERS WHERE type = 'cloudflare';
+
+-- Import from all registered providers (full estate discovery)
+IMPORT RESOURCES FROM ALL PROVIDERS;
+
+-- ── Query the imported estate ─────────────────────────────────────
+
+-- How many resources per provider?
+-- SELECT provider_id, count(*) FROM resources
+--   GROUP BY provider_id
+--   ORDER BY count(*) DESC;
+
+-- All VMs across Azure + AWS
+-- SELECT id, provider_id, status FROM resources
+--   WHERE resource_type IN ('vm', 'ec2');
+
+-- All databases
+-- SELECT id, resource_type, provider_id FROM resources
+--   WHERE resource_type IN ('postgres', 'rds_postgres');
+
+-- Docker containers across SSH hosts
+-- SELECT id, provider_id FROM resources
+--   WHERE resource_type = 'docker_container';

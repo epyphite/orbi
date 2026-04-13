@@ -130,6 +130,187 @@ impl SshResourceProvisioner {
         }
     }
 
+    // ── Discovery ────────────────────────────────────────────
+
+    /// Discover existing resources on the remote host: systemd services,
+    /// Docker containers, Docker volumes, nginx vhosts, and Let's Encrypt
+    /// certificates.
+    pub fn discover(&self) -> Result<Vec<Value>, String> {
+        let mut results = Vec::new();
+
+        // systemd services
+        let sysd = super::systemd::SystemdProvisioner::new(&self.client);
+        if let Ok(services) = sysd.list_services() {
+            for svc in services {
+                let name = svc
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                results.push(json!({
+                    "id": name,
+                    "resource_type": "systemd_service",
+                    "name": name,
+                    "config": {
+                        "enabled": svc.get("enabled"),
+                        "started": svc.get("active_state") == Some(&Value::String("active".into())),
+                    },
+                    "outputs": {
+                        "unit": format!("{name}.service"),
+                        "load_state": svc.get("load_state"),
+                        "active_state": svc.get("active_state"),
+                        "sub_state": svc.get("sub_state"),
+                        "enabled": svc.get("enabled"),
+                        "description": svc.get("description"),
+                    },
+                }));
+            }
+        }
+
+        // Docker containers
+        let docker = super::docker::DockerProvisioner::new(&self.client);
+        if let Ok(containers) = docker.list_containers() {
+            for ctr in containers {
+                let name = ctr
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                results.push(json!({
+                    "id": name,
+                    "resource_type": "docker_container",
+                    "name": name,
+                    "config": {
+                        "image": ctr.get("image"),
+                    },
+                    "outputs": {
+                        "container": name,
+                        "image": ctr.get("image"),
+                        "state": ctr.get("state"),
+                        "status": ctr.get("status"),
+                        "ports": ctr.get("ports"),
+                        "health": ctr.get("health"),
+                    },
+                }));
+            }
+        }
+
+        // Docker volumes
+        if let Ok(out) = self.client.exec(
+            "docker volume ls --format '{{.Name}}|{{.Driver}}|{{.Mountpoint}}' 2>/dev/null || true",
+        ) {
+            for line in out.stdout.lines() {
+                let line = line.trim().trim_matches('\'');
+                if line.is_empty() {
+                    continue;
+                }
+                let parts: Vec<&str> = line.splitn(3, '|').collect();
+                if parts.is_empty() {
+                    continue;
+                }
+                let vol_name = parts[0];
+                let driver = parts.get(1).unwrap_or(&"");
+                let mountpoint = parts.get(2).unwrap_or(&"");
+                results.push(json!({
+                    "id": vol_name,
+                    "resource_type": "docker_volume",
+                    "name": vol_name,
+                    "config": {},
+                    "outputs": {
+                        "volume": vol_name,
+                        "driver": driver,
+                        "mountpoint": mountpoint,
+                    },
+                }));
+            }
+        }
+
+        // nginx vhosts
+        let nginx = super::nginx::NginxProvisioner::new(&self.client);
+        if let Ok(vhosts) = nginx.list_vhosts() {
+            for vh in vhosts {
+                let name = vh
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                results.push(json!({
+                    "id": name,
+                    "resource_type": "nginx_vhost",
+                    "name": name,
+                    "config": {
+                        "server_name": name,
+                    },
+                    "outputs": {
+                        "vhost": name,
+                        "enabled": vh.get("enabled"),
+                        "config_path": vh.get("config_path"),
+                    },
+                }));
+            }
+        }
+
+        // Let's Encrypt certificates
+        if let Ok(out) = self.client.exec("certbot certificates 2>/dev/null || true") {
+            // Parse certbot output — each cert block starts with
+            // "Certificate Name:" and has "Domains:", "Expiry Date:" lines.
+            let mut cert_name: Option<String> = None;
+            let mut domains: Option<String> = None;
+            let mut expiry: Option<String> = None;
+
+            let flush = |results: &mut Vec<Value>,
+                         cert_name: &Option<String>,
+                         domains: &Option<String>,
+                         expiry: &Option<String>| {
+                if let Some(ref cn) = cert_name {
+                    results.push(json!({
+                        "id": cn,
+                        "resource_type": "letsencrypt_cert",
+                        "name": cn,
+                        "config": {
+                            "domains": domains.as_deref().unwrap_or(""),
+                        },
+                        "outputs": {
+                            "cert_name": cn,
+                            "domains": domains,
+                            "expiry": expiry,
+                            "cert_path": format!("/etc/letsencrypt/live/{cn}/fullchain.pem"),
+                            "key_path": format!("/etc/letsencrypt/live/{cn}/privkey.pem"),
+                        },
+                    }));
+                }
+            };
+
+            for line in out.stdout.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("Certificate Name:") {
+                    // Flush previous cert if any
+                    flush(&mut results, &cert_name, &domains, &expiry);
+                    cert_name = Some(rest.trim().to_string());
+                    domains = None;
+                    expiry = None;
+                } else if let Some(rest) = trimmed.strip_prefix("Domains:") {
+                    domains = Some(rest.trim().to_string());
+                } else if let Some(rest) = trimmed.strip_prefix("Expiry Date:") {
+                    expiry = Some(rest.trim().to_string());
+                }
+            }
+            // Flush the last cert
+            flush(&mut results, &cert_name, &domains, &expiry);
+        }
+
+        Ok(results)
+    }
+
     // ── file ──────────────────────────────────────────────────
 
     fn create_file(&self, params: &Value) -> Result<ProvisionResult, String> {

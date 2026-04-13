@@ -341,6 +341,57 @@ impl GithubResourceProvisioner {
         Ok(())
     }
 
+    // ── Discovery ────────────────────────────────────────────
+
+    /// Discover existing GitHub resources accessible to the authenticated
+    /// user.  Currently discovers repositories only (secrets are opaque
+    /// and too expensive to enumerate per-repo for MVP).
+    pub fn discover(&self) -> Result<Vec<Value>, String> {
+        let cli = self.cli()?;
+        let raw = cli
+            .run(&[
+                "repo",
+                "list",
+                "--json",
+                "name,visibility,description",
+                "--limit",
+                "1000",
+            ])
+            .map_err(|e| format!("gh repo list failed: {e}"))?;
+
+        let repos = match raw.as_array() {
+            Some(arr) => arr.clone(),
+            None => return Ok(vec![]),
+        };
+
+        let mut results = Vec::new();
+        for repo in &repos {
+            let name = repo
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            results.push(json!({
+                "id": name,
+                "resource_type": "gh_repo",
+                "name": name,
+                "config": {
+                    "visibility": repo.get("visibility").and_then(|v| v.as_str()).unwrap_or("private"),
+                    "description": repo.get("description"),
+                },
+                "outputs": {
+                    "repo": name,
+                    "visibility": repo.get("visibility"),
+                    "description": repo.get("description"),
+                },
+            }));
+        }
+        Ok(results)
+    }
+
     // ── EXPLAIN support ──────────────────────────────────────
 
     /// Build a human-readable description of the gh CLI calls a create would

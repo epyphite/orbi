@@ -1881,6 +1881,25 @@ impl Registry {
         }
         Ok(())
     }
+
+    // ── Import log ──────────────────────────────────────────
+
+    pub fn insert_import_log(
+        &self,
+        provider_id: &str,
+        resource_type: &str,
+        resource_id: &str,
+        action: &str,
+        details: Option<&str>,
+    ) -> Result<(), RegistryError> {
+        let id = Uuid::new_v4().to_string();
+        self.conn.execute(
+            "INSERT INTO import_log (id, provider_id, resource_type, resource_id, action, details)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, provider_id, resource_type, resource_id, action, details],
+        )?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

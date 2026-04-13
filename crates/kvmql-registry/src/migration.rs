@@ -210,6 +210,31 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
         info!("registry schema v7 applied successfully");
     }
 
+    if current_version < 8 {
+        info!("applying registry schema v8 — add import_log table");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS import_log (
+                id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                action TEXT NOT NULL CHECK (action IN ('new','existing','missing','error')),
+                details TEXT,
+                imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_import_log_provider ON import_log(provider_id);
+            CREATE INDEX IF NOT EXISTS idx_import_log_action ON import_log(action);"
+        )
+        .map_err(|e| RegistryError::Migration(format!("v8 DDL failed: {e}")))?;
+
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) VALUES (?1, datetime('now'), ?2)",
+            rusqlite::params![8, "add import_log table for IMPORT RESOURCES discovery"],
+        )?;
+
+        info!("registry schema v8 applied successfully");
+    }
+
     Ok(())
 }
 
@@ -227,6 +252,6 @@ mod tests {
         let version: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
     }
 }

@@ -59,6 +59,7 @@ impl fmt::Display for Statement {
             Statement::Explain(inner) => write!(f, "EXPLAIN {inner}"),
             Statement::Rollback(s) => write!(f, "{s}"),
             Statement::Assert(s) => write!(f, "{s}"),
+            Statement::ImportResources(s) => write!(f, "{s}"),
         }
     }
 }
@@ -344,6 +345,26 @@ impl fmt::Display for AssertStmt {
         write!(f, "ASSERT {}", self.condition)?;
         if let Some(ref msg) = self.message {
             write!(f, ", {}", quote_string(msg))?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for ImportResourcesStmt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "IMPORT RESOURCES FROM ")?;
+        match &self.source {
+            ImportSource::SingleProvider(id) => write!(f, "PROVIDER {}", quote_string(id))?,
+            ImportSource::ProvidersByType(t) => write!(f, "PROVIDERS WHERE type = {}", quote_string(t))?,
+            ImportSource::AllProviders => write!(f, "ALL PROVIDERS")?,
+        }
+        if let Some(ref types) = self.resource_type_filter {
+            if types.len() == 1 {
+                write!(f, " WHERE resource_type = {}", quote_string(&types[0]))?;
+            } else {
+                let quoted: Vec<String> = types.iter().map(|t| quote_string(t)).collect();
+                write!(f, " WHERE resource_type IN ({})", quoted.join(", "))?;
+            }
         }
         Ok(())
     }

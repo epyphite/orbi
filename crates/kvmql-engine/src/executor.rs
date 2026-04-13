@@ -262,6 +262,11 @@ fn audit_event_for_statement(stmt: &Statement) -> Option<AuditEvent> {
         }),
         // ASSERT is verification, never a mutation — no audit entry.
         Statement::Assert(_) => None,
+        Statement::ImportResources(_) => Some(AuditEvent {
+            action: "IMPORT",
+            target_type: "resources",
+            target_id: None,
+        }),
     }
 }
 
@@ -306,6 +311,7 @@ fn verb_for_statement(stmt: &Statement) -> &'static str {
         Statement::Explain(_) => "EXPLAIN",
         Statement::Rollback(_) => "ROLLBACK",
         Statement::Assert(_) => "ASSERT",
+        Statement::ImportResources(_) => "IMPORT",
     }
 }
 
@@ -623,6 +629,7 @@ impl<'a> Executor<'a> {
                     | Statement::Show(_)
                     | Statement::Set(_)
                     | Statement::Assert(_)
+                    | Statement::ImportResources(_)
             )
         {
             return self.exec_explain(stmt).await;
@@ -667,6 +674,7 @@ impl<'a> Executor<'a> {
             Statement::Scale(s) => self.exec_scale(s),
             Statement::Upgrade(s) => self.exec_upgrade(s),
             Statement::Rollback(s) => self.exec_rollback(s),
+            Statement::ImportResources(s) => self.exec_import_resources(s),
         }
     }
 
@@ -4777,6 +4785,234 @@ impl<'a> Executor<'a> {
                 .clone()
                 .unwrap_or_else(|| "assertion failed".to_string());
             Err(format!("ASSERTION FAILED: {}", msg))
+        }
+    }
+
+    // =======================================================================
+    // IMPORT RESOURCES
+    // =======================================================================
+
+    fn exec_import_resources(
+        &self,
+        s: &kvmql_parser::ast::ImportResourcesStmt,
+    ) -> Result<StmtOutcome, String> {
+        use kvmql_parser::ast::ImportSource;
+
+        // Resolve which provider(s) to discover from.
+        let provider_ids: Vec<String> = match &s.source {
+            ImportSource::SingleProvider(id) => vec![id.clone()],
+            ImportSource::ProvidersByType(ptype) => {
+                self.ctx
+                    .registry
+                    .list_providers()
+                    .map_err(|e| format!("list providers: {e}"))?
+                    .into_iter()
+                    .filter(|p| p.provider_type == *ptype)
+                    .map(|p| p.id)
+                    .collect()
+            }
+            ImportSource::AllProviders => {
+                self.ctx
+                    .registry
+                    .list_providers()
+                    .map_err(|e| format!("list providers: {e}"))?
+                    .into_iter()
+                    .map(|p| p.id)
+                    .collect()
+            }
+        };
+
+        if provider_ids.is_empty() {
+            return Ok(StmtOutcome::ok_val(serde_json::json!({
+                "imported": 0,
+                "skipped": 0,
+                "errors": 0,
+                "message": "no matching providers found",
+            })));
+        }
+
+        let mut total_imported: i64 = 0;
+        let mut total_skipped: i64 = 0;
+        let mut total_errors: i64 = 0;
+        let mut notifications: Vec<Notification> = Vec::new();
+        let mut all_rows: Vec<serde_json::Value> = Vec::new();
+
+        for pid in &provider_ids {
+            let provider = match self.ctx.registry.get_provider(pid) {
+                Ok(p) => p,
+                Err(e) => {
+                    notifications.push(Notification {
+                        level: "ERROR".into(),
+                        code: "IMPORT_PROVIDER_ERR".into(),
+                        provider_id: Some(pid.clone()),
+                        message: format!("provider '{pid}' not found: {e}"),
+                    });
+                    total_errors += 1;
+                    continue;
+                }
+            };
+
+            let discovered = match self.discover_resources(&provider, s.resource_type_filter.as_deref()) {
+                Ok(d) => d,
+                Err(e) => {
+                    notifications.push(Notification {
+                        level: "WARN".into(),
+                        code: "IMPORT_DISCOVER_ERR".into(),
+                        provider_id: Some(pid.clone()),
+                        message: format!("discover failed for '{pid}': {e}"),
+                    });
+                    total_errors += 1;
+                    continue;
+                }
+            };
+
+            for entry in discovered {
+                let resource_id = entry["id"].as_str().unwrap_or_default().to_string();
+                let resource_type = entry["resource_type"].as_str().unwrap_or("unknown").to_string();
+
+                if resource_id.is_empty() {
+                    total_errors += 1;
+                    continue;
+                }
+
+                // Check if already exists
+                if let Ok(_existing) = self.ctx.registry.get_resource(&resource_id) {
+                    // Update metadata but don't change status
+                    if let Some(config) = entry.get("config") {
+                        let _ = self.ctx.registry.update_resource_config(
+                            &resource_id,
+                            &config.to_string(),
+                        );
+                    }
+                    total_skipped += 1;
+
+                    // Log as existing
+                    let _ = self.ctx.registry.insert_import_log(
+                        pid,
+                        &resource_type,
+                        &resource_id,
+                        "existing",
+                        Some(&entry.to_string()),
+                    );
+                    continue;
+                }
+
+                // Insert new resource
+                let name = entry["name"].as_str();
+                let config = entry.get("config").map(|c| c.to_string());
+                let labels = entry.get("labels").and_then(|l| {
+                    if l.is_null() { None } else { Some(l.to_string()) }
+                });
+
+                match self.ctx.registry.insert_resource(
+                    &resource_id,
+                    &resource_type,
+                    pid,
+                    name,
+                    "imported",
+                    config.as_deref(),
+                    labels.as_deref(),
+                ) {
+                    Ok(_) => {
+                        // Store outputs if present
+                        if let Some(outputs) = entry.get("outputs") {
+                            let _ = self.ctx.registry.update_resource_outputs(
+                                &resource_id,
+                                &outputs.to_string(),
+                            );
+                        }
+                        total_imported += 1;
+                        let _ = self.ctx.registry.insert_import_log(
+                            pid,
+                            &resource_type,
+                            &resource_id,
+                            "new",
+                            Some(&entry.to_string()),
+                        );
+                        all_rows.push(serde_json::json!({
+                            "id": resource_id,
+                            "resource_type": resource_type,
+                            "provider_id": pid,
+                            "action": "imported",
+                        }));
+                    }
+                    Err(e) => {
+                        notifications.push(Notification {
+                            level: "WARN".into(),
+                            code: "IMPORT_INSERT_ERR".into(),
+                            provider_id: Some(pid.clone()),
+                            message: format!("failed to import '{resource_id}': {e}"),
+                        });
+                        total_errors += 1;
+                    }
+                }
+            }
+        }
+
+        let summary = serde_json::json!({
+            "imported": total_imported,
+            "skipped": total_skipped,
+            "errors": total_errors,
+            "providers_scanned": provider_ids.len(),
+        });
+        let mut outcome = StmtOutcome::ok_val(summary);
+        outcome.notifications = notifications;
+        outcome.rows_affected = total_imported;
+        Ok(outcome)
+    }
+
+    /// Call the appropriate discover implementation for the given provider.
+    fn discover_resources(
+        &self,
+        provider: &kvmql_registry::registry::ProviderRow,
+        type_filter: Option<&[String]>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        if self.ctx.simulate {
+            return Ok(vec![]);
+        }
+
+        let entries = match provider.provider_type.as_str() {
+            "azure" => {
+                let p = self.get_azure_provisioner(&provider.id);
+                p.discover().map_err(|e| e.to_string())?
+            }
+            "aws" => {
+                let p = self.get_aws_provisioner(&provider.id);
+                p.discover().map_err(|e| e.to_string())?
+            }
+            "cloudflare" => {
+                let p = self.get_cloudflare_provisioner(&provider.id);
+                p.discover().map_err(|e| e.to_string())?
+            }
+            "github" => {
+                let p = self.get_github_provisioner(&provider.id);
+                p.discover().map_err(|e| e.to_string())?
+            }
+            "kubernetes" => {
+                let p = self.get_k8s_provisioner(&provider.id);
+                p.discover().map_err(|e| e.to_string())?
+            }
+            "ssh" => {
+                let p = self.get_ssh_provisioner(&provider.id)?;
+                p.discover().map_err(|e| e.to_string())?
+            }
+            other => {
+                return Err(format!("discover not supported for provider type '{other}'"));
+            }
+        };
+
+        // Apply resource_type filter if specified
+        match type_filter {
+            Some(types) => Ok(entries
+                .into_iter()
+                .filter(|e| {
+                    e["resource_type"]
+                        .as_str()
+                        .map(|rt| types.iter().any(|t| t == rt))
+                        .unwrap_or(false)
+                })
+                .collect()),
+            None => Ok(entries),
         }
     }
 
