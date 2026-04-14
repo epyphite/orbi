@@ -129,6 +129,7 @@ pub enum Noun {
     K8sSecrets,
     K8sNamespaces,
     K8sNodes,
+    ImportLog,
 }
 
 // ── Target Spec ────────────────────────────────────────────────────

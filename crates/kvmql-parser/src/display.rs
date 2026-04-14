@@ -152,6 +152,7 @@ impl fmt::Display for Noun {
             Noun::K8sSecrets => write!(f, "k8s_secrets"),
             Noun::K8sNamespaces => write!(f, "k8s_namespaces"),
             Noun::K8sNodes => write!(f, "k8s_nodes"),
+            Noun::ImportLog => write!(f, "import_log"),
         }
     }
 }

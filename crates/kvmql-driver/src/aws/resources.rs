@@ -223,9 +223,26 @@ impl AwsResourceProvisioner {
     /// Helper: run an aws command for discovery, returning parsed output
     /// or a diagnostic error entry that surfaces in the import results.
     fn discover_run(&self, resource_type: &str, args: &[&str]) -> Result<Value, Vec<Value>> {
+        // Log the exact command being run for debugging
+        let cmd_str = self.build_args(args).join(" ");
+        eprintln!("[orbi:aws] discover {resource_type}: {cmd_str}");
+
         match self.run_aws(args) {
-            Ok(v) => Ok(v),
+            Ok(v) => {
+                // Log how many top-level items were found
+                let count = match &v {
+                    Value::Object(obj) => obj.values()
+                        .filter_map(|v| v.as_array())
+                        .map(|a| a.len())
+                        .next()
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                eprintln!("[orbi:aws] discover {resource_type}: got {count} items");
+                Ok(v)
+            }
             Err(e) => {
+                eprintln!("[orbi:aws] discover {resource_type} FAILED: {e}");
                 // Surface the error as a diagnostic row so it's visible
                 // in the import summary instead of silently returning 0.
                 Err(vec![serde_json::json!({

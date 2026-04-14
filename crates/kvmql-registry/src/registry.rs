@@ -224,6 +224,16 @@ pub struct PlanRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct ImportLogRow {
+    pub id: String,
+    pub provider_id: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub action: String,
+    pub details: Option<String>,
+    pub imported_at: String,
+}
+
 pub struct AppliedFileRow {
     pub id: String,
     pub file_path: String,
@@ -1883,6 +1893,27 @@ impl Registry {
     }
 
     // ── Import log ──────────────────────────────────────────
+
+    pub fn list_import_log(&self) -> Result<Vec<ImportLogRow>, RegistryError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, provider_id, resource_type, resource_id, action, details, imported_at
+             FROM import_log ORDER BY imported_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ImportLogRow {
+                    id: row.get(0)?,
+                    provider_id: row.get(1)?,
+                    resource_type: row.get(2)?,
+                    resource_id: row.get(3)?,
+                    action: row.get(4)?,
+                    details: row.get(5)?,
+                    imported_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
 
     pub fn insert_import_log(
         &self,

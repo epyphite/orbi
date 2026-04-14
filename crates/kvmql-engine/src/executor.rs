@@ -2264,6 +2264,26 @@ impl<'a> Executor<'a> {
                         .map_err(|e| format!("k8s query failed: {e}"))?
                 }
             }
+            Noun::ImportLog => {
+                let list = self
+                    .ctx
+                    .registry
+                    .list_import_log()
+                    .map_err(|e| format!("failed to query import_log: {e}"))?;
+                list.into_iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "id": r.id,
+                            "provider_id": r.provider_id,
+                            "resource_type": r.resource_type,
+                            "resource_id": r.resource_id,
+                            "action": r.action,
+                            "details": r.details,
+                            "imported_at": r.imported_at,
+                        })
+                    })
+                    .collect()
+            }
         };
 
         // Apply WHERE filtering

@@ -1222,6 +1222,7 @@ impl Parser {
             "k8s_secrets" => Noun::K8sSecrets,
             "k8s_namespaces" => Noun::K8sNamespaces,
             "k8s_nodes" => Noun::K8sNodes,
+            "import_log" => Noun::ImportLog,
             other => {
                 return Err(self.error_here(ParseErrorKind::InvalidNoun {
                     found: other.to_string(),
