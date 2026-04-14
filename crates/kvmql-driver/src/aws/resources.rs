@@ -139,6 +139,9 @@ impl AwsResourceProvisioner {
             cmd.arg(arg);
         }
         cmd.arg("--output").arg("json");
+        // Prevent AWS CLI v2 from piping through `less` in non-TTY
+        // contexts (which would hang the process).
+        cmd.arg("--no-cli-pager");
 
         if let Some(ref region) = self.region {
             cmd.arg("--region").arg(region);
@@ -146,6 +149,8 @@ impl AwsResourceProvisioner {
         if let Some(ref profile) = self.profile {
             cmd.arg("--profile").arg(profile);
         }
+        // Also inject AWS_PAGER="" as env to double-guard against pager
+        cmd.env("AWS_PAGER", "");
 
         let output = cmd
             .output()
@@ -195,17 +200,18 @@ impl AwsResourceProvisioner {
     pub fn discover(&self) -> Result<Vec<Value>, String> {
         let mut resources: Vec<Value> = Vec::new();
 
-        let collectors: Vec<fn(&Self) -> Vec<Value>> = vec![
-            Self::discover_ec2,
-            Self::discover_rds_postgres,
-            Self::discover_vpcs,
-            Self::discover_subnets,
-            Self::discover_security_groups,
-            Self::discover_s3_buckets,
-            Self::discover_lambda,
+        let collectors: &[(&str, fn(&Self) -> Vec<Value>)] = &[
+            ("ec2", Self::discover_ec2),
+            ("rds_postgres", Self::discover_rds_postgres),
+            ("vpc", Self::discover_vpcs),
+            ("aws_subnet", Self::discover_subnets),
+            ("security_group", Self::discover_security_groups),
+            ("s3_bucket", Self::discover_s3_buckets),
+            ("lambda", Self::discover_lambda),
+            ("elb", Self::discover_elbs),
         ];
 
-        for collector in &collectors {
+        for (_, collector) in collectors {
             resources.extend(collector(self));
         }
 
@@ -214,10 +220,29 @@ impl AwsResourceProvisioner {
 
     // ── Per-resource discovery helpers ───────────────────────────────
 
+    /// Helper: run an aws command for discovery, returning parsed output
+    /// or a diagnostic error entry that surfaces in the import results.
+    fn discover_run(&self, resource_type: &str, args: &[&str]) -> Result<Value, Vec<Value>> {
+        match self.run_aws(args) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                // Surface the error as a diagnostic row so it's visible
+                // in the import summary instead of silently returning 0.
+                Err(vec![serde_json::json!({
+                    "id": format!("_discover_error_{resource_type}"),
+                    "resource_type": resource_type,
+                    "name": format!("discover error: {resource_type}"),
+                    "config": { "error": e },
+                    "outputs": {},
+                })])
+            }
+        }
+    }
+
     fn discover_ec2(&self) -> Vec<Value> {
-        let output = match self.run_aws(&["ec2", "describe-instances"]) {
+        let output = match self.discover_run("ec2", &["ec2", "describe-instances"]) {
             Ok(v) => v,
-            Err(_) => return Vec::new(),
+            Err(diag) => return diag,
         };
         Self::parse_ec2_instances(&output)
     }
@@ -266,9 +291,9 @@ impl AwsResourceProvisioner {
     }
 
     fn discover_rds_postgres(&self) -> Vec<Value> {
-        let output = match self.run_aws(&["rds", "describe-db-instances"]) {
+        let output = match self.discover_run("rds_postgres", &["rds", "describe-db-instances"]) {
             Ok(v) => v,
-            Err(_) => return Vec::new(),
+            Err(diag) => return diag,
         };
         Self::parse_rds_instances(&output)
     }
@@ -309,9 +334,9 @@ impl AwsResourceProvisioner {
     }
 
     fn discover_vpcs(&self) -> Vec<Value> {
-        let output = match self.run_aws(&["ec2", "describe-vpcs"]) {
+        let output = match self.discover_run("vpc", &["ec2", "describe-vpcs"]) {
             Ok(v) => v,
-            Err(_) => return Vec::new(),
+            Err(diag) => return diag,
         };
         Self::parse_vpcs(&output)
     }
@@ -350,9 +375,9 @@ impl AwsResourceProvisioner {
     }
 
     fn discover_subnets(&self) -> Vec<Value> {
-        let output = match self.run_aws(&["ec2", "describe-subnets"]) {
+        let output = match self.discover_run("aws_subnet", &["ec2", "describe-subnets"]) {
             Ok(v) => v,
-            Err(_) => return Vec::new(),
+            Err(diag) => return diag,
         };
         Self::parse_subnets(&output)
     }
@@ -391,9 +416,9 @@ impl AwsResourceProvisioner {
     }
 
     fn discover_security_groups(&self) -> Vec<Value> {
-        let output = match self.run_aws(&["ec2", "describe-security-groups"]) {
+        let output = match self.discover_run("security_group", &["ec2", "describe-security-groups"]) {
             Ok(v) => v,
-            Err(_) => return Vec::new(),
+            Err(diag) => return diag,
         };
         Self::parse_security_groups(&output)
     }
@@ -435,9 +460,9 @@ impl AwsResourceProvisioner {
     }
 
     fn discover_s3_buckets(&self) -> Vec<Value> {
-        let output = match self.run_aws(&["s3api", "list-buckets"]) {
+        let output = match self.discover_run("s3_bucket", &["s3api", "list-buckets"]) {
             Ok(v) => v,
-            Err(_) => return Vec::new(),
+            Err(diag) => return diag,
         };
         Self::parse_s3_buckets(&output)
     }
@@ -472,9 +497,9 @@ impl AwsResourceProvisioner {
     }
 
     fn discover_lambda(&self) -> Vec<Value> {
-        let output = match self.run_aws(&["lambda", "list-functions"]) {
+        let output = match self.discover_run("lambda", &["lambda", "list-functions"]) {
             Ok(v) => v,
-            Err(_) => return Vec::new(),
+            Err(diag) => return diag,
         };
         Self::parse_lambda_functions(&output)
     }
@@ -505,6 +530,54 @@ impl AwsResourceProvisioner {
             results.push(serde_json::json!({
                 "id": name,
                 "resource_type": "lambda",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_elbs(&self) -> Vec<Value> {
+        let output = match self.discover_run("elb", &["elbv2", "describe-load-balancers"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_elbs(&output)
+    }
+
+    fn parse_elbs(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let lbs = match output.get("LoadBalancers").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for lb in lbs {
+            let arn = lb
+                .get("LoadBalancerArn")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = lb
+                .get("LoadBalancerName")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&arn)
+                .to_string();
+
+            let config = serde_json::json!({
+                "type": lb.get("Type"),
+                "scheme": lb.get("Scheme"),
+                "vpc_id": lb.get("VpcId"),
+                "availability_zones": lb.get("AvailabilityZones"),
+            });
+            let outputs = serde_json::json!({
+                "dns_name": lb.get("DNSName"),
+                "state": lb.get("State").and_then(|s| s.get("Code")),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "elb",
                 "name": name,
                 "config": config,
                 "outputs": outputs,
