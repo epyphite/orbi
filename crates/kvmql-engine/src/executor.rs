@@ -880,7 +880,7 @@ impl<'a> Executor<'a> {
 
     fn get_aws_provisioner(&self, provider_id: &str) -> kvmql_driver::aws::resources::AwsResourceProvisioner {
         let (region, profile) = if let Ok(p) = self.ctx.registry.get_provider(provider_id) {
-            let prof = kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref).ok();
+            let prof = resolve_aws_profile(&p.auth_ref);
             (p.region.clone(), prof)
         } else {
             (None, None)
@@ -5457,6 +5457,39 @@ fn build_file_stat_row(
             })
         }
     }
+}
+
+/// Extract an AWS profile name from a provider's `auth_ref`.
+///
+/// Supports three patterns:
+/// - `env:AWS_PROFILE=ttcsp-prod` → `Some("ttcsp-prod")` (literal value after `=`)
+/// - `env:AWS_PROFILE` → reads `$AWS_PROFILE` from the environment
+/// - `ttcsp-prod` (plain string, no scheme) → `Some("ttcsp-prod")`
+/// - `none` or empty → `None` (use ambient/default profile)
+///
+/// This is intentionally NOT routed through the generic credential
+/// resolver because AWS profiles aren't secrets — they're just names.
+fn resolve_aws_profile(auth_ref: &str) -> Option<String> {
+    if auth_ref.is_empty() || auth_ref == "none" {
+        return None;
+    }
+
+    // env:AWS_PROFILE=ttcsp-prod → literal "ttcsp-prod"
+    if let Some(rest) = auth_ref.strip_prefix("env:") {
+        if let Some((_var, value)) = rest.split_once('=') {
+            return Some(value.to_string());
+        }
+        // env:AWS_PROFILE → read the env var
+        return std::env::var(rest).ok();
+    }
+
+    // Any other credential scheme (op:, file:, vault:) → resolve normally
+    if auth_ref.contains(':') {
+        return kvmql_auth::resolver::CredentialResolver::resolve(auth_ref).ok();
+    }
+
+    // Plain string → use as profile name directly
+    Some(auth_ref.to_string())
 }
 
 /// Resolve a `file` resource `content` parameter into raw bytes (returned
