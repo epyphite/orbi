@@ -1122,35 +1122,46 @@ impl Parser {
     fn parse_field(&mut self) -> Result<Field, ParseError> {
         let name = self.expect_ident_like()?;
         // Function call in projection: `count(*)`, `sum(x)`, etc.
-        if self.check(&Token::LParen) {
+        let base = if self.check(&Token::LParen) {
             self.expect(&Token::LParen)?;
             if self.eat(&Token::Star) {
                 self.expect(&Token::RParen)?;
-                return Ok(Field::FnCall {
+                Field::FnCall {
                     name,
                     star: true,
                     args: vec![],
-                });
-            }
-            let mut args = Vec::new();
-            if !self.check(&Token::RParen) {
-                args.push(self.parse_expr()?);
-                while self.eat(&Token::Comma) {
+                }
+            } else {
+                let mut args = Vec::new();
+                if !self.check(&Token::RParen) {
                     args.push(self.parse_expr()?);
+                    while self.eat(&Token::Comma) {
+                        args.push(self.parse_expr()?);
+                    }
+                }
+                self.expect(&Token::RParen)?;
+                Field::FnCall {
+                    name,
+                    star: false,
+                    args,
                 }
             }
-            self.expect(&Token::RParen)?;
-            return Ok(Field::FnCall {
-                name,
-                star: false,
-                args,
-            });
-        }
-        if self.eat(&Token::Dot) {
+        } else if self.eat(&Token::Dot) {
             let sub = self.expect_ident_like()?;
-            Ok(Field::Qualified(name, sub))
+            Field::Qualified(name, sub)
         } else {
-            Ok(Field::Simple(name))
+            Field::Simple(name)
+        };
+
+        // Optional AS alias
+        if self.eat(&Token::As) {
+            let alias = self.expect_ident_like()?;
+            Ok(Field::Aliased {
+                field: Box::new(base),
+                alias,
+            })
+        } else {
+            Ok(base)
         }
     }
 

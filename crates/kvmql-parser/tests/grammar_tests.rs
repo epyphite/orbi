@@ -2128,6 +2128,58 @@ fn import_resources_round_trip() {
 }
 
 #[test]
+fn select_field_as_alias() {
+    let stmt = first_stmt("SELECT count(*) AS total FROM microvms;");
+    match stmt {
+        Statement::Select(s) => match s.fields {
+            FieldList::Fields(ref fs) => {
+                assert_eq!(fs.len(), 1);
+                match &fs[0] {
+                    Field::Aliased { field, alias } => {
+                        assert_eq!(alias, "total");
+                        assert!(matches!(field.as_ref(), Field::FnCall { name, star: true, .. } if name == "count"));
+                    }
+                    other => panic!("expected Aliased, got {other:?}"),
+                }
+            }
+            _ => panic!("expected Fields"),
+        },
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn select_simple_field_as_alias() {
+    let stmt = first_stmt("SELECT id AS resource_id, status FROM microvms;");
+    match stmt {
+        Statement::Select(s) => match s.fields {
+            FieldList::Fields(ref fs) => {
+                assert_eq!(fs.len(), 2);
+                match &fs[0] {
+                    Field::Aliased { field, alias } => {
+                        assert_eq!(alias, "resource_id");
+                        assert!(matches!(field.as_ref(), Field::Simple(n) if n == "id"));
+                    }
+                    other => panic!("expected Aliased, got {other:?}"),
+                }
+                assert!(matches!(&fs[1], Field::Simple(n) if n == "status"));
+            }
+            _ => panic!("expected Fields"),
+        },
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn select_alias_round_trip() {
+    let input = "SELECT count(*) AS total, provider_id FROM microvms;";
+    let ast1 = parse(input);
+    let text = format!("{}", ast1.statements[0]);
+    let ast2 = parse(&format!("{text};"));
+    assert_eq!(ast1, ast2);
+}
+
+#[test]
 fn import_image_still_works() {
     // Verify IMPORT IMAGE didn't break
     let stmt = first_stmt("IMPORT IMAGE source='https://example.com/image.qcow2';");

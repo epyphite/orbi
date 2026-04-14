@@ -5231,9 +5231,7 @@ fn project_rows(
         FieldList::Fields(fs) => {
             // Detect aggregate mode: any FnCall whose name is a known
             // aggregate.  In that mode we return exactly one row.
-            let has_aggregate = fs
-                .iter()
-                .any(|f| matches!(f, Field::FnCall { name, .. } if is_aggregate(name)));
+            let has_aggregate = fs.iter().any(|f| field_is_aggregate(f));
 
             if has_aggregate {
                 let mut row = serde_json::Map::new();
@@ -5243,6 +5241,17 @@ fn project_rows(
                             let val = eval_aggregate(name, *star, args, &rows)?;
                             row.insert(name.clone(), val);
                         }
+                        Field::Aliased { field, alias } => match field.as_ref() {
+                            Field::FnCall { name, star, args } => {
+                                let val = eval_aggregate(name, *star, args, &rows)?;
+                                row.insert(alias.clone(), val);
+                            }
+                            other => {
+                                return Err(format!(
+                                    "mixing aggregate and non-aggregate projections is not supported (got {other:?})"
+                                ));
+                            }
+                        },
                         other => {
                             return Err(format!(
                                 "mixing aggregate and non-aggregate projections is not supported (got {other:?})"
@@ -5259,27 +5268,56 @@ fn project_rows(
                 let obj = row.as_object().cloned().unwrap_or_default();
                 let mut new_row = serde_json::Map::new();
                 for f in fs {
-                    match f {
-                        Field::Simple(name) => {
-                            let v = obj.get(name).cloned().unwrap_or(serde_json::Value::Null);
-                            new_row.insert(name.clone(), v);
-                        }
-                        Field::Qualified(_, name) => {
-                            let v = obj.get(name).cloned().unwrap_or(serde_json::Value::Null);
-                            new_row.insert(name.clone(), v);
-                        }
-                        Field::FnCall { name, .. } => {
-                            return Err(format!(
-                                "function '{name}' is not supported in non-aggregate projection"
-                            ));
-                        }
-                    }
+                    project_field(f, &obj, &mut new_row)?;
                 }
                 out.push(serde_json::Value::Object(new_row));
             }
             Ok(out)
         }
     }
+}
+
+/// Check if a field (possibly aliased) is an aggregate function call.
+fn field_is_aggregate(f: &kvmql_parser::ast::Field) -> bool {
+    use kvmql_parser::ast::Field;
+    match f {
+        Field::FnCall { name, .. } => is_aggregate(name),
+        Field::Aliased { field, .. } => field_is_aggregate(field),
+        _ => false,
+    }
+}
+
+/// Project a single field from a row object into the output row.
+fn project_field(
+    f: &kvmql_parser::ast::Field,
+    obj: &serde_json::Map<String, serde_json::Value>,
+    out: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    use kvmql_parser::ast::Field;
+    match f {
+        Field::Simple(name) => {
+            let v = obj.get(name).cloned().unwrap_or(serde_json::Value::Null);
+            out.insert(name.clone(), v);
+        }
+        Field::Qualified(_, name) => {
+            let v = obj.get(name).cloned().unwrap_or(serde_json::Value::Null);
+            out.insert(name.clone(), v);
+        }
+        Field::FnCall { name, .. } => {
+            return Err(format!(
+                "function '{name}' is not supported in non-aggregate projection"
+            ));
+        }
+        Field::Aliased { field, alias } => {
+            // Project the inner field but store it under the alias name.
+            let mut tmp = serde_json::Map::new();
+            project_field(field, obj, &mut tmp)?;
+            if let Some((_, v)) = tmp.into_iter().next() {
+                out.insert(alias.clone(), v);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn is_aggregate(name: &str) -> bool {

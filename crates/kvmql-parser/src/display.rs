@@ -102,6 +102,7 @@ impl fmt::Display for Field {
                 }
                 write!(f, ")")
             }
+            Field::Aliased { field, alias } => write!(f, "{field} AS {alias}"),
         }
     }
 }

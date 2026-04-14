@@ -72,6 +72,11 @@ pub enum Field {
         star: bool,
         args: Vec<Expr>,
     },
+    /// `<field> AS <alias>` — wraps any other Field with an alias name.
+    Aliased {
+        field: Box<Field>,
+        alias: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
