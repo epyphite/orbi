@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.5.1 (2026-04-09)
+
+### Fixes
+- AWS discover now passes `--profile` and `--region` to all CLI calls
+- Diagnostic stderr logging for discover commands
+- `import_log` now queryable via `SELECT * FROM import_log`
+
+### Features
+- ELB discover handler
+- `AS` alias in SELECT projections (`count(*) AS total`)
+
+---
+
+## v0.5.0 (2026-04-08)
+
+### Features
+- `IMPORT RESOURCES FROM PROVIDER` -- auto-discover live cloud state
+- 6 provider backends: Azure (8 types), AWS (7 types), GitHub, Cloudflare, Kubernetes, SSH
+- `import_log` table for tracking discoveries
+- `WHERE resource_type` filter for scoped imports
+
+---
+
+## v0.4.0 (2026-04-07)
+
+### Features
+- Network verification layer -- 5 table-valued functions: `dns_lookup`, `reverse_dns`, `tcp_probe`, `http_probe`, `tls_cert`
+- `ASSERT` statement with optional message
+- SSH provider with OpenSSH backend
+- 12 resource types: file, directory, symlink, systemd_service, systemd_timer, nginx_vhost, nginx_proxy, docker_container, docker_volume, docker_network, docker_compose, letsencrypt_cert
+- 5 host-aware query functions: `file_stat`, `systemd_services`, `nginx_vhosts`, `nginx_config_test`, `docker_containers`
+- Field projection with `count(*)`, `sum()`, `avg()`, `min()`, `max()`
+- Scalar subqueries and `EXISTS` in predicates
+- String concatenation via `||` operator
+- VS Code extension for `.kvmql`/`.kvml` syntax highlighting
+- Registry schema v7 (ssh provider type) and v8 (import_log table)
+
+---
+
 ## v0.3.1 (2026-04-07)
 
 Bug fixes and polish surfaced from the first real macOS install.

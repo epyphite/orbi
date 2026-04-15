@@ -272,8 +272,14 @@ SELECT * FROM audit_log
 
 ## Documentation
 
-- [User Manual](MANUAL.md) -- complete reference (17 sections)
-- [Examples](examples/) -- ready-to-run Orbi files
+- [Getting Started](docs/getting-started.md) -- installation, first commands, registry concept
+- [Concepts](docs/concepts.md) -- providers, resources, registry, credentials, simulate mode
+- [Provider Reference](docs/providers.md) -- all 7 providers with resource types and auth patterns
+- [IMPORT / Discover](docs/import-discover.md) -- auto-populate registry from live cloud state
+- [Network Verification](docs/network-verification.md) -- table-valued functions, ASSERT, deploy-and-verify
+- [Recipes](docs/recipes.md) -- 7 complete cookbook patterns (web stack, multi-cloud DB, Docker, K8s, ...)
+- [User Manual](MANUAL.md) -- complete DSL reference (17 sections)
+- [Examples](examples/) -- ready-to-run `.kvmql` files
 - [Specification](docs/SPEC.md) -- original DSL specification
 - [Changelog](docs/CHANGELOG.md) -- release history
 
