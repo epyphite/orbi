@@ -1181,12 +1181,20 @@ impl AzureResourceProvisioner {
         let collectors: Vec<(&str, fn(&Self) -> Result<Vec<Value>, String>)> = vec![
             ("vm", Self::discover_vms),
             ("postgres", Self::discover_postgres),
+            ("pg_database", Self::discover_pg_databases),
             ("redis", Self::discover_redis),
             ("aks", Self::discover_aks),
             ("vnet", Self::discover_vnets),
+            ("subnet", Self::discover_subnets),
             ("nsg", Self::discover_nsgs),
+            ("nsg_rule", Self::discover_nsg_rules),
             ("storage_account", Self::discover_storage_accounts),
             ("keyvault", Self::discover_keyvaults),
+            ("container_registry", Self::discover_container_registries),
+            ("container_app", Self::discover_container_apps),
+            ("container_job", Self::discover_container_jobs),
+            ("dns_zone", Self::discover_dns_zones),
+            ("load_balancer", Self::discover_load_balancers),
         ];
 
         for (resource_type, collector) in collectors {
@@ -1212,13 +1220,25 @@ impl AzureResourceProvisioner {
     }
 
     /// Run an `az ... list` command and return the parsed JSON array, or an
-    /// empty vec when the output is empty/null.
+    /// empty vec when the output is empty/null.  Logs the command and
+    /// item count to stderr so discover failures are visible.
     fn run_az_list(&self, args: &[&str]) -> Result<Vec<Value>, String> {
-        let result = self.run_az(args)?;
-        match result {
-            Value::Array(arr) => Ok(arr),
-            Value::Null => Ok(Vec::new()),
-            other => Ok(vec![other]),
+        let cmd_str = self.build_args(args).join(" ");
+        eprintln!("[orbi:azure] discover: {cmd_str}");
+        match self.run_az(args) {
+            Ok(result) => {
+                let items = match result {
+                    Value::Array(arr) => arr,
+                    Value::Null => Vec::new(),
+                    other => vec![other],
+                };
+                eprintln!("[orbi:azure] discover: got {} items", items.len());
+                Ok(items)
+            }
+            Err(e) => {
+                eprintln!("[orbi:azure] discover FAILED: {e}");
+                Err(e)
+            }
         }
     }
 
@@ -1419,6 +1439,265 @@ impl AzureResourceProvisioner {
                 "outputs": {}
             })
         }).collect())
+    }
+
+    // ── container_registry (ACR) ─────────────────────────────
+
+    fn discover_container_registries(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["acr", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "container_registry",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "sku": v.get("sku").and_then(|s| s.get("name"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                    "location": str_field(&v, "location"),
+                    "admin_enabled": v.get("adminUserEnabled")
+                        .and_then(|b| b.as_bool()).unwrap_or(false),
+                },
+                "outputs": {
+                    "login_server": str_field(&v, "loginServer"),
+                }
+            })
+        }).collect())
+    }
+
+    // ── container_app ────────────────────────────────────────
+
+    fn discover_container_apps(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["containerapp", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            let image = v.get("properties")
+                .and_then(|p| p.get("template"))
+                .and_then(|t| t.get("containers"))
+                .and_then(|c| c.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|c| c.get("image"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            let fqdn = v.get("properties")
+                .and_then(|p| p.get("configuration"))
+                .and_then(|c| c.get("ingress"))
+                .and_then(|i| i.get("fqdn"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "container_app",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "location": str_field(&v, "location"),
+                    "image": image,
+                    "state": v.get("properties")
+                        .and_then(|p| p.get("runningStatus"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                },
+                "outputs": { "fqdn": fqdn }
+            })
+        }).collect())
+    }
+
+    // ── container_job ────────────────────────────────────────
+
+    fn discover_container_jobs(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["containerapp", "job", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            let schedule = v.get("properties")
+                .and_then(|p| p.get("configuration"))
+                .and_then(|c| c.get("scheduleTriggerConfig"))
+                .and_then(|s| s.get("cronExpression"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "container_job",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "location": str_field(&v, "location"),
+                    "schedule": schedule,
+                },
+                "outputs": {}
+            })
+        }).collect())
+    }
+
+    // ── dns_zone (public and private) ────────────────────────
+
+    fn discover_dns_zones(&self) -> Result<Vec<Value>, String> {
+        let mut zones: Vec<Value> = Vec::new();
+
+        // Public DNS
+        if let Ok(items) = self.run_az_list(&["network", "dns", "zone", "list"]) {
+            for v in items {
+                let name = str_field(&v, "name");
+                zones.push(serde_json::json!({
+                    "id": name,
+                    "resource_type": "dns_zone",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "zone_type": "public",
+                        "record_count": v.get("numberOfRecordSets")
+                            .and_then(|n| n.as_i64()).unwrap_or(0),
+                    },
+                    "outputs": {}
+                }));
+            }
+        }
+
+        // Private DNS
+        if let Ok(items) = self.run_az_list(&["network", "private-dns", "zone", "list"]) {
+            for v in items {
+                let name = str_field(&v, "name");
+                zones.push(serde_json::json!({
+                    "id": name,
+                    "resource_type": "dns_zone",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "zone_type": "private",
+                        "record_count": v.get("numberOfRecordSets")
+                            .and_then(|n| n.as_i64()).unwrap_or(0),
+                    },
+                    "outputs": {}
+                }));
+            }
+        }
+
+        Ok(zones)
+    }
+
+    // ── load_balancer ────────────────────────────────────────
+
+    fn discover_load_balancers(&self) -> Result<Vec<Value>, String> {
+        let items = self.run_az_list(&["network", "lb", "list"])?;
+        Ok(items.into_iter().map(|v| {
+            let name = str_field(&v, "name");
+            serde_json::json!({
+                "id": name,
+                "resource_type": "load_balancer",
+                "name": name,
+                "config": {
+                    "resource_group": str_field(&v, "resourceGroup"),
+                    "sku": v.get("sku").and_then(|s| s.get("name"))
+                        .and_then(|s| s.as_str()).unwrap_or(""),
+                    "location": str_field(&v, "location"),
+                },
+                "outputs": {}
+            })
+        }).collect())
+    }
+
+    // ── Nested: subnets within VNets ─────────────────────────
+
+    fn discover_subnets(&self) -> Result<Vec<Value>, String> {
+        let vnets = self.run_az_list(&["network", "vnet", "list"])?;
+        let mut subnets: Vec<Value> = Vec::new();
+        for vnet in &vnets {
+            let vnet_name = str_field(vnet, "name");
+            let rg = str_field(vnet, "resourceGroup");
+            if let Some(arr) = vnet.get("subnets").and_then(|s| s.as_array()) {
+                for subnet in arr {
+                    let name = str_field(subnet, "name");
+                    let id = format!("{vnet_name}/{name}");
+                    subnets.push(serde_json::json!({
+                        "id": id,
+                        "resource_type": "subnet",
+                        "name": name,
+                        "config": {
+                            "resource_group": rg,
+                            "vnet": vnet_name,
+                            "address_prefix": str_field(subnet, "addressPrefix"),
+                        },
+                        "outputs": {}
+                    }));
+                }
+            }
+        }
+        Ok(subnets)
+    }
+
+    // ── Nested: NSG rules within NSGs ────────────────────────
+
+    fn discover_nsg_rules(&self) -> Result<Vec<Value>, String> {
+        let nsgs = self.run_az_list(&["network", "nsg", "list"])?;
+        let mut rules: Vec<Value> = Vec::new();
+        for nsg in &nsgs {
+            let nsg_name = str_field(nsg, "name");
+            let rg = str_field(nsg, "resourceGroup");
+            if let Some(arr) = nsg.get("securityRules").and_then(|s| s.as_array()) {
+                for rule in arr {
+                    let name = str_field(rule, "name");
+                    let id = format!("{nsg_name}/{name}");
+                    rules.push(serde_json::json!({
+                        "id": id,
+                        "resource_type": "nsg_rule",
+                        "name": name,
+                        "config": {
+                            "resource_group": rg,
+                            "nsg": nsg_name,
+                            "priority": rule.get("priority").and_then(|p| p.as_i64()).unwrap_or(0),
+                            "direction": str_field(rule, "direction"),
+                            "protocol": str_field(rule, "protocol"),
+                            "source_address_prefix": str_field(rule, "sourceAddressPrefix"),
+                            "destination_port_range": str_field(rule, "destinationPortRange"),
+                            "access": str_field(rule, "access"),
+                        },
+                        "outputs": {}
+                    }));
+                }
+            }
+        }
+        Ok(rules)
+    }
+
+    // ── Nested: databases within PG flexible servers ─────────
+
+    fn discover_pg_databases(&self) -> Result<Vec<Value>, String> {
+        let servers = self.run_az_list(&["postgres", "flexible-server", "list"])?;
+        let mut dbs: Vec<Value> = Vec::new();
+        for server in &servers {
+            let server_name = str_field(server, "name");
+            let rg = str_field(server, "resourceGroup");
+            if rg.is_empty() || server_name.is_empty() {
+                continue;
+            }
+            // List databases for this server
+            let server_dbs = self.run_az_list(&[
+                "postgres", "flexible-server", "db", "list",
+                "--server-name", &server_name,
+                "--resource-group", &rg,
+            ]).unwrap_or_default();
+            for db in server_dbs {
+                let name = str_field(&db, "name");
+                // Skip system databases
+                if name == "azure_maintenance" || name == "azure_sys" {
+                    continue;
+                }
+                let id = format!("{server_name}/{name}");
+                dbs.push(serde_json::json!({
+                    "id": id,
+                    "resource_type": "pg_database",
+                    "name": name,
+                    "config": {
+                        "resource_group": rg,
+                        "server": server_name,
+                        "charset": str_field(&db, "charset"),
+                        "collation": str_field(&db, "collation"),
+                    },
+                    "outputs": {}
+                }));
+            }
+        }
+        Ok(dbs)
     }
 }
 
