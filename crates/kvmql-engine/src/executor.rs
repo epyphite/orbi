@@ -7,7 +7,7 @@ use kvmql_parser::ast::*;
 use kvmql_parser::parser::Parser;
 
 use crate::context::{EngineContext, ExecutionMode};
-use crate::errors::{with_remediation, ErrorContext};
+use crate::errors::{with_remediation, EngineError, ErrorContext};
 use crate::response::*;
 
 // ---------------------------------------------------------------------------
@@ -432,7 +432,8 @@ impl<'a> Executor<'a> {
                     }
                     total_rows += outcome.rows_affected;
                 }
-                Err(msg) => {
+                Err(e) => {
+                    let msg = e.to_string();
                     if self.ctx.execution_mode == ExecutionMode::Strict {
                         // Record query history even for errors (unless SET/SHOW)
                         if !skip_history(stmt) {
@@ -618,7 +619,7 @@ impl StmtOutcome {
 // ---------------------------------------------------------------------------
 
 impl<'a> Executor<'a> {
-    async fn execute_statement(&self, stmt: &Statement) -> Result<StmtOutcome, String> {
+    async fn execute_statement(&self, stmt: &Statement) -> Result<StmtOutcome, EngineError> {
         // Dry-run mode: wrap mutations in EXPLAIN automatically, but let
         // read-only statements (SELECT, SHOW, SET, EXPLAIN) through.
         if self.ctx.dry_run
@@ -682,7 +683,7 @@ impl<'a> Executor<'a> {
     // EXPLAIN
     // =======================================================================
 
-    async fn exec_explain(&self, stmt: &Statement) -> Result<StmtOutcome, String> {
+    async fn exec_explain(&self, stmt: &Statement) -> Result<StmtOutcome, EngineError> {
         let mut steps = Vec::new();
 
         match stmt {
@@ -734,7 +735,7 @@ impl<'a> Executor<'a> {
                         steps.push(serde_json::json!({
                             "step": 1,
                             "action": format!("CREATE RESOURCE '{}'", rtype),
-                            "error": e,
+                            "error": e.to_string(),
                         }));
                     }
                 }
@@ -794,7 +795,7 @@ impl<'a> Executor<'a> {
                             steps.push(serde_json::json!({
                                 "step": 1,
                                 "action": format!("DESTROY RESOURCE '{}' '{}'", rtype, s.id),
-                                "error": e,
+                                "error": e.to_string(),
                             }));
                         }
                     }
@@ -934,7 +935,7 @@ impl<'a> Executor<'a> {
     fn get_ssh_provisioner(
         &self,
         provider_id: &str,
-    ) -> Result<kvmql_driver::ssh::SshResourceProvisioner, String> {
+    ) -> Result<kvmql_driver::ssh::SshResourceProvisioner, EngineError> {
         let p = self
             .ctx
             .registry
@@ -956,7 +957,7 @@ impl<'a> Executor<'a> {
                     return Err(format!(
                         "failed to resolve ssh key '{}' for provider '{}': {}",
                         p.auth_ref, provider_id, e
-                    ));
+                    ).into());
                 }
             }
         };
@@ -1020,7 +1021,7 @@ impl<'a> Executor<'a> {
     // Provider management
     // =======================================================================
 
-    fn exec_add_provider(&self, s: &AddProviderStmt) -> Result<StmtOutcome, String> {
+    fn exec_add_provider(&self, s: &AddProviderStmt) -> Result<StmtOutcome, EngineError> {
         let id = get_param(&s.params, "id").ok_or("ADD PROVIDER requires id param")?;
 
         // IF NOT EXISTS: skip silently if provider already exists
@@ -1113,7 +1114,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_val(val))
     }
 
-    fn exec_remove_provider(&self, s: &RemoveProviderStmt) -> Result<StmtOutcome, String> {
+    fn exec_remove_provider(&self, s: &RemoveProviderStmt) -> Result<StmtOutcome, EngineError> {
         self.ctx
             .registry
             .delete_provider(&s.name)
@@ -1121,7 +1122,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_empty())
     }
 
-    fn exec_alter_provider(&self, s: &AlterProviderStmt) -> Result<StmtOutcome, String> {
+    fn exec_alter_provider(&self, s: &AlterProviderStmt) -> Result<StmtOutcome, EngineError> {
         // Only supports SET status = '...' for now
         for item in &s.set_items {
             if item.key == "status" {
@@ -1143,7 +1144,7 @@ impl<'a> Executor<'a> {
     async fn exec_create_microvm(
         &self,
         s: &CreateMicrovmStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         // Determine target provider
         let provider_id = self.resolve_provider(&s.on)?;
         let driver = self
@@ -1208,7 +1209,7 @@ impl<'a> Executor<'a> {
                         } else {
                             return Err(format!(
                                 "failed to resolve ssh_key '{}': {}", key_ref, _e
-                            ));
+                            ).into());
                         }
                     }
                 }
@@ -1313,7 +1314,7 @@ impl<'a> Executor<'a> {
     // DESTROY MICROVM / VOLUME
     // =======================================================================
 
-    async fn exec_destroy(&self, s: &DestroyStmt) -> Result<StmtOutcome, String> {
+    async fn exec_destroy(&self, s: &DestroyStmt) -> Result<StmtOutcome, EngineError> {
         match s.target {
             DestroyTarget::Microvm => {
                 // Look up VM in registry to find its provider
@@ -1369,7 +1370,7 @@ impl<'a> Executor<'a> {
     // PAUSE / RESUME
     // =======================================================================
 
-    async fn exec_pause(&self, s: &PauseStmt) -> Result<StmtOutcome, String> {
+    async fn exec_pause(&self, s: &PauseStmt) -> Result<StmtOutcome, EngineError> {
         let row = self
             .ctx
             .registry
@@ -1391,7 +1392,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_empty())
     }
 
-    async fn exec_resume(&self, s: &ResumeStmt) -> Result<StmtOutcome, String> {
+    async fn exec_resume(&self, s: &ResumeStmt) -> Result<StmtOutcome, EngineError> {
         let row = self
             .ctx
             .registry
@@ -1417,7 +1418,7 @@ impl<'a> Executor<'a> {
     // SNAPSHOT / RESTORE
     // =======================================================================
 
-    async fn exec_snapshot(&self, s: &SnapshotStmt) -> Result<StmtOutcome, String> {
+    async fn exec_snapshot(&self, s: &SnapshotStmt) -> Result<StmtOutcome, EngineError> {
         let row = self
             .ctx
             .registry
@@ -1437,7 +1438,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_val(val))
     }
 
-    async fn exec_restore(&self, s: &RestoreStmt) -> Result<StmtOutcome, String> {
+    async fn exec_restore(&self, s: &RestoreStmt) -> Result<StmtOutcome, EngineError> {
         // Find any driver (use first available or the one that holds a snapshot)
         let (provider_id, driver) = self.any_driver()?;
         let vm = driver
@@ -1475,7 +1476,7 @@ impl<'a> Executor<'a> {
     async fn exec_create_volume(
         &self,
         s: &CreateVolumeStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let provider_id = self.resolve_provider(&s.on)?;
         let driver = self
             .ctx
@@ -1548,7 +1549,7 @@ impl<'a> Executor<'a> {
     // ATTACH / DETACH VOLUME
     // =======================================================================
 
-    async fn exec_attach(&self, s: &AttachStmt) -> Result<StmtOutcome, String> {
+    async fn exec_attach(&self, s: &AttachStmt) -> Result<StmtOutcome, EngineError> {
         // Look up the VM to find its provider
         let vm_row = self
             .ctx
@@ -1575,7 +1576,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_empty())
     }
 
-    async fn exec_detach(&self, s: &DetachStmt) -> Result<StmtOutcome, String> {
+    async fn exec_detach(&self, s: &DetachStmt) -> Result<StmtOutcome, EngineError> {
         let vm_row = self
             .ctx
             .registry
@@ -1601,7 +1602,7 @@ impl<'a> Executor<'a> {
     // RESIZE VOLUME
     // =======================================================================
 
-    async fn exec_resize(&self, s: &ResizeStmt) -> Result<StmtOutcome, String> {
+    async fn exec_resize(&self, s: &ResizeStmt) -> Result<StmtOutcome, EngineError> {
         let vol_row = self
             .ctx
             .registry
@@ -1630,7 +1631,7 @@ impl<'a> Executor<'a> {
     async fn exec_alter_microvm(
         &self,
         s: &AlterMicrovmStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let row = self
             .ctx
             .registry
@@ -1666,7 +1667,7 @@ impl<'a> Executor<'a> {
     async fn exec_alter_volume(
         &self,
         s: &AlterVolumeStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let vol_row = self
             .ctx
             .registry
@@ -1759,7 +1760,7 @@ impl<'a> Executor<'a> {
     async fn exec_import_image(
         &self,
         s: &ImportImageStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let (provider_id, driver) = self.any_driver()?;
 
         let id = get_param(&s.params, "id")
@@ -1831,7 +1832,7 @@ impl<'a> Executor<'a> {
     async fn exec_remove_image(
         &self,
         s: &RemoveImageStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let (_provider_id, driver) = self.any_driver()?;
         driver
             .remove_image(&s.image_id, s.force)
@@ -1848,7 +1849,7 @@ impl<'a> Executor<'a> {
     // SELECT
     // =======================================================================
 
-    async fn exec_select(&self, s: &SelectStmt) -> Result<StmtOutcome, String> {
+    async fn exec_select(&self, s: &SelectStmt) -> Result<StmtOutcome, EngineError> {
         // Table-valued function sources (dns_lookup, tcp_probe, ...) live in
         // a separate code path — no registry involvement.
         let noun = match &s.from {
@@ -2311,7 +2312,7 @@ impl<'a> Executor<'a> {
     // SHOW
     // =======================================================================
 
-    fn exec_show(&self, s: &ShowStmt) -> Result<StmtOutcome, String> {
+    fn exec_show(&self, s: &ShowStmt) -> Result<StmtOutcome, EngineError> {
         match &s.target {
             ShowTarget::Providers => {
                 let list = self
@@ -2388,7 +2389,7 @@ impl<'a> Executor<'a> {
                             provider_id: Some(pid.clone()),
                             ..Default::default()
                         },
-                    ));
+                    ).into());
                 }
                 // No provider specified — show all capabilities across all drivers
                 let mut rows = Vec::new();
@@ -2448,7 +2449,7 @@ impl<'a> Executor<'a> {
                             let n = vals.len() as i64;
                             Ok(StmtOutcome::ok_rows(serde_json::Value::Array(vals), n))
                         }
-                        Err(e) => Err(format!("failed to list grants: {e}")),
+                        Err(e) => Err(format!("failed to list grants: {e}").into()),
                     }
                 } else {
                     match self.ctx.registry.list_all_grants() {
@@ -2469,7 +2470,7 @@ impl<'a> Executor<'a> {
                             let n = vals.len() as i64;
                             Ok(StmtOutcome::ok_rows(serde_json::Value::Array(vals), n))
                         }
-                        Err(e) => Err(format!("failed to list grants: {e}")),
+                        Err(e) => Err(format!("failed to list grants: {e}").into()),
                     }
                 }
             }
@@ -2480,7 +2481,7 @@ impl<'a> Executor<'a> {
     // SET
     // =======================================================================
 
-    fn exec_set(&self, s: &SetStmt) -> Result<StmtOutcome, String> {
+    fn exec_set(&self, s: &SetStmt) -> Result<StmtOutcome, EngineError> {
         // Handle @variable assignment
         if s.key.starts_with('@') {
             let var_name = s.key[1..].to_string();
@@ -2507,7 +2508,7 @@ impl<'a> Executor<'a> {
                         other => {
                             return Err(format!(
                                 "unknown execution mode: '{other}'; expected 'strict' or 'permissive'"
-                            ));
+                            ).into());
                         }
                     };
                     // NOTE: EngineContext is borrowed immutably, so we can't
@@ -2535,7 +2536,7 @@ impl<'a> Executor<'a> {
     // CLUSTER management
     // =======================================================================
 
-    fn exec_add_cluster(&self, s: &AddClusterStmt) -> Result<StmtOutcome, String> {
+    fn exec_add_cluster(&self, s: &AddClusterStmt) -> Result<StmtOutcome, EngineError> {
         let id = uuid::Uuid::new_v4().to_string();
         self.ctx
             .registry
@@ -2553,7 +2554,7 @@ impl<'a> Executor<'a> {
         })))
     }
 
-    fn exec_remove_cluster(&self, s: &RemoveClusterStmt) -> Result<StmtOutcome, String> {
+    fn exec_remove_cluster(&self, s: &RemoveClusterStmt) -> Result<StmtOutcome, EngineError> {
         self.ctx
             .registry
             .delete_cluster(&s.name)
@@ -2561,7 +2562,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_empty())
     }
 
-    fn exec_alter_cluster(&self, s: &AlterClusterStmt) -> Result<StmtOutcome, String> {
+    fn exec_alter_cluster(&self, s: &AlterClusterStmt) -> Result<StmtOutcome, EngineError> {
         match &s.action {
             ClusterAlterAction::AddMember(provider_id) => {
                 self.ctx
@@ -2583,7 +2584,7 @@ impl<'a> Executor<'a> {
     // ADD PRINCIPAL / GRANT / REVOKE
     // =======================================================================
 
-    fn exec_add_principal(&self, s: &AddPrincipalStmt) -> Result<StmtOutcome, String> {
+    fn exec_add_principal(&self, s: &AddPrincipalStmt) -> Result<StmtOutcome, EngineError> {
         let id = get_param(&s.params, "id").ok_or("ADD PRINCIPAL requires id")?;
         let ptype = get_param(&s.params, "type").unwrap_or_else(|| "user".into());
         let auth = get_param(&s.params, "auth").ok_or("ADD PRINCIPAL requires auth")?;
@@ -2602,7 +2603,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_val(val))
     }
 
-    fn exec_grant(&self, s: &GrantStmt) -> Result<StmtOutcome, String> {
+    fn exec_grant(&self, s: &GrantStmt) -> Result<StmtOutcome, EngineError> {
         // 1. Verify principal exists
         self.ctx
             .registry
@@ -2653,7 +2654,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_val(val))
     }
 
-    fn exec_revoke(&self, s: &RevokeStmt) -> Result<StmtOutcome, String> {
+    fn exec_revoke(&self, s: &RevokeStmt) -> Result<StmtOutcome, EngineError> {
         // 1. Find grants for the principal
         let grants = self
             .ctx
@@ -2736,7 +2737,7 @@ impl<'a> Executor<'a> {
     fn exec_create_resource(
         &self,
         s: &CreateResourceStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         if self.ctx.simulate {
             return self.exec_create_resource_simulated(s);
         }
@@ -2869,7 +2870,7 @@ impl<'a> Executor<'a> {
                                 });
                                 return Err(format!(
                                     "failed to resolve content reference: {e}"
-                                ));
+                                ).into());
                             }
                         }
                     }
@@ -3135,7 +3136,7 @@ impl<'a> Executor<'a> {
     fn exec_alter_resource(
         &self,
         s: &AlterResourceStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         if self.ctx.simulate {
             return self.exec_alter_resource_simulated(s);
         }
@@ -3160,7 +3161,7 @@ impl<'a> Executor<'a> {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ));
+            ).into());
         }
 
         // Resolve variable references in set_items
@@ -3296,7 +3297,7 @@ impl<'a> Executor<'a> {
     fn exec_destroy_resource(
         &self,
         s: &DestroyResourceStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         if self.ctx.simulate {
             return self.exec_destroy_resource_simulated(s);
         }
@@ -3320,7 +3321,7 @@ impl<'a> Executor<'a> {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ));
+            ).into());
         }
 
         // Attempt real deletion via the appropriate cloud CLI
@@ -3476,7 +3477,7 @@ impl<'a> Executor<'a> {
     fn exec_create_resource_simulated(
         &self,
         s: &CreateResourceStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let params = self.resolve_params(&s.params);
         let id = get_param(&params, "id")
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -3552,7 +3553,7 @@ impl<'a> Executor<'a> {
     fn exec_alter_resource_simulated(
         &self,
         s: &AlterResourceStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let existing = self
             .ctx
             .registry
@@ -3571,7 +3572,7 @@ impl<'a> Executor<'a> {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ));
+            ).into());
         }
 
         let set_items = self.resolve_params(&s.set_items);
@@ -3621,7 +3622,7 @@ impl<'a> Executor<'a> {
     fn exec_destroy_resource_simulated(
         &self,
         s: &DestroyResourceStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let existing = self
             .ctx
             .registry
@@ -3640,7 +3641,7 @@ impl<'a> Executor<'a> {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ));
+            ).into());
         }
 
         self.ctx
@@ -3671,7 +3672,7 @@ impl<'a> Executor<'a> {
     fn exec_backup(
         &self,
         s: &BackupStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         // Verify resource exists and type matches
         let existing = self
             .ctx
@@ -3691,7 +3692,7 @@ impl<'a> Executor<'a> {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ));
+            ).into());
         }
 
         if self.ctx.simulate {
@@ -3757,7 +3758,7 @@ impl<'a> Executor<'a> {
     fn exec_restore_resource(
         &self,
         s: &RestoreResourceStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         // Verify resource exists and type matches
         let existing = self
             .ctx
@@ -3777,7 +3778,7 @@ impl<'a> Executor<'a> {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ));
+            ).into());
         }
 
         if self.ctx.simulate {
@@ -3838,7 +3839,7 @@ impl<'a> Executor<'a> {
     fn exec_scale(
         &self,
         s: &ScaleStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         // Verify resource exists and type matches
         let existing = self
             .ctx
@@ -3858,7 +3859,7 @@ impl<'a> Executor<'a> {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ));
+            ).into());
         }
 
         if self.ctx.simulate {
@@ -3955,7 +3956,7 @@ impl<'a> Executor<'a> {
     fn exec_upgrade(
         &self,
         s: &UpgradeStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         // Verify resource exists and type matches
         let existing = self
             .ctx
@@ -3975,7 +3976,7 @@ impl<'a> Executor<'a> {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ));
+            ).into());
         }
 
         if self.ctx.simulate {
@@ -4079,7 +4080,7 @@ impl<'a> Executor<'a> {
     // WATCH
     // =======================================================================
 
-    async fn exec_watch(&self, s: &WatchStmt) -> Result<StmtOutcome, String> {
+    async fn exec_watch(&self, s: &WatchStmt) -> Result<StmtOutcome, EngineError> {
         // WATCH is fundamentally a streaming operation.  In the single-shot
         // executor context (CLI / REST) we execute one sample of the
         // underlying SELECT query and return it with an informational
@@ -4112,7 +4113,7 @@ impl<'a> Executor<'a> {
     // PUBLISH IMAGE
     // =======================================================================
 
-    fn exec_publish_image(&self, s: &PublishImageStmt) -> Result<StmtOutcome, String> {
+    fn exec_publish_image(&self, s: &PublishImageStmt) -> Result<StmtOutcome, EngineError> {
         // 1. Verify the image exists in the registry
         let image = self
             .ctx
@@ -4172,7 +4173,7 @@ impl<'a> Executor<'a> {
     // Provider resolution helpers
     // =======================================================================
 
-    fn resolve_provider(&self, on: &Option<TargetSpec>) -> Result<String, String> {
+    fn resolve_provider(&self, on: &Option<TargetSpec>) -> Result<String, EngineError> {
         if let Some(spec) = on {
             match &spec.target {
                 TargetKind::Provider(id) => return Ok(id.clone()),
@@ -4192,12 +4193,12 @@ impl<'a> Executor<'a> {
                     "NO_DRIVERS",
                     "no drivers registered",
                     &ErrorContext::default(),
-                )
+                ).into()
             })
     }
 
     /// Return any available driver (first in the map).
-    fn any_driver(&self) -> Result<(String, Arc<dyn kvmql_driver::traits::Driver>), String> {
+    fn any_driver(&self) -> Result<(String, Arc<dyn kvmql_driver::traits::Driver>), EngineError> {
         let drivers = self.ctx.drivers.read().unwrap();
         drivers
             .iter()
@@ -4208,7 +4209,7 @@ impl<'a> Executor<'a> {
                     "NO_DRIVERS",
                     "no drivers registered",
                     &ErrorContext::default(),
-                )
+                ).into()
             })
     }
 
@@ -4373,7 +4374,7 @@ impl<'a> Executor<'a> {
     // ROLLBACK
     // =======================================================================
 
-    fn exec_rollback(&self, s: &RollbackStmt) -> Result<StmtOutcome, String> {
+    fn exec_rollback(&self, s: &RollbackStmt) -> Result<StmtOutcome, EngineError> {
         let snapshot = match &s.target {
             RollbackTarget::Last => {
                 self.ctx.registry.get_last_snapshot()
@@ -4472,7 +4473,7 @@ impl<'a> Executor<'a> {
                     iops, encrypted, labels.as_deref(),
                 ).map_err(|e| format!("rollback failed: {e}"))?;
             }
-            other => return Err(format!("rollback not supported for type: {other}")),
+            other => return Err(format!("rollback not supported for type: {other}").into()),
         }
 
         let val = serde_json::json!({
@@ -4497,7 +4498,7 @@ impl<'a> Executor<'a> {
         &self,
         s: &SelectStmt,
         fc: &kvmql_parser::ast::FunctionCall,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         // Resolve any `@var` references in the args against the session
         // variable pool so functions only ever see concrete literals.
         let fc_resolved = self.resolve_function_call_args(fc);
@@ -4510,18 +4511,22 @@ impl<'a> Executor<'a> {
             "systemd_services" => self.run_ssh_query(&fc_resolved, |p| {
                 kvmql_driver::ssh::systemd::SystemdProvisioner::new(&p.client)
                     .list_services()
+                    .map_err(|e| e.to_string())
             })?,
             "nginx_vhosts" => self.run_ssh_query(&fc_resolved, |p| {
                 kvmql_driver::ssh::nginx::NginxProvisioner::new(&p.client)
                     .list_vhosts()
+                    .map_err(|e| e.to_string())
             })?,
             "nginx_config_test" => self.run_ssh_query(&fc_resolved, |p| {
                 kvmql_driver::ssh::nginx::NginxProvisioner::new(&p.client)
                     .config_test_row()
+                    .map_err(|e| e.to_string())
             })?,
             "docker_containers" => self.run_ssh_query(&fc_resolved, |p| {
                 kvmql_driver::ssh::docker::DockerProvisioner::new(&p.client)
                     .list_containers()
+                    .map_err(|e| e.to_string())
             })?,
             _ => run_table_function(&fc_resolved).await?,
         };
@@ -4768,7 +4773,7 @@ impl<'a> Executor<'a> {
                         "host": null,
                         "path": path,
                         "present": false,
-                        "error": e,
+                        "error": e.to_string(),
                     }));
                     continue;
                 }
@@ -4793,7 +4798,7 @@ impl<'a> Executor<'a> {
     async fn exec_assert(
         &self,
         s: &kvmql_parser::ast::AssertStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         let passed = self.eval_assertion_predicate(&s.condition).await?;
         if passed {
             Ok(StmtOutcome::ok_val(serde_json::json!({
@@ -4804,7 +4809,7 @@ impl<'a> Executor<'a> {
                 .message
                 .clone()
                 .unwrap_or_else(|| "assertion failed".to_string());
-            Err(format!("ASSERTION FAILED: {}", msg))
+            Err(format!("ASSERTION FAILED: {}", msg).into())
         }
     }
 
@@ -4815,7 +4820,7 @@ impl<'a> Executor<'a> {
     fn exec_import_resources(
         &self,
         s: &kvmql_parser::ast::ImportResourcesStmt,
-    ) -> Result<StmtOutcome, String> {
+    ) -> Result<StmtOutcome, EngineError> {
         use kvmql_parser::ast::ImportSource;
 
         // Resolve which provider(s) to discover from.
@@ -5013,7 +5018,7 @@ impl<'a> Executor<'a> {
                 p.discover().map_err(|e| e.to_string())?
             }
             "ssh" => {
-                let p = self.get_ssh_provisioner(&provider.id)?;
+                let p = self.get_ssh_provisioner(&provider.id).map_err(|e| e.to_string())?;
                 p.discover().map_err(|e| e.to_string())?
             }
             other => {
@@ -5052,7 +5057,7 @@ impl<'a> Executor<'a> {
                 Predicate::Not(inner) => Ok(!self.eval_assertion_predicate(inner).await?),
                 Predicate::Grouped(inner) => self.eval_assertion_predicate(inner).await,
                 Predicate::Exists(select) => {
-                    let outcome = self.exec_select(select).await?;
+                    let outcome = self.exec_select(select).await.map_err(|e| e.to_string())?;
                     if let Some(serde_json::Value::Array(rows)) = outcome.result {
                         Ok(!rows.is_empty())
                     } else {
@@ -5085,7 +5090,7 @@ impl<'a> Executor<'a> {
         Box::pin(async move {
             match expr {
                 Expr::Subquery(select) => {
-                    let outcome = self.exec_select(select).await?;
+                    let outcome = self.exec_select(select).await.map_err(|e| e.to_string())?;
                     // Take the first row's first column (or the whole scalar
                     // if the result is already a single value).
                     match outcome.result {

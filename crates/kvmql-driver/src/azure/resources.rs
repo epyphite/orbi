@@ -3,6 +3,8 @@ use std::process::Command;
 use serde_json::Value;
 use tracing::{debug, error};
 
+use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
+
 /// Azure resource provisioner that maps KVMQL resource types to `az` CLI commands.
 ///
 /// Uses `std::process::Command` with individual arguments (never shell
@@ -12,15 +14,6 @@ use tracing::{debug, error};
 pub struct AzureResourceProvisioner {
     pub subscription: Option<String>,
     pub resource_group: Option<String>,
-}
-
-/// Result of a provisioning operation.
-#[derive(Debug)]
-pub struct ProvisionResult {
-    /// One of "created", "updated", "deleted".
-    pub status: String,
-    /// Provider-specific outputs (connection strings, FQDNs, etc.).
-    pub outputs: Option<Value>,
 }
 
 impl AzureResourceProvisioner {
@@ -35,7 +28,7 @@ impl AzureResourceProvisioner {
 
     /// Provision a managed resource.  Dispatches to the appropriate `az` command
     /// based on `resource_type`.
-    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, String> {
+    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "postgres" => self.create_postgres(params),
             "redis" => self.create_redis(params),
@@ -53,12 +46,12 @@ impl AzureResourceProvisioner {
             "vnet_peering" => self.create_vnet_peering(params),
             "pg_database" => self.create_pg_database(params),
             "dns_vnet_link" => self.create_dns_vnet_link(params),
-            other => Err(format!("unsupported resource type: {other}")),
+            other => Err(format!("unsupported resource type: {other}").into()),
         }
     }
 
     /// Update a managed resource in-place.
-    pub fn update(&self, resource_type: &str, id: &str, params: &Value) -> Result<ProvisionResult, String> {
+    pub fn update(&self, resource_type: &str, id: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "postgres" => {
                 let mut args = vec!["postgres", "flexible-server", "update", "--name", id];
@@ -71,12 +64,12 @@ impl AzureResourceProvisioner {
                 let result = self.run_az(&args)?;
                 Ok(ProvisionResult { status: "updated".into(), outputs: Some(result) })
             }
-            other => Err(format!("update not yet implemented for resource type: {other}")),
+            other => Err(format!("update not yet implemented for resource type: {other}").into()),
         }
     }
 
     /// Delete a managed resource.
-    pub fn delete(&self, resource_type: &str, id: &str) -> Result<(), String> {
+    pub fn delete(&self, resource_type: &str, id: &str) -> Result<(), ProvisionError> {
         let rg_args: Vec<String> = self
             .resource_group
             .iter()
@@ -98,9 +91,9 @@ impl AzureResourceProvisioner {
             "subnet" | "nsg_rule" | "vnet_peering" => {
                 return Err(format!(
                     "sub-resource type '{resource_type}' requires parent context; use delete_with_params()"
-                ));
+                ).into());
             }
-            other => return Err(format!("unsupported resource type for delete: {other}")),
+            other => return Err(format!("unsupported resource type for delete: {other}").into()),
         };
 
         let mut full_args = args;
@@ -112,7 +105,7 @@ impl AzureResourceProvisioner {
     }
 
     /// Delete a sub-resource that requires parent context (e.g. subnet needs vnet name).
-    pub fn delete_with_params(&self, resource_type: &str, id: &str, params: &Value) -> Result<(), String> {
+    pub fn delete_with_params(&self, resource_type: &str, id: &str, params: &Value) -> Result<(), ProvisionError> {
         match resource_type {
             "subnet" => self.delete_subnet(id, params),
             "nsg_rule" => self.delete_nsg_rule(id, params),
@@ -132,7 +125,7 @@ impl AzureResourceProvisioner {
         id: &str,
         _destination: Option<&str>,
         _tag: Option<&str>,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "postgres" => {
                 // Azure PG Flexible Server uses automatic backups with PITR.
@@ -146,7 +139,7 @@ impl AzureResourceProvisioner {
                     })),
                 })
             }
-            _ => Err(format!("backup not supported for resource type: {resource_type}")),
+            _ => Err(format!("backup not supported for resource type: {resource_type}").into()),
         }
     }
 
@@ -156,7 +149,7 @@ impl AzureResourceProvisioner {
         resource_type: &str,
         id: &str,
         source: &str,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "postgres" => {
                 let restored_name = format!("{id}-restored");
@@ -168,7 +161,7 @@ impl AzureResourceProvisioner {
                     outputs: Some(result),
                 })
             }
-            _ => Err(format!("restore not supported for resource type: {resource_type}")),
+            _ => Err(format!("restore not supported for resource type: {resource_type}").into()),
         }
     }
 
@@ -178,7 +171,7 @@ impl AzureResourceProvisioner {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "aks" => {
                 let args = self.build_scale_aks_args(id, params)?;
@@ -198,7 +191,7 @@ impl AzureResourceProvisioner {
                     outputs: Some(result),
                 })
             }
-            _ => Err(format!("scale not supported for resource type: {resource_type}")),
+            _ => Err(format!("scale not supported for resource type: {resource_type}").into()),
         }
     }
 
@@ -208,7 +201,7 @@ impl AzureResourceProvisioner {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "aks" => {
                 let args = self.build_upgrade_aks_args(id, params)?;
@@ -219,14 +212,14 @@ impl AzureResourceProvisioner {
                     outputs: Some(result),
                 })
             }
-            _ => Err(format!("upgrade not supported for resource type: {resource_type}")),
+            _ => Err(format!("upgrade not supported for resource type: {resource_type}").into()),
         }
     }
 
     // ── Build args (for testing without execution) ───────────────────
 
     /// Build the `az` argument list that `create()` would use, WITHOUT executing.
-    pub fn build_create_args(&self, resource_type: &str, params: &Value) -> Result<Vec<String>, String> {
+    pub fn build_create_args(&self, resource_type: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let raw = match resource_type {
             "postgres" => self.build_postgres_args(params)?,
             "redis" => self.build_redis_args(params)?,
@@ -244,14 +237,14 @@ impl AzureResourceProvisioner {
             "vnet_peering" => self.build_vnet_peering_args(params)?,
             "pg_database" => self.build_pg_database_args(params)?,
             "dns_vnet_link" => self.build_dns_vnet_link_args(params)?,
-            other => return Err(format!("unsupported resource type: {other}")),
+            other => return Err(format!("unsupported resource type: {other}").into()),
         };
         // Wrap through build_args to add --output json and --subscription
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
     }
 
     /// Build the `az` argument list that `delete()` would use, WITHOUT executing.
-    pub fn build_delete_args(&self, resource_type: &str, id: &str) -> Result<Vec<String>, String> {
+    pub fn build_delete_args(&self, resource_type: &str, id: &str) -> Result<Vec<String>, ProvisionError> {
         let rg_args: Vec<String> = self
             .resource_group
             .iter()
@@ -273,9 +266,9 @@ impl AzureResourceProvisioner {
             "subnet" | "nsg_rule" | "vnet_peering" => {
                 return Err(format!(
                     "sub-resource type '{resource_type}' requires parent context; use build_delete_args_with_params()"
-                ));
+                ).into());
             }
-            other => return Err(format!("unsupported resource type for delete: {other}")),
+            other => return Err(format!("unsupported resource type for delete: {other}").into()),
         };
 
         let mut all: Vec<&str> = base;
@@ -287,7 +280,7 @@ impl AzureResourceProvisioner {
 
     /// Build the `az` argument list for deleting sub-resources that require parent
     /// context, WITHOUT executing.
-    pub fn build_delete_args_with_params(&self, resource_type: &str, id: &str, params: &Value) -> Result<Vec<String>, String> {
+    pub fn build_delete_args_with_params(&self, resource_type: &str, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let raw = match resource_type {
             "subnet" => self.build_subnet_delete_args(id, params)?,
             "nsg_rule" => self.build_nsg_rule_delete_args(id, params)?,
@@ -305,7 +298,7 @@ impl AzureResourceProvisioner {
         source_server: &str,
         restore_time: &str,
         restored_name: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, ProvisionError> {
         let mut args = vec![
             "postgres".into(),
             "flexible-server".into(),
@@ -325,7 +318,7 @@ impl AzureResourceProvisioner {
     }
 
     /// Build the argument list for AKS node pool scale.
-    fn build_scale_aks_args(&self, id: &str, params: &Value) -> Result<Vec<String>, String> {
+    fn build_scale_aks_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let node_count = param_str(params, "node_count")?;
         let nodepool = param_str_or(params, "nodepool", "nodepool1");
         let mut args = vec![
@@ -347,7 +340,7 @@ impl AzureResourceProvisioner {
     }
 
     /// Build the argument list for container app scale (replica count).
-    fn build_scale_container_app_args(&self, id: &str, params: &Value) -> Result<Vec<String>, String> {
+    fn build_scale_container_app_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let mut args = vec![
             "containerapp".into(),
             "update".into(),
@@ -370,7 +363,7 @@ impl AzureResourceProvisioner {
     }
 
     /// Build the argument list for AKS upgrade.
-    fn build_upgrade_aks_args(&self, id: &str, params: &Value) -> Result<Vec<String>, String> {
+    fn build_upgrade_aks_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let version = param_str(params, "kubernetes_version")?;
         let mut args = vec![
             "aks".into(),
@@ -395,14 +388,14 @@ impl AzureResourceProvisioner {
         resource_type: &str,
         id: &str,
         source: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, ProvisionError> {
         match resource_type {
             "postgres" => {
                 let restored_name = format!("{id}-restored");
                 let raw = self.build_restore_postgres_args(id, source, &restored_name)?;
                 Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
             }
-            other => Err(format!("restore not supported for resource type: {other}")),
+            other => Err(format!("restore not supported for resource type: {other}").into()),
         }
     }
 
@@ -412,11 +405,11 @@ impl AzureResourceProvisioner {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, ProvisionError> {
         let raw = match resource_type {
             "aks" => self.build_scale_aks_args(id, params)?,
             "container_app" => self.build_scale_container_app_args(id, params)?,
-            other => return Err(format!("scale not supported for resource type: {other}")),
+            other => return Err(format!("scale not supported for resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
     }
@@ -427,10 +420,10 @@ impl AzureResourceProvisioner {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, ProvisionError> {
         let raw = match resource_type {
             "aks" => self.build_upgrade_aks_args(id, params)?,
-            other => return Err(format!("upgrade not supported for resource type: {other}")),
+            other => return Err(format!("upgrade not supported for resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
     }
@@ -438,7 +431,7 @@ impl AzureResourceProvisioner {
     // ── Generic runner ───────────────────────────────────────────────
 
     /// Run an `az` command and return JSON output.
-    fn run_az(&self, args: &[&str]) -> Result<Value, String> {
+    fn run_az(&self, args: &[&str]) -> Result<Value, ProvisionError> {
         let mut cmd = Command::new("az");
         for arg in args {
             cmd.arg(arg);
@@ -455,7 +448,7 @@ impl AzureResourceProvisioner {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("az command failed: {stderr}"));
+            return Err(format!("az command failed: {stderr}").into());
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -463,7 +456,7 @@ impl AzureResourceProvisioner {
             return Ok(Value::Null);
         }
         serde_json::from_str(stdout.trim())
-            .map_err(|e| format!("failed to parse az JSON output: {e}"))
+            .map_err(|e| ProvisionError::from(format!("failed to parse az JSON output: {e}")))
     }
 
     /// Build the argument list that `run_az` would use (for testing without
@@ -484,7 +477,7 @@ impl AzureResourceProvisioner {
 
     // ── Per-resource create implementations ──────────────────────────
 
-    fn create_postgres(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_postgres(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_postgres_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -502,7 +495,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_redis(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_redis(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_redis_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -519,7 +512,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_aks(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_aks(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let node_count = param_str_or(params, "node_count", "3");
         let args = self.build_aks_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -537,7 +530,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_storage_account(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_storage_account(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_storage_account_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -552,7 +545,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_vnet(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_vnet(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_vnet_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -563,7 +556,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_nsg(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_nsg(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_nsg_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -574,7 +567,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_container_registry(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_container_registry(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_container_registry_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -589,7 +582,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_dns_zone(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_dns_zone(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_dns_zone_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -604,7 +597,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_container_app(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_container_app(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_container_app_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -622,7 +615,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_container_job(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_container_job(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_container_job_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -633,7 +626,7 @@ impl AzureResourceProvisioner {
         })
     }
 
-    fn create_load_balancer(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_load_balancer(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_load_balancer_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -646,7 +639,7 @@ impl AzureResourceProvisioner {
 
     // ── Argument builders (testable without execution) ───────────────
 
-    fn build_postgres_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_postgres_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let mut args = vec![
             "postgres".into(), "flexible-server".into(), "create".into(),
@@ -678,7 +671,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_redis_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_redis_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let sku = param_str_or(params, "sku", "Standard");
         let mut args = vec![
@@ -701,7 +694,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_aks_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_aks_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let node_count = param_str_or(params, "node_count", "3");
         let mut args = vec![
@@ -725,7 +718,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_storage_account_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_storage_account_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let sku = param_str_or(params, "sku", "Standard_LRS");
         let mut args = vec![
@@ -748,7 +741,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_vnet_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_vnet_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         // Accept either `address_space` (canonical) or `address_prefix` (subnet terminology)
         let addr = params
@@ -769,7 +762,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_nsg_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_nsg_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let mut args = vec![
             "network".into(), "nsg".into(), "create".into(),
@@ -782,7 +775,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_container_registry_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_container_registry_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let sku = param_str_or(params, "sku", "Standard");
         let mut args = vec![
@@ -800,7 +793,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_dns_zone_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_dns_zone_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let mut args = vec![
             "network".into(), "dns".into(), "zone".into(), "create".into(),
@@ -813,7 +806,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_container_app_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_container_app_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let image = param_str(params, "image")?;
         let mut args = vec![
@@ -846,7 +839,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_container_job_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_container_job_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let image = param_str(params, "image")?;
         let trigger = param_str_or(params, "trigger_type", "Manual");
@@ -875,7 +868,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_load_balancer_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_load_balancer_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let sku = param_str_or(params, "sku", "Standard");
         let mut args = vec![
@@ -892,21 +885,21 @@ impl AzureResourceProvisioner {
 
     // ── Subnet (sub-resource of VNet) ──────────────────────────────────
 
-    fn create_subnet(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_subnet(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_subnet_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
         Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
     }
 
-    fn delete_subnet(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_subnet(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let args = self.build_subnet_delete_args(id, params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_az(&refs)?;
         Ok(())
     }
 
-    fn build_subnet_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_subnet_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let vnet = param_str(params, "vnet")?;
         let prefix = param_str(params, "address_prefix")?;
@@ -931,7 +924,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_subnet_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, String> {
+    fn build_subnet_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let vnet = param_str(params, "vnet")?;
         let mut args: Vec<String> = vec![
             "network".into(), "vnet".into(), "subnet".into(), "delete".into(),
@@ -948,21 +941,21 @@ impl AzureResourceProvisioner {
 
     // ── NSG Rule (sub-resource of NSG) ─────────────────────────────────
 
-    fn create_nsg_rule(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_nsg_rule(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_nsg_rule_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
         Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
     }
 
-    fn delete_nsg_rule(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_nsg_rule(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let args = self.build_nsg_rule_delete_args(id, params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_az(&refs)?;
         Ok(())
     }
 
-    fn build_nsg_rule_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_nsg_rule_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let nsg = param_str(params, "nsg")?;
         let priority = param_str(params, "priority")?;
@@ -1007,7 +1000,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_nsg_rule_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, String> {
+    fn build_nsg_rule_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let nsg = param_str(params, "nsg")?;
         let mut args: Vec<String> = vec![
             "network".into(), "nsg".into(), "rule".into(), "delete".into(),
@@ -1023,21 +1016,21 @@ impl AzureResourceProvisioner {
 
     // ── VNet Peering ───────────────────────────────────────────────────
 
-    fn create_vnet_peering(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_vnet_peering(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_vnet_peering_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
         Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
     }
 
-    fn delete_vnet_peering(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_vnet_peering(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let args = self.build_vnet_peering_delete_args(id, params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_az(&refs)?;
         Ok(())
     }
 
-    fn build_vnet_peering_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_vnet_peering_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let vnet = param_str(params, "vnet")?;
         let remote_vnet = param_str(params, "remote_vnet")?;
@@ -1061,7 +1054,7 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_vnet_peering_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, String> {
+    fn build_vnet_peering_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let vnet = param_str(params, "vnet")?;
         let mut args: Vec<String> = vec![
             "network".into(), "vnet".into(), "peering".into(), "delete".into(),
@@ -1077,14 +1070,14 @@ impl AzureResourceProvisioner {
 
     // ── PostgreSQL Database ─────────────────────────────────────────
 
-    fn create_pg_database(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_pg_database(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_pg_database_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
         Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
     }
 
-    fn delete_pg_database(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_pg_database(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let server = param_str(params, "server")?;
         let mut args: Vec<String> = vec![
             "postgres".into(), "flexible-server".into(), "db".into(), "delete".into(),
@@ -1101,7 +1094,7 @@ impl AzureResourceProvisioner {
         Ok(())
     }
 
-    fn build_pg_database_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_pg_database_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let server = param_str(params, "server")?;
         let mut args = vec![
@@ -1126,14 +1119,14 @@ impl AzureResourceProvisioner {
 
     // ── Private DNS VNet Link ───────────────────────────────────────
 
-    fn create_dns_vnet_link(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_dns_vnet_link(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_dns_vnet_link_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
         Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
     }
 
-    fn delete_dns_vnet_link(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_dns_vnet_link(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let zone = param_str(params, "zone_name")?;
         let mut args: Vec<String> = vec![
             "network".into(), "private-dns".into(), "link".into(), "vnet".into(), "delete".into(),
@@ -1150,7 +1143,7 @@ impl AzureResourceProvisioner {
         Ok(())
     }
 
-    fn build_dns_vnet_link_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_dns_vnet_link_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let zone = param_str(params, "zone_name")?;
         let vnet = param_str(params, "vnet")?;
@@ -1176,10 +1169,10 @@ impl AzureResourceProvisioner {
     /// Discover all Azure resources across supported types by shelling out to
     /// `az` CLI list commands.  Returns a flat `Vec<Value>` where each entry
     /// has at minimum: `id`, `resource_type`, `name`, `config`, `outputs`.
-    pub fn discover(&self) -> Result<Vec<Value>, String> {
+    pub fn discover(&self) -> Result<Vec<Value>, ProvisionError> {
         let mut all: Vec<Value> = Vec::new();
 
-        let collectors: Vec<(&str, fn(&Self) -> Result<Vec<Value>, String>)> = vec![
+        let collectors: Vec<(&str, fn(&Self) -> Result<Vec<Value>, ProvisionError>)> = vec![
             ("vm", Self::discover_vms),
             ("postgres", Self::discover_postgres),
             ("pg_database", Self::discover_pg_databases),
@@ -1223,7 +1216,7 @@ impl AzureResourceProvisioner {
     /// Run an `az ... list` command and return the parsed JSON array, or an
     /// empty vec when the output is empty/null.  Logs the command and
     /// item count to stderr so discover failures are visible.
-    fn run_az_list(&self, args: &[&str]) -> Result<Vec<Value>, String> {
+    fn run_az_list(&self, args: &[&str]) -> Result<Vec<Value>, ProvisionError> {
         let cmd_str = self.build_args(args).join(" ");
         debug!(provider = "azure", cmd = %cmd_str, "discover running");
         match self.run_az(args) {
@@ -1243,7 +1236,7 @@ impl AzureResourceProvisioner {
         }
     }
 
-    fn discover_vms(&self) -> Result<Vec<Value>, String> {
+    fn discover_vms(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["vm", "list", "-d"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1273,7 +1266,7 @@ impl AzureResourceProvisioner {
         }).collect())
     }
 
-    fn discover_postgres(&self) -> Result<Vec<Value>, String> {
+    fn discover_postgres(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["postgres", "flexible-server", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1298,7 +1291,7 @@ impl AzureResourceProvisioner {
         }).collect())
     }
 
-    fn discover_redis(&self) -> Result<Vec<Value>, String> {
+    fn discover_redis(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["redis", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1320,7 +1313,7 @@ impl AzureResourceProvisioner {
         }).collect())
     }
 
-    fn discover_aks(&self) -> Result<Vec<Value>, String> {
+    fn discover_aks(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["aks", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1357,7 +1350,7 @@ impl AzureResourceProvisioner {
         }).collect())
     }
 
-    fn discover_vnets(&self) -> Result<Vec<Value>, String> {
+    fn discover_vnets(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["network", "vnet", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1383,7 +1376,7 @@ impl AzureResourceProvisioner {
         }).collect())
     }
 
-    fn discover_nsgs(&self) -> Result<Vec<Value>, String> {
+    fn discover_nsgs(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["network", "nsg", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1405,7 +1398,7 @@ impl AzureResourceProvisioner {
         }).collect())
     }
 
-    fn discover_storage_accounts(&self) -> Result<Vec<Value>, String> {
+    fn discover_storage_accounts(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["storage", "account", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1425,7 +1418,7 @@ impl AzureResourceProvisioner {
         }).collect())
     }
 
-    fn discover_keyvaults(&self) -> Result<Vec<Value>, String> {
+    fn discover_keyvaults(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["keyvault", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1444,7 +1437,7 @@ impl AzureResourceProvisioner {
 
     // ── container_registry (ACR) ─────────────────────────────
 
-    fn discover_container_registries(&self) -> Result<Vec<Value>, String> {
+    fn discover_container_registries(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["acr", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1469,7 +1462,7 @@ impl AzureResourceProvisioner {
 
     // ── container_app ────────────────────────────────────────
 
-    fn discover_container_apps(&self) -> Result<Vec<Value>, String> {
+    fn discover_container_apps(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["containerapp", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1506,7 +1499,7 @@ impl AzureResourceProvisioner {
 
     // ── container_job ────────────────────────────────────────
 
-    fn discover_container_jobs(&self) -> Result<Vec<Value>, String> {
+    fn discover_container_jobs(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["containerapp", "job", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1532,7 +1525,7 @@ impl AzureResourceProvisioner {
 
     // ── dns_zone (public and private) ────────────────────────
 
-    fn discover_dns_zones(&self) -> Result<Vec<Value>, String> {
+    fn discover_dns_zones(&self) -> Result<Vec<Value>, ProvisionError> {
         let mut zones: Vec<Value> = Vec::new();
 
         // Public DNS
@@ -1578,7 +1571,7 @@ impl AzureResourceProvisioner {
 
     // ── load_balancer ────────────────────────────────────────
 
-    fn discover_load_balancers(&self) -> Result<Vec<Value>, String> {
+    fn discover_load_balancers(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["network", "lb", "list"])?;
         Ok(items.into_iter().map(|v| {
             let name = str_field(&v, "name");
@@ -1599,7 +1592,7 @@ impl AzureResourceProvisioner {
 
     // ── Nested: subnets within VNets ─────────────────────────
 
-    fn discover_subnets(&self) -> Result<Vec<Value>, String> {
+    fn discover_subnets(&self) -> Result<Vec<Value>, ProvisionError> {
         let vnets = self.run_az_list(&["network", "vnet", "list"])?;
         let mut subnets: Vec<Value> = Vec::new();
         for vnet in &vnets {
@@ -1628,7 +1621,7 @@ impl AzureResourceProvisioner {
 
     // ── Nested: NSG rules within NSGs ────────────────────────
 
-    fn discover_nsg_rules(&self) -> Result<Vec<Value>, String> {
+    fn discover_nsg_rules(&self) -> Result<Vec<Value>, ProvisionError> {
         let nsgs = self.run_az_list(&["network", "nsg", "list"])?;
         let mut rules: Vec<Value> = Vec::new();
         for nsg in &nsgs {
@@ -1662,7 +1655,7 @@ impl AzureResourceProvisioner {
 
     // ── Nested: databases within PG flexible servers ─────────
 
-    fn discover_pg_databases(&self) -> Result<Vec<Value>, String> {
+    fn discover_pg_databases(&self) -> Result<Vec<Value>, ProvisionError> {
         let servers = self.run_az_list(&["postgres", "flexible-server", "list"])?;
         let mut dbs: Vec<Value> = Vec::new();
         for server in &servers {
@@ -1706,22 +1699,6 @@ impl AzureResourceProvisioner {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
-
-fn param_str_or(params: &Value, key: &str, default: &str) -> String {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
-}
-
 /// Extract a string field from a JSON object, returning `""` when missing.
 fn str_field<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(|s| s.as_str()).unwrap_or("")
@@ -1756,8 +1733,8 @@ mod tests {
     fn test_param_str_missing() {
         let params = serde_json::json!({"id": "my-db"});
         let err = param_str(&params, "version").unwrap_err();
-        assert!(err.contains("missing required parameter"));
-        assert!(err.contains("version"));
+        assert!(err.to_string().contains("missing required parameter"));
+        assert!(err.to_string().contains("version"));
     }
 
     #[test]
@@ -1786,7 +1763,7 @@ mod tests {
         let p = AzureResourceProvisioner::new(None, None);
         let params = serde_json::json!({"id": "x"});
         let err = p.build_create_args("foobar_unknown", &params).unwrap_err();
-        assert!(err.contains("unsupported resource type"));
+        assert!(err.to_string().contains("unsupported resource type"));
     }
 
     #[test]
@@ -1803,7 +1780,7 @@ mod tests {
     fn test_delete_unknown_type() {
         let p = AzureResourceProvisioner::new(None, None);
         let err = p.build_delete_args("not_a_thing", "x").unwrap_err();
-        assert!(err.contains("unsupported resource type for delete"));
+        assert!(err.to_string().contains("unsupported resource type for delete"));
     }
 
     // ── Argument construction tests ─────────────────────────────────
@@ -1949,8 +1926,8 @@ mod tests {
         let p = AzureResourceProvisioner::new(None, None);
         let params = serde_json::json!({"id": "my-app"});
         let err = p.build_create_args("container_app", &params).unwrap_err();
-        assert!(err.contains("missing required parameter"));
-        assert!(err.contains("image"));
+        assert!(err.to_string().contains("missing required parameter"));
+        assert!(err.to_string().contains("image"));
     }
 
     #[test]
@@ -2332,8 +2309,8 @@ mod tests {
         let p = AzureResourceProvisioner::new(None, None);
         let params = serde_json::json!({"id": "mydb"});
         let err = p.build_create_args("pg_database", &params).unwrap_err();
-        assert!(err.contains("missing required parameter"));
-        assert!(err.contains("server"));
+        assert!(err.to_string().contains("missing required parameter"));
+        assert!(err.to_string().contains("server"));
     }
 
     // ── Private DNS VNet Link ───────────────────────────────────────
@@ -2387,8 +2364,8 @@ mod tests {
         let p = AzureResourceProvisioner::new(None, None);
         let params = serde_json::json!({"id": "link1", "vnet": "vnet1"});
         let err = p.build_create_args("dns_vnet_link", &params).unwrap_err();
-        assert!(err.contains("missing required parameter"));
-        assert!(err.contains("zone_name"));
+        assert!(err.to_string().contains("missing required parameter"));
+        assert!(err.to_string().contains("zone_name"));
     }
 
     // ── Day-2 Operations ──────────────────────────────────────────────
@@ -2407,7 +2384,7 @@ mod tests {
     fn test_backup_unsupported_type() {
         let p = AzureResourceProvisioner::new(None, None);
         let err = p.backup("aks", "k8s1", None, None).unwrap_err();
-        assert!(err.contains("backup not supported"));
+        assert!(err.to_string().contains("backup not supported"));
     }
 
     #[test]
@@ -2437,7 +2414,7 @@ mod tests {
     fn test_restore_unsupported_type() {
         let p = AzureResourceProvisioner::new(None, None);
         let err = p.build_restore_args("aks", "k8s1", "some-source").unwrap_err();
-        assert!(err.contains("restore not supported"));
+        assert!(err.to_string().contains("restore not supported"));
     }
 
     #[test]
@@ -2485,7 +2462,7 @@ mod tests {
         let p = AzureResourceProvisioner::new(None, None);
         let params = serde_json::json!({"node_count": "5"});
         let err = p.build_scale_args("redis", "cache1", &params).unwrap_err();
-        assert!(err.contains("scale not supported"));
+        assert!(err.to_string().contains("scale not supported"));
     }
 
     #[test]
@@ -2513,7 +2490,7 @@ mod tests {
         let p = AzureResourceProvisioner::new(None, None);
         let params = serde_json::json!({"kubernetes_version": "1.29"});
         let err = p.build_upgrade_args("redis", "cache1", &params).unwrap_err();
-        assert!(err.contains("upgrade not supported"));
+        assert!(err.to_string().contains("upgrade not supported"));
     }
 
     // ── Discovery parsing tests ─────────────────────────────────────

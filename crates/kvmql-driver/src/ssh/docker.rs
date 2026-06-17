@@ -17,15 +17,10 @@
 use serde_json::{json, Value};
 
 use super::client::SshClient;
+use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
 
 pub struct DockerProvisioner<'a> {
     pub client: &'a SshClient,
-}
-
-#[derive(Debug)]
-pub struct ProvisionResult {
-    pub status: String,
-    pub outputs: Option<Value>,
 }
 
 impl<'a> DockerProvisioner<'a> {
@@ -37,13 +32,13 @@ impl<'a> DockerProvisioner<'a> {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "docker_container" => self.create_container(params),
             "docker_volume" => self.create_volume(params),
             "docker_network" => self.create_network(params),
             "docker_compose" => self.create_compose(params),
-            other => Err(format!("unsupported docker resource type: {other}")),
+            other => Err(format!("unsupported docker resource type: {other}").into()),
         }
     }
 
@@ -52,22 +47,22 @@ impl<'a> DockerProvisioner<'a> {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "docker_container" => {
                 let _ = self.docker(&["stop", id]);
                 self.docker(&["rm", "-f", id])
                     .map(|_| ())
-                    .map_err(|e| format!("docker rm failed: {e}"))
+                    .map_err(|e| format!("docker rm failed: {e}").into())
             }
             "docker_volume" => self
                 .docker(&["volume", "rm", id])
                 .map(|_| ())
-                .map_err(|e| format!("docker volume rm failed: {e}")),
+                .map_err(|e| format!("docker volume rm failed: {e}").into()),
             "docker_network" => self
                 .docker(&["network", "rm", id])
                 .map(|_| ())
-                .map_err(|e| format!("docker network rm failed: {e}")),
+                .map_err(|e| format!("docker network rm failed: {e}").into()),
             "docker_compose" => {
                 let project = params
                     .get("project_name")
@@ -77,15 +72,15 @@ impl<'a> DockerProvisioner<'a> {
                 self.client
                     .exec_checked(&format!("docker compose -p {qp} down"))
                     .map(|_| ())
-                    .map_err(|e| format!("docker compose down failed: {e}"))
+                    .map_err(|e| format!("docker compose down failed: {e}").into())
             }
-            other => Err(format!("unsupported docker resource type: {other}")),
+            other => Err(format!("unsupported docker resource type: {other}").into()),
         }
     }
 
     // ── docker_container ─────────────────────────────────────
 
-    fn create_container(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_container(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let name = param_str(params, "id")?;
         let image = param_str(params, "image")?;
         let restart = param_str_or(params, "restart_policy", "unless-stopped");
@@ -162,7 +157,7 @@ impl<'a> DockerProvisioner<'a> {
 
     // ── docker_volume ────────────────────────────────────────
 
-    fn create_volume(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_volume(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let name = param_str(params, "id")?;
 
         if self.volume_exists(&name) {
@@ -183,7 +178,7 @@ impl<'a> DockerProvisioner<'a> {
 
     // ── docker_network ───────────────────────────────────────
 
-    fn create_network(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_network(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let name = param_str(params, "id")?;
         let driver = param_str_or(params, "driver", "bridge");
 
@@ -205,7 +200,7 @@ impl<'a> DockerProvisioner<'a> {
 
     // ── docker_compose ───────────────────────────────────────
 
-    fn create_compose(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_compose(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let project = param_str(params, "project_name")?;
         // The compose file content is pre-resolved in __content_bytes or file
         let compose_content = params
@@ -258,7 +253,7 @@ impl<'a> DockerProvisioner<'a> {
     // ── query: docker_containers ─────────────────────────────
 
     /// List running containers via `docker ps`.
-    pub fn list_containers(&self) -> Result<Vec<Value>, String> {
+    pub fn list_containers(&self) -> Result<Vec<Value>, ProvisionError> {
         // Use --format with Go template for consistent parsing
         let out = self
             .client
@@ -301,7 +296,7 @@ impl<'a> DockerProvisioner<'a> {
 
     // ── helpers ──────────────────────────────────────────────
 
-    fn docker(&self, args: &[&str]) -> Result<String, String> {
+    fn docker(&self, args: &[&str]) -> Result<String, ProvisionError> {
         let cmd = format!(
             "docker {}",
             args.iter()
@@ -309,9 +304,9 @@ impl<'a> DockerProvisioner<'a> {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        self.client
+        Ok(self.client
             .exec_checked(&cmd)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?)
     }
 
     fn container_exists(&self, name: &str) -> bool {
@@ -341,22 +336,6 @@ impl<'a> DockerProvisioner<'a> {
             .map(|o| o.stdout.trim() == "yes")
             .unwrap_or(false)
     }
-}
-
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
-
-fn param_str_or(params: &Value, key: &str, default: &str) -> String {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
 }
 
 #[cfg(test)]

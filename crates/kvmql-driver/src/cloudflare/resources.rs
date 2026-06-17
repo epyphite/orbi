@@ -14,19 +14,11 @@
 use serde_json::{json, Value};
 
 use super::api::CloudflareClient;
+use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
 
 #[derive(Debug, Clone)]
 pub struct CloudflareResourceProvisioner {
     client: Option<CloudflareClient>,
-}
-
-/// Result of a provisioning operation.  Mirrors Azure/AWS provisioner shape.
-#[derive(Debug)]
-pub struct ProvisionResult {
-    /// One of "created", "updated", "deleted".
-    pub status: String,
-    /// Provider-specific outputs (zone_id, record_id, name_servers, etc.).
-    pub outputs: Option<Value>,
 }
 
 impl CloudflareResourceProvisioner {
@@ -37,13 +29,13 @@ impl CloudflareResourceProvisioner {
     }
 
     /// Create a Cloudflare resource.  Dispatches by `resource_type`.
-    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, String> {
+    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "cf_zone" => self.create_zone(params),
             "cf_dns_record" => self.create_dns_record(params),
             "cf_firewall_rule" => self.create_firewall_rule(params),
             "cf_page_rule" => self.create_page_rule(params),
-            other => Err(format!("unsupported cloudflare resource type: {other}")),
+            other => Err(format!("unsupported cloudflare resource type: {other}").into()),
         }
     }
 
@@ -55,26 +47,25 @@ impl CloudflareResourceProvisioner {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "cf_zone" => self.delete_zone(id),
             "cf_dns_record" => self.delete_dns_record(id, params),
             "cf_firewall_rule" => self.delete_firewall_rule(id, params),
             "cf_page_rule" => self.delete_page_rule(id, params),
-            other => Err(format!("unsupported cloudflare resource type: {other}")),
+            other => Err(format!("unsupported cloudflare resource type: {other}").into()),
         }
     }
 
-    fn client(&self) -> Result<&CloudflareClient, String> {
+    fn client(&self) -> Result<&CloudflareClient, ProvisionError> {
         self.client.as_ref().ok_or_else(|| {
-            "Cloudflare API token not configured. Set auth='env:CLOUDFLARE_API_TOKEN' on provider."
-                .to_string()
+            ProvisionError::from("Cloudflare API token not configured. Set auth='env:CLOUDFLARE_API_TOKEN' on provider.")
         })
     }
 
     // ── Zone operations ──────────────────────────────────────
 
-    fn create_zone(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_zone(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let name = param_str(params, "id")?;
         let zone_type = params
             .get("type")
@@ -104,7 +95,7 @@ impl CloudflareResourceProvisioner {
         })
     }
 
-    fn delete_zone(&self, id: &str) -> Result<(), String> {
+    fn delete_zone(&self, id: &str) -> Result<(), ProvisionError> {
         // `id` might be the zone name or the 32-char zone id.
         let client = self.client()?;
         let zone_id = if id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -122,7 +113,7 @@ impl CloudflareResourceProvisioner {
 
     // ── DNS Record operations ────────────────────────────────
 
-    fn create_dns_record(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_dns_record(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let client = self.client()?;
         let zone_name = param_str(params, "zone")?;
         let zone_id = client
@@ -172,7 +163,7 @@ impl CloudflareResourceProvisioner {
         })
     }
 
-    fn delete_dns_record(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_dns_record(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let client = self.client()?;
         let zone_name = param_str(params, "zone")?;
         let zone_id = client
@@ -187,7 +178,7 @@ impl CloudflareResourceProvisioner {
 
     // ── Firewall Rule operations ────────────────────────────
 
-    fn create_firewall_rule(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_firewall_rule(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let client = self.client()?;
         let zone_name = param_str(params, "zone")?;
         let zone_id = client
@@ -232,7 +223,7 @@ impl CloudflareResourceProvisioner {
         })
     }
 
-    fn delete_firewall_rule(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_firewall_rule(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let client = self.client()?;
         let zone_name = param_str(params, "zone")?;
         let zone_id = client
@@ -246,7 +237,7 @@ impl CloudflareResourceProvisioner {
 
     // ── Page Rule operations ──────────────────────────────────
 
-    fn create_page_rule(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_page_rule(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let client = self.client()?;
         let zone_name = param_str(params, "zone")?;
         let zone_id = client
@@ -297,7 +288,7 @@ impl CloudflareResourceProvisioner {
         })
     }
 
-    fn delete_page_rule(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_page_rule(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let client = self.client()?;
         let zone_name = param_str(params, "zone")?;
         let zone_id = client
@@ -312,7 +303,7 @@ impl CloudflareResourceProvisioner {
     // ── Discovery ────────────────────────────────────────────
 
     /// Discover existing Cloudflare resources: zones and their DNS records.
-    pub fn discover(&self) -> Result<Vec<Value>, String> {
+    pub fn discover(&self) -> Result<Vec<Value>, ProvisionError> {
         let client = self.client()?;
         let mut results = Vec::new();
 
@@ -405,7 +396,7 @@ impl CloudflareResourceProvisioner {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, ProvisionError> {
         match resource_type {
             "cf_zone" => {
                 let name = param_str(params, "id")?;
@@ -439,25 +430,9 @@ impl CloudflareResourceProvisioner {
                     format!("url={url}"),
                 ])
             }
-            other => Err(format!("unsupported: {other}")),
+            other => Err(format!("unsupported: {other}").into()),
         }
     }
-}
-
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
-
-fn param_str_or(params: &Value, key: &str, default: &str) -> String {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
 }
 
 #[cfg(test)]

@@ -1,3 +1,46 @@
+/// Error type for engine executor operations.
+#[derive(Debug, thiserror::Error)]
+pub enum EngineError {
+    #[error("provider not found: {0}")]
+    ProviderNotFound(String),
+
+    #[error("resource not found: {0}")]
+    ResourceNotFound(String),
+
+    #[error("driver error: {0}")]
+    Driver(#[from] kvmql_driver::traits::DriverError),
+
+    #[error("provision error: {0}")]
+    Provision(#[from] kvmql_driver::provision::ProvisionError),
+
+    #[error("registry error: {0}")]
+    Registry(#[from] kvmql_registry::RegistryError),
+
+    #[error("auth denied: {0}")]
+    AuthDenied(String),
+
+    #[error("missing required parameter: {0}")]
+    MissingParam(String),
+
+    #[error("parse error: {0}")]
+    Parse(String),
+
+    #[error("{0}")]
+    Other(String),
+}
+
+impl From<String> for EngineError {
+    fn from(s: String) -> Self {
+        EngineError::Other(s)
+    }
+}
+
+impl From<&str> for EngineError {
+    fn from(s: &str) -> Self {
+        EngineError::Other(s.to_string())
+    }
+}
+
 /// Error messages with remediation advice.
 ///
 /// Every user-facing error should tell the user:

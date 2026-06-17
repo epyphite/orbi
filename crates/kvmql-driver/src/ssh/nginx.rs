@@ -15,15 +15,10 @@
 use serde_json::{json, Value};
 
 use super::client::SshClient;
+use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
 
 pub struct NginxProvisioner<'a> {
     pub client: &'a SshClient,
-}
-
-#[derive(Debug)]
-pub struct ProvisionResult {
-    pub status: String,
-    pub outputs: Option<Value>,
 }
 
 impl<'a> NginxProvisioner<'a> {
@@ -35,11 +30,11 @@ impl<'a> NginxProvisioner<'a> {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "nginx_vhost" => self.create_vhost(params),
             "nginx_proxy" => self.create_proxy(params),
-            other => Err(format!("unsupported nginx resource type: {other}")),
+            other => Err(format!("unsupported nginx resource type: {other}").into()),
         }
     }
 
@@ -48,7 +43,7 @@ impl<'a> NginxProvisioner<'a> {
         resource_type: &str,
         id: &str,
         _params: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "nginx_vhost" | "nginx_proxy" => {
                 let enabled = format!("/etc/nginx/sites-enabled/{id}");
@@ -58,13 +53,13 @@ impl<'a> NginxProvisioner<'a> {
                 self.reload_nginx()?;
                 Ok(())
             }
-            other => Err(format!("unsupported nginx resource type: {other}")),
+            other => Err(format!("unsupported nginx resource type: {other}").into()),
         }
     }
 
     // ── nginx_vhost ──────────────────────────────────────────
 
-    fn create_vhost(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_vhost(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let id = param_str(params, "id")?;
         let server_name = param_str(params, "server_name")?;
         let listen = param_str_or(params, "listen", "80");
@@ -94,7 +89,7 @@ impl<'a> NginxProvisioner<'a> {
 
     // ── nginx_proxy ──────────────────────────────────────────
 
-    fn create_proxy(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_proxy(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let id = param_str(params, "id")?;
         let server_name = param_str(params, "server_name")?;
         let upstream = param_str(params, "upstream")?;
@@ -148,7 +143,7 @@ impl<'a> NginxProvisioner<'a> {
 
     // ── shared logic ─────────────────────────────────────────
 
-    fn write_and_enable(&self, id: &str, config: &str) -> Result<ProvisionResult, String> {
+    fn write_and_enable(&self, id: &str, config: &str) -> Result<ProvisionResult, ProvisionError> {
         let available = format!("/etc/nginx/sites-available/{id}");
         let enabled = format!("/etc/nginx/sites-enabled/{id}");
 
@@ -171,14 +166,14 @@ impl<'a> NginxProvisioner<'a> {
                 let _ = self.client.remove(&available);
                 return Err(format!(
                     "nginx config test failed for '{id}'; changes rolled back"
-                ));
+                ).into());
             }
             Err(e) => {
                 let _ = self.client.remove(&enabled);
                 let _ = self.client.remove(&available);
                 return Err(format!(
                     "nginx config test error for '{id}': {e}; changes rolled back"
-                ));
+                ).into());
             }
         }
 
@@ -195,7 +190,7 @@ impl<'a> NginxProvisioner<'a> {
         })
     }
 
-    fn config_test(&self) -> Result<bool, String> {
+    fn config_test(&self) -> Result<bool, ProvisionError> {
         let out = self
             .client
             .exec("nginx -t 2>&1")
@@ -203,17 +198,18 @@ impl<'a> NginxProvisioner<'a> {
         Ok(out.exit_code == 0)
     }
 
-    fn reload_nginx(&self) -> Result<(), String> {
+    fn reload_nginx(&self) -> Result<(), ProvisionError> {
         self.client
             .exec_checked("systemctl reload nginx")
             .map(|_| ())
-            .map_err(|e| format!("nginx reload failed: {e}"))
+            .map_err(|e| format!("nginx reload failed: {e}"))?;
+        Ok(())
     }
 
     // ── query: nginx_vhosts ──────────────────────────────────
 
     /// List enabled vhosts from `/etc/nginx/sites-enabled/`.
-    pub fn list_vhosts(&self) -> Result<Vec<Value>, String> {
+    pub fn list_vhosts(&self) -> Result<Vec<Value>, ProvisionError> {
         let out = self
             .client
             .exec("ls -1 /etc/nginx/sites-enabled/ 2>/dev/null || true")
@@ -239,7 +235,7 @@ impl<'a> NginxProvisioner<'a> {
     }
 
     /// Run `nginx -t` and return a row with `valid` (bool) and `errors`.
-    pub fn config_test_row(&self) -> Result<Vec<Value>, String> {
+    pub fn config_test_row(&self) -> Result<Vec<Value>, ProvisionError> {
         let out = self
             .client
             .exec("nginx -t 2>&1")
@@ -251,22 +247,6 @@ impl<'a> NginxProvisioner<'a> {
             "errors": if valid { Value::Null } else { Value::String(output.trim().to_string()) },
         })])
     }
-}
-
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
-
-fn param_str_or(params: &Value, key: &str, default: &str) -> String {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
 }
 
 #[cfg(test)]

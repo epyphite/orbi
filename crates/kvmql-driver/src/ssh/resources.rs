@@ -18,13 +18,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::client::SshClient;
-
-/// Result of a provisioning operation.  Mirrors the other provisioners.
-#[derive(Debug)]
-pub struct ProvisionResult {
-    pub status: String,
-    pub outputs: Option<Value>,
-}
+use crate::provision::{param_str, ProvisionError, ProvisionResult};
 
 pub struct SshResourceProvisioner {
     pub client: SshClient,
@@ -45,7 +39,7 @@ impl SshResourceProvisioner {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             // Filesystem primitives
             "file" => self.create_file(params),
@@ -87,7 +81,7 @@ impl SshResourceProvisioner {
                     outputs: r.outputs,
                 })
             }
-            other => Err(format!("unsupported ssh resource type: {other}")),
+            other => Err(format!("unsupported ssh resource type: {other}").into()),
         }
     }
 
@@ -96,20 +90,20 @@ impl SshResourceProvisioner {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "file" => self
                 .client
                 .remove(id)
-                .map_err(|e| format!("failed to delete file {id}: {e}")),
+                .map_err(|e| format!("failed to delete file {id}: {e}").into()),
             "directory" => self
                 .client
                 .remove_dir(id)
-                .map_err(|e| format!("failed to delete directory {id}: {e}")),
+                .map_err(|e| format!("failed to delete directory {id}: {e}").into()),
             "symlink" => self
                 .client
                 .remove(id)
-                .map_err(|e| format!("failed to delete symlink {id}: {e}")),
+                .map_err(|e| format!("failed to delete symlink {id}: {e}").into()),
             "systemd_service" | "systemd_timer" => {
                 super::systemd::SystemdProvisioner::new(&self.client)
                     .delete(resource_type, id, params)
@@ -126,7 +120,7 @@ impl SshResourceProvisioner {
                 super::letsencrypt::LetsencryptProvisioner::new(&self.client)
                     .delete(resource_type, id, params)
             }
-            other => Err(format!("unsupported ssh resource type: {other}")),
+            other => Err(format!("unsupported ssh resource type: {other}").into()),
         }
     }
 
@@ -135,7 +129,7 @@ impl SshResourceProvisioner {
     /// Discover existing resources on the remote host: systemd services,
     /// Docker containers, Docker volumes, nginx vhosts, and Let's Encrypt
     /// certificates.
-    pub fn discover(&self) -> Result<Vec<Value>, String> {
+    pub fn discover(&self) -> Result<Vec<Value>, ProvisionError> {
         let mut results = Vec::new();
 
         // systemd services
@@ -313,7 +307,7 @@ impl SshResourceProvisioner {
 
     // ── file ──────────────────────────────────────────────────
 
-    fn create_file(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_file(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let path = param_str(params, "id")?;
         // Executor pre-resolves credential/file references into __content_bytes.
         let content = param_str(params, "__content_bytes")
@@ -386,7 +380,7 @@ impl SshResourceProvisioner {
 
     // ── directory ────────────────────────────────────────────
 
-    fn create_directory(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_directory(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let path = param_str(params, "id")?;
         let owner = params.get("owner").and_then(|v| v.as_str());
         let group = params.get("group").and_then(|v| v.as_str());
@@ -449,7 +443,7 @@ impl SshResourceProvisioner {
 
     // ── symlink ──────────────────────────────────────────────
 
-    fn create_symlink(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_symlink(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let link_path = param_str(params, "id")?;
         let target = param_str(params, "target")?;
 
@@ -485,14 +479,6 @@ impl SshResourceProvisioner {
 }
 
 // ── helpers ──────────────────────────────────────────────────
-
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
 
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();

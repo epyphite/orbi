@@ -15,19 +15,11 @@
 use serde_json::{json, Value};
 
 use super::cli::GhCli;
+use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
 
 #[derive(Debug, Clone)]
 pub struct GithubResourceProvisioner {
     cli: Option<GhCli>,
-}
-
-/// Result of a provisioning operation.  Mirrors the Cloudflare/Azure shape.
-#[derive(Debug)]
-pub struct ProvisionResult {
-    /// One of "created", "updated", "deleted".
-    pub status: String,
-    /// Provider-specific outputs (repo URL, ruleset_id, commit SHA, ...).
-    pub outputs: Option<Value>,
 }
 
 impl GithubResourceProvisioner {
@@ -46,15 +38,14 @@ impl GithubResourceProvisioner {
         Self { cli }
     }
 
-    fn cli(&self) -> Result<&GhCli, String> {
+    fn cli(&self) -> Result<&GhCli, ProvisionError> {
         self.cli.as_ref().ok_or_else(|| {
-            "gh CLI not configured. Install from https://cli.github.com/ and run 'gh auth login', \
-             or set auth='env:GITHUB_TOKEN' on the provider."
-                .to_string()
+            ProvisionError::from("gh CLI not configured. Install from https://cli.github.com/ and run 'gh auth login', \
+             or set auth='env:GITHUB_TOKEN' on the provider.")
         })
     }
 
-    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, String> {
+    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "gh_repo" => self.create_repo(params),
             "gh_ruleset" => self.create_ruleset(params),
@@ -62,7 +53,7 @@ impl GithubResourceProvisioner {
             "gh_variable" => self.create_variable(params),
             "gh_workflow_file" => self.create_workflow_file(params),
             "gh_branch_protection" => self.create_branch_protection(params),
-            other => Err(format!("unsupported github resource type: {other}")),
+            other => Err(format!("unsupported github resource type: {other}").into()),
         }
     }
 
@@ -71,7 +62,7 @@ impl GithubResourceProvisioner {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "gh_repo" => self.delete_repo(id, params),
             "gh_ruleset" => self.delete_ruleset(id, params),
@@ -79,13 +70,13 @@ impl GithubResourceProvisioner {
             "gh_variable" => self.delete_variable(id, params),
             "gh_workflow_file" => self.delete_workflow_file(id, params),
             "gh_branch_protection" => self.delete_branch_protection(id, params),
-            other => Err(format!("unsupported github resource type: {other}")),
+            other => Err(format!("unsupported github resource type: {other}").into()),
         }
     }
 
     // ── Repo ──────────────────────────────────────────────────
 
-    fn create_repo(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_repo(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let cli = self.cli()?;
         let id = param_str(params, "id")?; // "org/name" or just "name"
         let visibility = param_str_or(params, "visibility", "private");
@@ -105,7 +96,7 @@ impl GithubResourceProvisioner {
         })
     }
 
-    fn delete_repo(&self, id: &str, _params: &Value) -> Result<(), String> {
+    fn delete_repo(&self, id: &str, _params: &Value) -> Result<(), ProvisionError> {
         let cli = self.cli()?;
         cli.repo_delete(id)
             .map_err(|e| format!("failed to delete repo: {e}"))?;
@@ -114,7 +105,7 @@ impl GithubResourceProvisioner {
 
     // ── Ruleset ──────────────────────────────────────────────
 
-    fn create_ruleset(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_ruleset(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let cli = self.cli()?;
         let repo = param_str(params, "repo")?;
         let name = param_str(params, "id")?;
@@ -186,7 +177,7 @@ impl GithubResourceProvisioner {
         })
     }
 
-    fn delete_ruleset(&self, _id: &str, params: &Value) -> Result<(), String> {
+    fn delete_ruleset(&self, _id: &str, params: &Value) -> Result<(), ProvisionError> {
         let cli = self.cli()?;
         let repo = param_str(params, "repo")?;
         // The friendly id is the rule name; the real numeric ruleset_id lives
@@ -202,7 +193,7 @@ impl GithubResourceProvisioner {
 
     // ── Secret ───────────────────────────────────────────────
 
-    fn create_secret(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_secret(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let cli = self.cli()?;
         let name = param_str(params, "id")?;
         let repo = param_str(params, "repo")?;
@@ -221,7 +212,7 @@ impl GithubResourceProvisioner {
         })
     }
 
-    fn delete_secret(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_secret(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let cli = self.cli()?;
         let repo = param_str(params, "repo")?;
         cli.secret_delete(id, &repo)
@@ -231,7 +222,7 @@ impl GithubResourceProvisioner {
 
     // ── Variable ─────────────────────────────────────────────
 
-    fn create_variable(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_variable(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let cli = self.cli()?;
         let name = param_str(params, "id")?;
         let repo = param_str(params, "repo")?;
@@ -250,7 +241,7 @@ impl GithubResourceProvisioner {
         })
     }
 
-    fn delete_variable(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_variable(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let cli = self.cli()?;
         let repo = param_str(params, "repo")?;
         cli.variable_delete(id, &repo)
@@ -260,7 +251,7 @@ impl GithubResourceProvisioner {
 
     // ── Workflow File ────────────────────────────────────────
 
-    fn create_workflow_file(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_workflow_file(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let cli = self.cli()?;
         let name = param_str(params, "id")?; // e.g. "claude-review.yml"
         let repo = param_str(params, "repo")?;
@@ -291,7 +282,7 @@ impl GithubResourceProvisioner {
         })
     }
 
-    fn delete_workflow_file(&self, _id: &str, _params: &Value) -> Result<(), String> {
+    fn delete_workflow_file(&self, _id: &str, _params: &Value) -> Result<(), ProvisionError> {
         // Deleting a file via the contents API requires the SHA AND a commit;
         // the recommended path is to remove the file via a normal git commit.
         Err("workflow file deletion not supported via API; remove the file via a git commit".into())
@@ -299,7 +290,7 @@ impl GithubResourceProvisioner {
 
     // ── Branch Protection (legacy) ───────────────────────────
 
-    fn create_branch_protection(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_branch_protection(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let cli = self.cli()?;
         let repo = param_str(params, "repo")?;
         let branch = param_str_or(params, "id", "main");
@@ -333,7 +324,7 @@ impl GithubResourceProvisioner {
         })
     }
 
-    fn delete_branch_protection(&self, id: &str, params: &Value) -> Result<(), String> {
+    fn delete_branch_protection(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let cli = self.cli()?;
         let repo = param_str(params, "repo")?;
         cli.branch_protection_delete(&repo, id)
@@ -346,7 +337,7 @@ impl GithubResourceProvisioner {
     /// Discover existing GitHub resources accessible to the authenticated
     /// user.  Currently discovers repositories only (secrets are opaque
     /// and too expensive to enumerate per-repo for MVP).
-    pub fn discover(&self) -> Result<Vec<Value>, String> {
+    pub fn discover(&self) -> Result<Vec<Value>, ProvisionError> {
         let cli = self.cli()?;
         let raw = cli
             .run(&[
@@ -401,7 +392,7 @@ impl GithubResourceProvisioner {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, ProvisionError> {
         match resource_type {
             "gh_repo" => {
                 let id = param_str(params, "id")?;
@@ -455,25 +446,9 @@ impl GithubResourceProvisioner {
                     format!("/repos/{repo}/branches/{branch}/protection"),
                 ])
             }
-            other => Err(format!("unsupported: {other}")),
+            other => Err(format!("unsupported: {other}").into()),
         }
     }
-}
-
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
-
-fn param_str_or(params: &Value, key: &str, default: &str) -> String {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
 }
 
 #[cfg(test)]

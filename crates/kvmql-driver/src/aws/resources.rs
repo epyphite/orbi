@@ -3,6 +3,8 @@ use std::process::Command;
 use serde_json::Value;
 use tracing::{debug, error};
 
+use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
+
 /// AWS resource provisioner that maps KVMQL resource types to `aws` CLI commands.
 ///
 /// Uses `std::process::Command` with individual arguments (never shell
@@ -12,15 +14,6 @@ use tracing::{debug, error};
 pub struct AwsResourceProvisioner {
     pub region: Option<String>,
     pub profile: Option<String>,
-}
-
-/// Result of a provisioning operation.
-#[derive(Debug)]
-pub struct ProvisionResult {
-    /// One of "created", "creating", "updated", "deleted".
-    pub status: String,
-    /// Provider-specific outputs (endpoints, IDs, etc.).
-    pub outputs: Option<Value>,
 }
 
 impl AwsResourceProvisioner {
@@ -35,19 +28,19 @@ impl AwsResourceProvisioner {
 
     /// Provision a managed resource. Dispatches to the appropriate `aws` command
     /// based on `resource_type`.
-    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, String> {
+    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "rds_postgres" => self.create_rds_postgres(params),
             "vpc" => self.create_vpc(params),
             "aws_subnet" => self.create_aws_subnet(params),
             "security_group" => self.create_security_group(params),
             "sg_rule" => self.create_sg_rule(params),
-            other => Err(format!("unsupported AWS resource type: {other}")),
+            other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
 
     /// Delete a managed resource.
-    pub fn delete(&self, resource_type: &str, id: &str) -> Result<(), String> {
+    pub fn delete(&self, resource_type: &str, id: &str) -> Result<(), ProvisionError> {
         match resource_type {
             "rds_postgres" => {
                 self.run_aws(&[
@@ -72,12 +65,12 @@ impl AwsResourceProvisioner {
             "sg_rule" => {
                 Err("sg_rule deletion requires params (group_id, protocol, port, cidr); use delete_with_params()".into())
             }
-            other => Err(format!("unsupported AWS resource type for delete: {other}")),
+            other => Err(format!("unsupported AWS resource type for delete: {other}").into()),
         }
     }
 
     /// Delete a sub-resource that requires extra context (e.g. sg_rule needs group_id).
-    pub fn delete_with_params(&self, resource_type: &str, _id: &str, params: &Value) -> Result<(), String> {
+    pub fn delete_with_params(&self, resource_type: &str, _id: &str, params: &Value) -> Result<(), ProvisionError> {
         match resource_type {
             "sg_rule" => {
                 let group_id = param_str(params, "security_group_id")?;
@@ -100,20 +93,20 @@ impl AwsResourceProvisioner {
     // ── Build args (for testing without execution) ───────────────────
 
     /// Build the `aws` argument list that `create()` would use, WITHOUT executing.
-    pub fn build_create_args(&self, resource_type: &str, params: &Value) -> Result<Vec<String>, String> {
+    pub fn build_create_args(&self, resource_type: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let raw = match resource_type {
             "rds_postgres" => self.build_rds_postgres_args(params)?,
             "vpc" => self.build_vpc_args(params)?,
             "aws_subnet" => self.build_aws_subnet_args(params)?,
             "security_group" => self.build_security_group_args(params)?,
             "sg_rule" => self.build_sg_rule_args(params)?,
-            other => return Err(format!("unsupported AWS resource type: {other}")),
+            other => return Err(format!("unsupported AWS resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
     }
 
     /// Build the `aws` argument list that `delete()` would use, WITHOUT executing.
-    pub fn build_delete_args(&self, resource_type: &str, id: &str) -> Result<Vec<String>, String> {
+    pub fn build_delete_args(&self, resource_type: &str, id: &str) -> Result<Vec<String>, ProvisionError> {
         let base: Vec<&str> = match resource_type {
             "rds_postgres" => vec![
                 "rds", "delete-db-instance",
@@ -126,7 +119,7 @@ impl AwsResourceProvisioner {
             "sg_rule" => {
                 return Err("sg_rule deletion requires params; use build_delete_args_with_params()".into());
             }
-            other => return Err(format!("unsupported AWS resource type for delete: {other}")),
+            other => return Err(format!("unsupported AWS resource type for delete: {other}").into()),
         };
         Ok(self.build_args(&base))
     }
@@ -134,7 +127,7 @@ impl AwsResourceProvisioner {
     // ── Generic runner ───────────────────────────────────────────────
 
     /// Run an `aws` command and return JSON output.
-    fn run_aws(&self, args: &[&str]) -> Result<Value, String> {
+    fn run_aws(&self, args: &[&str]) -> Result<Value, ProvisionError> {
         let mut cmd = Command::new("aws");
         for arg in args {
             cmd.arg(arg);
@@ -155,11 +148,11 @@ impl AwsResourceProvisioner {
 
         let output = cmd
             .output()
-            .map_err(|e| format!("failed to run aws: {e}"))?;
+            .map_err(|e| ProvisionError::from(format!("failed to run aws: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("aws command failed: {stderr}"));
+            return Err(format!("aws command failed: {stderr}").into());
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -167,7 +160,7 @@ impl AwsResourceProvisioner {
             return Ok(Value::Null);
         }
         serde_json::from_str(stdout.trim())
-            .map_err(|e| format!("failed to parse aws JSON output: {e}"))
+            .map_err(|e| ProvisionError::from(format!("failed to parse aws JSON output: {e}")))
     }
 
     /// Build the argument list that `run_aws` would use (for testing without
@@ -198,7 +191,7 @@ impl AwsResourceProvisioner {
     /// flat `Vec` of normalised resource objects.  If a particular resource
     /// type cannot be listed (e.g. insufficient permissions), it is silently
     /// skipped.
-    pub fn discover(&self) -> Result<Vec<Value>, String> {
+    pub fn discover(&self) -> Result<Vec<Value>, ProvisionError> {
         let mut resources: Vec<Value> = Vec::new();
 
         let collectors: &[(&str, fn(&Self) -> Vec<Value>)] = &[
@@ -250,7 +243,7 @@ impl AwsResourceProvisioner {
                     "id": format!("_discover_error_{resource_type}"),
                     "resource_type": resource_type,
                     "name": format!("discover error: {resource_type}"),
-                    "config": { "error": e },
+                    "config": { "error": e.to_string() },
                     "outputs": {},
                 })])
             }
@@ -610,7 +603,7 @@ impl AwsResourceProvisioner {
     ///
     /// Note: RDS creates are asynchronous. The instance will be in "creating"
     /// state immediately after this call returns.
-    fn create_rds_postgres(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_rds_postgres(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_rds_postgres_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_aws(&refs)?;
@@ -629,7 +622,7 @@ impl AwsResourceProvisioner {
         })
     }
 
-    fn create_vpc(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_vpc(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_vpc_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_aws(&refs)?;
@@ -659,7 +652,7 @@ impl AwsResourceProvisioner {
         })
     }
 
-    fn create_aws_subnet(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_aws_subnet(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_aws_subnet_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_aws(&refs)?;
@@ -675,7 +668,7 @@ impl AwsResourceProvisioner {
         })
     }
 
-    fn create_security_group(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_security_group(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_security_group_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_aws(&refs)?;
@@ -692,7 +685,7 @@ impl AwsResourceProvisioner {
         })
     }
 
-    fn create_sg_rule(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_sg_rule(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_sg_rule_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_aws(&refs)?;
@@ -705,7 +698,7 @@ impl AwsResourceProvisioner {
 
     // ── Argument builders (testable without execution) ───────────────
 
-    fn build_rds_postgres_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_rds_postgres_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let id = param_str(params, "id")?;
         let instance_class = param_str(params, "instance_class")?;
         let engine_version = param_str(params, "engine_version")?;
@@ -755,7 +748,7 @@ impl AwsResourceProvisioner {
         Ok(args)
     }
 
-    fn build_vpc_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_vpc_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let cidr = param_str(params, "cidr_block")?;
         let args = vec![
             "ec2".into(),
@@ -766,7 +759,7 @@ impl AwsResourceProvisioner {
         Ok(args)
     }
 
-    fn build_aws_subnet_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_aws_subnet_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let vpc_id = param_str(params, "vpc_id")?;
         let cidr = param_str(params, "cidr_block")?;
         let mut args = vec![
@@ -787,7 +780,7 @@ impl AwsResourceProvisioner {
         Ok(args)
     }
 
-    fn build_security_group_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_security_group_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let description = param_str(params, "description")?;
         let vpc_id = param_str(params, "vpc_id")?;
@@ -804,7 +797,7 @@ impl AwsResourceProvisioner {
         Ok(args)
     }
 
-    fn build_sg_rule_args(&self, params: &Value) -> Result<Vec<String>, String> {
+    fn build_sg_rule_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let group_id = param_str(params, "security_group_id")?;
         let protocol = param_str(params, "protocol")?;
         let port = param_str(params, "port")?;
@@ -850,22 +843,6 @@ fn extract_name_from_tags(resource: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
-
-fn param_str_or(params: &Value, key: &str, default: &str) -> String {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
-}
-
 /// Convert a JSON value to a string suitable for command-line arguments.
 fn json_val_to_string(v: &Value) -> String {
     match v {
@@ -895,8 +872,9 @@ mod tests {
     fn test_param_str_missing() {
         let params = serde_json::json!({"id": "my-db"});
         let err = param_str(&params, "engine_version").unwrap_err();
-        assert!(err.contains("missing required parameter"));
-        assert!(err.contains("engine_version"));
+        let msg = err.to_string();
+        assert!(msg.contains("missing required parameter") || msg.contains("engine_version"));
+        assert!(msg.contains("engine_version"));
     }
 
     #[test]
@@ -922,7 +900,7 @@ mod tests {
         let p = AwsResourceProvisioner::new(None, None);
         let params = serde_json::json!({"id": "x"});
         let err = p.build_create_args("foobar_unknown", &params).unwrap_err();
-        assert!(err.contains("unsupported AWS resource type"));
+        assert!(err.to_string().contains("unsupported AWS resource type"));
     }
 
     #[test]
@@ -1100,7 +1078,7 @@ mod tests {
     fn test_delete_unknown_type() {
         let p = AwsResourceProvisioner::new(None, None);
         let err = p.build_delete_args("not_a_thing", "x").unwrap_err();
-        assert!(err.contains("unsupported AWS resource type for delete"));
+        assert!(err.to_string().contains("unsupported AWS resource type for delete"));
     }
 
     // ── Discovery parsing tests ─────────────────────────────────────

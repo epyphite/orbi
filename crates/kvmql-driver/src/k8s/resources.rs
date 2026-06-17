@@ -20,20 +20,11 @@
 use serde_json::{json, Value};
 
 use super::cli::KubectlCli;
+use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
 
 #[derive(Debug, Clone)]
 pub struct KubernetesResourceProvisioner {
     cli: Option<KubectlCli>,
-}
-
-/// Result of a provisioning operation.  Mirrors the GitHub/Cloudflare/Azure
-/// shape so the executor can route k8s alongside the others uniformly.
-#[derive(Debug)]
-pub struct ProvisionResult {
-    /// One of "created", "updated", "deleted".
-    pub status: String,
-    /// Provider-specific outputs (kind, name, namespace, uid, ...).
-    pub outputs: Option<Value>,
 }
 
 impl KubernetesResourceProvisioner {
@@ -49,11 +40,10 @@ impl KubernetesResourceProvisioner {
         Self { cli }
     }
 
-    fn cli(&self) -> Result<&KubectlCli, String> {
+    fn cli(&self) -> Result<&KubectlCli, ProvisionError> {
         self.cli.as_ref().ok_or_else(|| {
-            "kubectl CLI not found. Install from https://kubernetes.io/docs/tasks/tools/ \
-             and ensure your kubeconfig is configured."
-                .to_string()
+            ProvisionError::from("kubectl CLI not found. Install from https://kubernetes.io/docs/tasks/tools/ \
+             and ensure your kubeconfig is configured.")
         })
     }
 
@@ -61,7 +51,7 @@ impl KubernetesResourceProvisioner {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "k8s_namespace" => {
                 let yaml = self.build_namespace(params)?;
@@ -87,7 +77,7 @@ impl KubernetesResourceProvisioner {
                 let yaml = self.build_secret(params)?;
                 self.apply_yaml(yaml, "secret", params)
             }
-            other => Err(format!("unsupported kubernetes resource type: {other}")),
+            other => Err(format!("unsupported kubernetes resource type: {other}").into()),
         }
     }
 
@@ -96,7 +86,7 @@ impl KubernetesResourceProvisioner {
         resource_type: &str,
         id: &str,
         params: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         let kind = match resource_type {
             "k8s_namespace" => "namespace",
             "k8s_deployment" => "deployment",
@@ -104,7 +94,7 @@ impl KubernetesResourceProvisioner {
             "k8s_ingress" => "ingress",
             "k8s_configmap" => "configmap",
             "k8s_secret" => "secret",
-            other => return Err(format!("unsupported kubernetes resource type: {other}")),
+            other => return Err(format!("unsupported kubernetes resource type: {other}").into()),
         };
         let ns = params.get("namespace").and_then(|v| v.as_str());
         // Cluster-scoped: namespaces ignore the -n flag.
@@ -124,7 +114,7 @@ impl KubernetesResourceProvisioner {
         yaml: String,
         kind: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         let cli = self.cli()?;
         let result = cli
             .apply_yaml(&yaml)
@@ -150,7 +140,7 @@ impl KubernetesResourceProvisioner {
 
     /// Discover existing Kubernetes resources: namespaces, deployments,
     /// and services across all namespaces.
-    pub fn discover(&self) -> Result<Vec<Value>, String> {
+    pub fn discover(&self) -> Result<Vec<Value>, ProvisionError> {
         let cli = self.cli()?;
         let mut results = Vec::new();
 
@@ -278,14 +268,14 @@ impl KubernetesResourceProvisioner {
     // We deliberately avoid `serde_yaml` — these shapes are small and the
     // builders fit on a screen each.
 
-    fn build_namespace(&self, params: &Value) -> Result<String, String> {
+    fn build_namespace(&self, params: &Value) -> Result<String, ProvisionError> {
         let name = param_str(params, "id")?;
         Ok(format!(
             "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {name}\n"
         ))
     }
 
-    fn build_deployment(&self, params: &Value) -> Result<String, String> {
+    fn build_deployment(&self, params: &Value) -> Result<String, ProvisionError> {
         let name = param_str(params, "id")?;
         let namespace = param_str_or(params, "namespace", "default");
         let image = param_str(params, "image")?;
@@ -333,7 +323,7 @@ impl KubernetesResourceProvisioner {
         Ok(yaml)
     }
 
-    fn build_service(&self, params: &Value) -> Result<String, String> {
+    fn build_service(&self, params: &Value) -> Result<String, ProvisionError> {
         let name = param_str(params, "id")?;
         let namespace = param_str_or(params, "namespace", "default");
         let selector_app = param_str_or(params, "selector", &name);
@@ -365,7 +355,7 @@ impl KubernetesResourceProvisioner {
         Ok(yaml)
     }
 
-    fn build_ingress(&self, params: &Value) -> Result<String, String> {
+    fn build_ingress(&self, params: &Value) -> Result<String, ProvisionError> {
         let name = param_str(params, "id")?;
         let namespace = param_str_or(params, "namespace", "default");
         let host = param_str(params, "host")?;
@@ -407,13 +397,13 @@ impl KubernetesResourceProvisioner {
         Ok(yaml)
     }
 
-    fn build_configmap(&self, params: &Value) -> Result<String, String> {
+    fn build_configmap(&self, params: &Value) -> Result<String, ProvisionError> {
         let name = param_str(params, "id")?;
         let namespace = param_str_or(params, "namespace", "default");
         let data = params
             .get("data")
             .and_then(|v| v.as_object())
-            .ok_or("configmap requires 'data' object")?;
+            .ok_or(ProvisionError::from("configmap requires 'data' object"))?;
 
         let mut yaml = String::new();
         yaml.push_str("apiVersion: v1\n");
@@ -430,13 +420,13 @@ impl KubernetesResourceProvisioner {
         Ok(yaml)
     }
 
-    fn build_secret(&self, params: &Value) -> Result<String, String> {
+    fn build_secret(&self, params: &Value) -> Result<String, ProvisionError> {
         let name = param_str(params, "id")?;
         let namespace = param_str_or(params, "namespace", "default");
         let data = params
             .get("data")
             .and_then(|v| v.as_object())
-            .ok_or("secret requires 'data' object")?;
+            .ok_or(ProvisionError::from("secret requires 'data' object"))?;
 
         let mut yaml = String::new();
         yaml.push_str("apiVersion: v1\n");
@@ -464,7 +454,7 @@ impl KubernetesResourceProvisioner {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, ProvisionError> {
         let (kind, yaml) = match resource_type {
             "k8s_namespace" => ("Namespace", self.build_namespace(params)?),
             "k8s_deployment" => ("Deployment", self.build_deployment(params)?),
@@ -472,7 +462,7 @@ impl KubernetesResourceProvisioner {
             "k8s_ingress" => ("Ingress", self.build_ingress(params)?),
             "k8s_configmap" => ("ConfigMap", self.build_configmap(params)?),
             "k8s_secret" => ("Secret", self.build_secret(params)?),
-            other => return Err(format!("unsupported kubernetes resource type: {other}")),
+            other => return Err(format!("unsupported kubernetes resource type: {other}").into()),
         };
         let name = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let ns = params
@@ -494,22 +484,6 @@ impl KubernetesResourceProvisioner {
             yaml_preview,
         ])
     }
-}
-
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
-
-fn param_str_or(params: &Value, key: &str, default: &str) -> String {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
 }
 
 #[cfg(test)]

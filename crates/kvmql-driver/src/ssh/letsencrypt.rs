@@ -23,15 +23,10 @@
 use serde_json::{json, Value};
 
 use super::client::SshClient;
+use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
 
 pub struct LetsencryptProvisioner<'a> {
     pub client: &'a SshClient,
-}
-
-#[derive(Debug)]
-pub struct ProvisionResult {
-    pub status: String,
-    pub outputs: Option<Value>,
 }
 
 impl<'a> LetsencryptProvisioner<'a> {
@@ -43,10 +38,10 @@ impl<'a> LetsencryptProvisioner<'a> {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "letsencrypt_cert" => self.create_cert(params),
-            other => Err(format!("unsupported letsencrypt resource type: {other}")),
+            other => Err(format!("unsupported letsencrypt resource type: {other}").into()),
         }
     }
 
@@ -55,20 +50,20 @@ impl<'a> LetsencryptProvisioner<'a> {
         resource_type: &str,
         id: &str,
         _params: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "letsencrypt_cert" => {
                 let q = super::client::shell_single_quote(id);
                 self.client
                     .exec_checked(&format!("certbot delete --cert-name {q} --non-interactive"))
                     .map(|_| ())
-                    .map_err(|e| format!("certbot delete failed: {e}"))
+                    .map_err(|e| format!("certbot delete failed: {e}").into())
             }
-            other => Err(format!("unsupported letsencrypt resource type: {other}")),
+            other => Err(format!("unsupported letsencrypt resource type: {other}").into()),
         }
     }
 
-    fn create_cert(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_cert(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let cert_name = param_str(params, "id")?;
         let email = param_str(params, "email")?;
         let challenge = param_str_or(params, "challenge", "dns-01");
@@ -114,7 +109,7 @@ impl<'a> LetsencryptProvisioner<'a> {
         match challenge.as_str() {
             "dns-01" => self.certbot_dns01(params, &cert_name, &email, &domains)?,
             "http-01" => self.certbot_http01(params, &cert_name, &email, &domains)?,
-            other => return Err(format!("unsupported challenge type: {other}")),
+            other => return Err(format!("unsupported challenge type: {other}").into()),
         }
 
         Ok(ProvisionResult {
@@ -136,14 +131,14 @@ impl<'a> LetsencryptProvisioner<'a> {
         cert_name: &str,
         email: &str,
         domains: &[String],
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         let dns_provider = param_str_or(params, "dns_provider", "cf");
 
         match dns_provider.as_str() {
             "cf" => self.certbot_dns01_cloudflare(params, cert_name, email, domains),
             other => Err(format!(
                 "unsupported dns_provider '{other}'; currently only 'cf' (Cloudflare) is supported"
-            )),
+            ).into()),
         }
     }
 
@@ -153,7 +148,7 @@ impl<'a> LetsencryptProvisioner<'a> {
         cert_name: &str,
         email: &str,
         domains: &[String],
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         // The executor injects the resolved CF token as cf_api_token
         let cf_token = params
             .get("cf_api_token")
@@ -205,7 +200,7 @@ impl<'a> LetsencryptProvisioner<'a> {
                 "certbot dns-01 failed (exit {}): {}",
                 result.exit_code,
                 result.stderr.trim()
-            ));
+            ).into());
         }
 
         Ok(())
@@ -217,7 +212,7 @@ impl<'a> LetsencryptProvisioner<'a> {
         cert_name: &str,
         email: &str,
         domains: &[String],
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         let webroot = param_str_or(params, "webroot", "/var/www/html");
 
         let domain_args = domains
@@ -242,7 +237,7 @@ impl<'a> LetsencryptProvisioner<'a> {
         self.client
             .exec_checked(&cmd)
             .map(|_| ())
-            .map_err(|e| format!("certbot http-01 failed: {e}"))
+            .map_err(|e| format!("certbot http-01 failed: {e}").into())
     }
 
     // ── helpers ──────────────────────────────────────────────
@@ -276,35 +271,19 @@ impl<'a> LetsencryptProvisioner<'a> {
             .unwrap_or(true) // If we can't check, assume renewal needed
     }
 
-    fn run_certbot_renew(&self, cert_name: &str) -> Result<(), String> {
+    fn run_certbot_renew(&self, cert_name: &str) -> Result<(), ProvisionError> {
         let q = super::client::shell_single_quote(cert_name);
         self.client
             .exec_checked(&format!(
                 "certbot renew --cert-name {q} --non-interactive"
             ))
             .map(|_| ())
-            .map_err(|e| format!("certbot renew failed: {e}"))
+            .map_err(|e| format!("certbot renew failed: {e}").into())
     }
 }
 
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("missing required parameter: {key}"))
-}
-
-fn param_str_or(params: &Value, key: &str, default: &str) -> String {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
-}
-
 /// Parse domains from params — supports JSON array or single string.
-fn parse_domains(params: &Value) -> Result<Vec<String>, String> {
+fn parse_domains(params: &Value) -> Result<Vec<String>, ProvisionError> {
     if let Some(arr) = params.get("domains").and_then(|v| v.as_array()) {
         Ok(arr
             .iter()

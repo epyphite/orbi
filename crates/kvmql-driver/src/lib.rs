@@ -3,6 +3,7 @@
 pub mod types;
 pub mod capability;
 pub mod traits;
+pub mod provision;
 pub mod mock;
 pub mod firecracker;
 pub mod aws;

@@ -15,16 +15,11 @@
 use serde_json::{json, Value};
 
 use super::client::SshClient;
+use crate::provision::{param_str, ProvisionError, ProvisionResult};
 
 /// Provision systemd resources via an SSH connection.
 pub struct SystemdProvisioner<'a> {
     pub client: &'a SshClient,
-}
-
-#[derive(Debug)]
-pub struct ProvisionResult {
-    pub status: String,
-    pub outputs: Option<Value>,
 }
 
 impl<'a> SystemdProvisioner<'a> {
@@ -36,11 +31,11 @@ impl<'a> SystemdProvisioner<'a> {
         &self,
         resource_type: &str,
         params: &Value,
-    ) -> Result<ProvisionResult, String> {
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "systemd_service" => self.create_service(params),
             "systemd_timer" => self.create_timer(params),
-            other => Err(format!("unsupported systemd resource type: {other}")),
+            other => Err(format!("unsupported systemd resource type: {other}").into()),
         }
     }
 
@@ -49,7 +44,7 @@ impl<'a> SystemdProvisioner<'a> {
         resource_type: &str,
         id: &str,
         _params: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "systemd_service" => {
                 let _ = self.systemctl(&["stop", id]);
@@ -66,13 +61,13 @@ impl<'a> SystemdProvisioner<'a> {
                 let _ = self.systemctl(&["disable", &timer]);
                 Ok(())
             }
-            other => Err(format!("unsupported systemd resource type: {other}")),
+            other => Err(format!("unsupported systemd resource type: {other}").into()),
         }
     }
 
     // ── systemd_service ──────────────────────────────────────
 
-    fn create_service(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_service(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let name = param_str(params, "id")?;
         let unit = if name.ends_with(".service") {
             name.clone()
@@ -143,7 +138,7 @@ impl<'a> SystemdProvisioner<'a> {
 
     // ── systemd_timer ────────────────────────────────────────
 
-    fn create_timer(&self, params: &Value) -> Result<ProvisionResult, String> {
+    fn create_timer(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let name = param_str(params, "id")?;
         let timer = if name.ends_with(".timer") {
             name.clone()
@@ -194,7 +189,7 @@ impl<'a> SystemdProvisioner<'a> {
 
     /// List all service units via `systemctl list-units`.  Returns one
     /// JSON row per unit.
-    pub fn list_services(&self) -> Result<Vec<Value>, String> {
+    pub fn list_services(&self) -> Result<Vec<Value>, ProvisionError> {
         // --output=json is available since systemd 248+; for older systems
         // we fall back to plain-text parsing.
         let out = self
@@ -206,7 +201,7 @@ impl<'a> SystemdProvisioner<'a> {
                 "systemctl list-units failed (exit {}): {}",
                 out.exit_code,
                 out.stderr.trim()
-            ));
+            ).into());
         }
 
         let mut rows = Vec::new();
@@ -232,7 +227,7 @@ impl<'a> SystemdProvisioner<'a> {
 
     // ── helpers ──────────────────────────────────────────────
 
-    fn systemctl(&self, args: &[&str]) -> Result<String, String> {
+    fn systemctl(&self, args: &[&str]) -> Result<String, ProvisionError> {
         let cmd = format!(
             "systemctl {}",
             args.iter()
@@ -240,9 +235,9 @@ impl<'a> SystemdProvisioner<'a> {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        self.client
+        Ok(self.client
             .exec_checked(&cmd)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?)
     }
 
     fn is_enabled(&self, unit: &str) -> bool {
@@ -260,14 +255,6 @@ impl<'a> SystemdProvisioner<'a> {
             .map(|o| o.stdout.trim() == "active")
             .unwrap_or(false)
     }
-}
-
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("missing required parameter: {key}"))
 }
 
 #[cfg(test)]
