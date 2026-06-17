@@ -1,6 +1,7 @@
 use std::process::Command;
 
 use serde_json::Value;
+use tracing::{debug, error};
 
 /// AWS resource provisioner that maps KVMQL resource types to `aws` CLI commands.
 ///
@@ -225,7 +226,7 @@ impl AwsResourceProvisioner {
     fn discover_run(&self, resource_type: &str, args: &[&str]) -> Result<Value, Vec<Value>> {
         // Log the exact command being run for debugging
         let cmd_str = self.build_args(args).join(" ");
-        eprintln!("[orbi:aws] discover {resource_type}: {cmd_str}");
+        debug!(provider = "aws", resource_type, cmd = %cmd_str, "discover running");
 
         match self.run_aws(args) {
             Ok(v) => {
@@ -238,11 +239,11 @@ impl AwsResourceProvisioner {
                         .unwrap_or(0),
                     _ => 0,
                 };
-                eprintln!("[orbi:aws] discover {resource_type}: got {count} items");
+                debug!(provider = "aws", resource_type, count, "discover completed");
                 Ok(v)
             }
             Err(e) => {
-                eprintln!("[orbi:aws] discover {resource_type} FAILED: {e}");
+                error!(provider = "aws", resource_type, error = %e, "discover failed");
                 // Surface the error as a diagnostic row so it's visible
                 // in the import summary instead of silently returning 0.
                 Err(vec![serde_json::json!({

@@ -1,6 +1,7 @@
 use std::process::Command;
 
 use serde_json::Value;
+use tracing::{debug, error};
 
 /// Azure resource provisioner that maps KVMQL resource types to `az` CLI commands.
 ///
@@ -1224,7 +1225,7 @@ impl AzureResourceProvisioner {
     /// item count to stderr so discover failures are visible.
     fn run_az_list(&self, args: &[&str]) -> Result<Vec<Value>, String> {
         let cmd_str = self.build_args(args).join(" ");
-        eprintln!("[orbi:azure] discover: {cmd_str}");
+        debug!(provider = "azure", cmd = %cmd_str, "discover running");
         match self.run_az(args) {
             Ok(result) => {
                 let items = match result {
@@ -1232,11 +1233,11 @@ impl AzureResourceProvisioner {
                     Value::Null => Vec::new(),
                     other => vec![other],
                 };
-                eprintln!("[orbi:azure] discover: got {} items", items.len());
+                debug!(provider = "azure", count = items.len(), "discover completed");
                 Ok(items)
             }
             Err(e) => {
-                eprintln!("[orbi:azure] discover FAILED: {e}");
+                error!(provider = "azure", error = %e, "discover failed");
                 Err(e)
             }
         }

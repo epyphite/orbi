@@ -25,9 +25,9 @@ async fn main() {
     let driver = Arc::new(MockDriver::new());
     let agent = Agent::new(config, driver);
 
-    println!("KVMQL Agent starting (id: kvm.local)");
+    tracing::info!(agent_id = "kvm.local", "agent starting");
     if let Err(e) = agent.run().await {
-        eprintln!("Agent error: {e}");
+        tracing::error!(error = %e, "agent terminated");
         std::process::exit(1);
     }
 }

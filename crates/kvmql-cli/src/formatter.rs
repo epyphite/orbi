@@ -127,7 +127,7 @@ fn print_expanded(value: &serde_json::Value) {
 fn print_json(envelope: &ResultEnvelope) {
     match serde_json::to_string_pretty(envelope) {
         Ok(s) => println!("{s}"),
-        Err(e) => eprintln!("JSON serialisation error: {e}"),
+        Err(e) => tracing::error!(error = %e, "JSON serialisation error"),
     }
 }
 

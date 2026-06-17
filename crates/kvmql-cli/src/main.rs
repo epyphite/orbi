@@ -5,6 +5,7 @@ mod shell;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use tracing::info;
 
 use kvmql_driver::mock::MockDriver;
 use kvmql_driver::simulate::SimulationDriver;
@@ -128,6 +129,11 @@ enum EnvAction {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = Cli::parse();
     let format = OutputFormat::from_str_loose(&cli.format);
 
@@ -202,7 +208,7 @@ async fn main() {
     if cli.simulate {
         ctx.simulate = true;
         ctx.register_driver("simulate".into(), Arc::new(SimulationDriver::new("azure")));
-        eprintln!("[SIMULATE] Running in simulation mode \u{2014} no cloud resources will be created");
+        info!("Running in simulation mode — no cloud resources will be created");
     }
 
     // Dispatch based on arguments.
