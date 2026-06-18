@@ -28,22 +28,26 @@ fn normalize_statement(stmt: &str) -> String {
             loop {
                 match chars.next() {
                     Some('\'') => break,
-                    Some('\\') => { chars.next(); } // skip escaped char
+                    Some('\\') => {
+                        chars.next();
+                    } // skip escaped char
                     None => break,
                     _ => {}
                 }
             }
             result.push('?');
-        } else if ch.is_ascii_digit() || (ch == '-' && {
-            // Check if minus sign is a numeric prefix (preceded by operator context)
-            let trimmed = result.trim_end();
-            trimmed.is_empty()
-                || trimmed.ends_with('=')
-                || trimmed.ends_with('>')
-                || trimmed.ends_with('<')
-                || trimmed.ends_with(',')
-                || trimmed.ends_with('(')
-        }) {
+        } else if ch.is_ascii_digit()
+            || (ch == '-' && {
+                // Check if minus sign is a numeric prefix (preceded by operator context)
+                let trimmed = result.trim_end();
+                trimmed.is_empty()
+                    || trimmed.ends_with('=')
+                    || trimmed.ends_with('>')
+                    || trimmed.ends_with('<')
+                    || trimmed.ends_with(',')
+                    || trimmed.ends_with('(')
+            })
+        {
             // Consume the entire numeric literal (integer or float)
             if ch == '-' {
                 chars.next();
@@ -407,7 +411,7 @@ impl<'a> Executor<'a> {
                     Some(ev.target_type),
                     ev.target_id.as_deref(),
                     "permitted",
-                    None,           // reason
+                    None, // reason
                     Some(&detail),
                 ) {
                     // Per spec: if audit write fails, operation is aborted
@@ -471,10 +475,7 @@ impl<'a> Executor<'a> {
         };
 
         // 3. Record query history (skip SET and SHOW) ----------------------
-        let should_record = program
-            .statements
-            .iter()
-            .any(|s| !skip_history(s));
+        let should_record = program.statements.iter().any(|s| !skip_history(s));
         if should_record {
             let verb = program
                 .statements
@@ -521,12 +522,12 @@ impl<'a> Executor<'a> {
             source,
             Some(&normalized),
             verb,
-            None,                       // targets
+            None, // targets
             Some(duration),
             status_str,
             notif_json.as_deref(),
             Some(rows_affected),
-            None,                       // result_hash
+            None, // result_hash
         );
     }
 
@@ -546,8 +547,7 @@ impl<'a> Executor<'a> {
         let grants: Vec<Grant> = grant_rows
             .into_iter()
             .map(|row| {
-                let verbs: Vec<String> = serde_json::from_str(&row.verbs)
-                    .unwrap_or_default();
+                let verbs: Vec<String> = serde_json::from_str(&row.verbs).unwrap_or_default();
                 Grant {
                     id: row.id,
                     principal_id: row.principal_id,
@@ -721,7 +721,11 @@ impl<'a> Executor<'a> {
                         let cmd_args = if is_cloudflare || is_github || is_k8s {
                             args.join(" ")
                         } else {
-                            args[1..].iter().map(|a| a.as_str()).collect::<Vec<_>>().join(" ")
+                            args[1..]
+                                .iter()
+                                .map(|a| a.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" ")
                         };
                         steps.push(serde_json::json!({
                             "step": 1,
@@ -777,9 +781,11 @@ impl<'a> Executor<'a> {
                     }));
                 } else {
                     let args_result = if is_aws {
-                        self.get_aws_provisioner("default").build_delete_args(rtype, &s.id)
+                        self.get_aws_provisioner("default")
+                            .build_delete_args(rtype, &s.id)
                     } else {
-                        self.get_azure_provisioner("default").build_delete_args(rtype, &s.id)
+                        self.get_azure_provisioner("default")
+                            .build_delete_args(rtype, &s.id)
                     };
                     let prefix = if is_aws { "aws" } else { "az" };
                     match args_result {
@@ -857,7 +863,10 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_val(plan))
     }
 
-    fn get_azure_provisioner(&self, provider_id: &str) -> kvmql_driver::azure::resources::AzureResourceProvisioner {
+    fn get_azure_provisioner(
+        &self,
+        provider_id: &str,
+    ) -> kvmql_driver::azure::resources::AzureResourceProvisioner {
         // Look up provider from registry to get subscription and resource group
         let (sub, rg) = if let Ok(p) = self.ctx.registry.get_provider(provider_id) {
             // auth_ref may contain the subscription ID (for azure-kv or env ref)
@@ -873,13 +882,13 @@ impl<'a> Executor<'a> {
         } else {
             (None, None)
         };
-        kvmql_driver::azure::resources::AzureResourceProvisioner::new(
-            sub.as_deref(),
-            rg.as_deref(),
-        )
+        kvmql_driver::azure::resources::AzureResourceProvisioner::new(sub.as_deref(), rg.as_deref())
     }
 
-    fn get_aws_provisioner(&self, provider_id: &str) -> kvmql_driver::aws::resources::AwsResourceProvisioner {
+    fn get_aws_provisioner(
+        &self,
+        provider_id: &str,
+    ) -> kvmql_driver::aws::resources::AwsResourceProvisioner {
         let (region, profile) = if let Ok(p) = self.ctx.registry.get_provider(provider_id) {
             let prof = resolve_aws_profile(&p.auth_ref);
             (p.region.clone(), prof)
@@ -957,7 +966,8 @@ impl<'a> Executor<'a> {
                     return Err(format!(
                         "failed to resolve ssh key '{}' for provider '{}': {}",
                         p.auth_ref, provider_id, e
-                    ).into());
+                    )
+                    .into());
                 }
             }
         };
@@ -986,10 +996,7 @@ impl<'a> Executor<'a> {
         kvmql_driver::k8s::KubernetesResourceProvisioner::new(context.as_deref())
     }
 
-    fn get_k8s_query_engine(
-        &self,
-        provider_id: &str,
-    ) -> kvmql_driver::k8s::KubernetesQueryEngine {
+    fn get_k8s_query_engine(&self, provider_id: &str) -> kvmql_driver::k8s::KubernetesQueryEngine {
         let context = if let Ok(p) = self.ctx.registry.get_provider(provider_id) {
             kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref)
                 .ok()
@@ -1043,10 +1050,8 @@ impl<'a> Executor<'a> {
             }
         }
 
-        let ptype =
-            get_param(&s.params, "type").unwrap_or_else(|| "kvm".into());
-        let driver =
-            get_param(&s.params, "driver").unwrap_or_else(|| "firecracker".into());
+        let ptype = get_param(&s.params, "type").unwrap_or_else(|| "kvm".into());
+        let driver = get_param(&s.params, "driver").unwrap_or_else(|| "firecracker".into());
         let auth = get_param(&s.params, "auth").unwrap_or_else(|| "none".into());
         let host = get_param(&s.params, "host");
         let region = get_param(&s.params, "region");
@@ -1071,28 +1076,26 @@ impl<'a> Executor<'a> {
         // Register the appropriate driver based on provider type and driver field
         let driver: Arc<dyn kvmql_driver::traits::Driver> = if self.ctx.simulate {
             Arc::new(kvmql_driver::simulate::SimulationDriver::new(&ptype))
-        } else { match (ptype.as_str(), driver.as_str()) {
-            ("kvm", "firecracker") => {
-                let socket = get_param(&s.params, "api_socket")
-                    .or_else(|| host.as_ref().map(|h| format!("/run/firecracker/{h}.sock")))
-                    .unwrap_or_else(|| "/run/firecracker.sock".into());
-                Arc::new(kvmql_driver::firecracker::FirecrackerDriver::new(&socket))
+        } else {
+            match (ptype.as_str(), driver.as_str()) {
+                ("kvm", "firecracker") => {
+                    let socket = get_param(&s.params, "api_socket")
+                        .or_else(|| host.as_ref().map(|h| format!("/run/firecracker/{h}.sock")))
+                        .unwrap_or_else(|| "/run/firecracker.sock".into());
+                    Arc::new(kvmql_driver::firecracker::FirecrackerDriver::new(&socket))
+                }
+                ("aws", _) => {
+                    let region_str = region.as_deref().unwrap_or("us-east-1");
+                    Arc::new(kvmql_driver::aws::AwsEc2Driver::new(region_str))
+                }
+                ("azure", _) => Arc::new(kvmql_driver::azure::AzureVmDriver::new(&id)),
+                ("gcp", _) => Arc::new(kvmql_driver::gcp::GcpComputeDriver::new(&id)),
+                _ => {
+                    // Fallback to mock for unknown types
+                    Arc::new(kvmql_driver::mock::MockDriver::new())
+                }
             }
-            ("aws", _) => {
-                let region_str = region.as_deref().unwrap_or("us-east-1");
-                Arc::new(kvmql_driver::aws::AwsEc2Driver::new(region_str))
-            }
-            ("azure", _) => {
-                Arc::new(kvmql_driver::azure::AzureVmDriver::new(&id))
-            }
-            ("gcp", _) => {
-                Arc::new(kvmql_driver::gcp::GcpComputeDriver::new(&id))
-            }
-            _ => {
-                // Fallback to mock for unknown types
-                Arc::new(kvmql_driver::mock::MockDriver::new())
-            }
-        } };
+        };
         self.ctx.register_driver(id.clone(), driver);
 
         let row = self
@@ -1141,10 +1144,7 @@ impl<'a> Executor<'a> {
     // CREATE MICROVM
     // =======================================================================
 
-    async fn exec_create_microvm(
-        &self,
-        s: &CreateMicrovmStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    async fn exec_create_microvm(&self, s: &CreateMicrovmStmt) -> Result<StmtOutcome, EngineError> {
         // Determine target provider
         let provider_id = self.resolve_provider(&s.on)?;
         let driver = self
@@ -1182,10 +1182,8 @@ impl<'a> Executor<'a> {
         let image_id = get_param(&s.params, "image").unwrap_or_else(|| "default".into());
         let hostname = get_param(&s.params, "hostname");
         let network = get_param(&s.params, "network");
-        let metadata = get_param(&s.params, "metadata")
-            .and_then(|s| serde_json::from_str(&s).ok());
-        let labels = get_param(&s.params, "labels")
-            .and_then(|s| serde_json::from_str(&s).ok());
+        let metadata = get_param(&s.params, "metadata").and_then(|s| serde_json::from_str(&s).ok());
+        let labels = get_param(&s.params, "labels").and_then(|s| serde_json::from_str(&s).ok());
 
         // ── SSH / access params ──────────────────────────────────────
         let mut notifications: Vec<Notification> = Vec::new();
@@ -1207,9 +1205,9 @@ impl<'a> Executor<'a> {
                         {
                             Some(key_ref.clone())
                         } else {
-                            return Err(format!(
-                                "failed to resolve ssh_key '{}': {}", key_ref, _e
-                            ).into());
+                            return Err(
+                                format!("failed to resolve ssh_key '{}': {}", key_ref, _e).into()
+                            );
                         }
                     }
                 }
@@ -1288,21 +1286,23 @@ impl<'a> Executor<'a> {
         };
 
         // Write to registry
-        self.ctx.registry.insert_microvm(
-            &vm.id,
-            &provider_id,
-            &tenant,
-            &vm.status,
-            registry_image_id,
-            Some(vcpus as i64),
-            Some(memory_mb as i64),
-            hostname.as_deref(),
-            None,
-            None,
-        ).map_err(|e| format!("registry insert_microvm failed: {e}"))?;
+        self.ctx
+            .registry
+            .insert_microvm(
+                &vm.id,
+                &provider_id,
+                &tenant,
+                &vm.status,
+                registry_image_id,
+                Some(vcpus as i64),
+                Some(memory_mb as i64),
+                hostname.as_deref(),
+                None,
+                None,
+            )
+            .map_err(|e| format!("registry insert_microvm failed: {e}"))?;
 
-        let val = serde_json::to_value(&vm)
-            .map_err(|e| format!("serialization error: {e}"))?;
+        let val = serde_json::to_value(&vm).map_err(|e| format!("serialization error: {e}"))?;
         Ok(StmtOutcome {
             result: Some(val),
             rows_affected: 1,
@@ -1326,9 +1326,7 @@ impl<'a> Executor<'a> {
                 let driver = self
                     .ctx
                     .get_driver(&row.provider_id)
-                    .ok_or_else(|| {
-                        format!("no driver for provider '{}'", row.provider_id)
-                    })?
+                    .ok_or_else(|| format!("no driver for provider '{}'", row.provider_id))?
                     .clone();
                 driver
                     .destroy(&s.id, s.force)
@@ -1349,9 +1347,7 @@ impl<'a> Executor<'a> {
                 let driver = self
                     .ctx
                     .get_driver(&row.provider_id)
-                    .ok_or_else(|| {
-                        format!("no driver for provider '{}'", row.provider_id)
-                    })?
+                    .ok_or_else(|| format!("no driver for provider '{}'", row.provider_id))?
                     .clone();
                 driver
                     .destroy_volume(&s.id, s.force)
@@ -1433,8 +1429,7 @@ impl<'a> Executor<'a> {
             .snapshot(&s.id, &s.destination, s.tag.as_deref())
             .await
             .map_err(|e| format!("driver snapshot failed: {e}"))?;
-        let val = serde_json::to_value(&snap)
-            .map_err(|e| format!("serialization error: {e}"))?;
+        let val = serde_json::to_value(&snap).map_err(|e| format!("serialization error: {e}"))?;
         Ok(StmtOutcome::ok_val(val))
     }
 
@@ -1447,25 +1442,28 @@ impl<'a> Executor<'a> {
             .map_err(|e| format!("driver restore failed: {e}"))?;
 
         // Only reference image_id in registry if the image actually exists
-        let registry_image_id = vm.image_id.as_deref().and_then(|iid| {
-            self.ctx.registry.get_image(iid).ok().map(|_| iid)
-        });
+        let registry_image_id = vm
+            .image_id
+            .as_deref()
+            .and_then(|iid| self.ctx.registry.get_image(iid).ok().map(|_| iid));
 
-        self.ctx.registry.insert_microvm(
-            &vm.id,
-            &provider_id,
-            &vm.tenant,
-            &vm.status,
-            registry_image_id,
-            vm.vcpus.map(|v| v as i64),
-            vm.memory_mb.map(|v| v as i64),
-            vm.hostname.as_deref(),
-            None,
-            None,
-        ).map_err(|e| format!("registry insert_microvm failed: {e}"))?;
+        self.ctx
+            .registry
+            .insert_microvm(
+                &vm.id,
+                &provider_id,
+                &vm.tenant,
+                &vm.status,
+                registry_image_id,
+                vm.vcpus.map(|v| v as i64),
+                vm.memory_mb.map(|v| v as i64),
+                vm.hostname.as_deref(),
+                None,
+                None,
+            )
+            .map_err(|e| format!("registry insert_microvm failed: {e}"))?;
 
-        let val = serde_json::to_value(&vm)
-            .map_err(|e| format!("serialization error: {e}"))?;
+        let val = serde_json::to_value(&vm).map_err(|e| format!("serialization error: {e}"))?;
         Ok(StmtOutcome::ok_val(val))
     }
 
@@ -1473,10 +1471,7 @@ impl<'a> Executor<'a> {
     // CREATE VOLUME
     // =======================================================================
 
-    async fn exec_create_volume(
-        &self,
-        s: &CreateVolumeStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    async fn exec_create_volume(&self, s: &CreateVolumeStmt) -> Result<StmtOutcome, EngineError> {
         let provider_id = self.resolve_provider(&s.on)?;
         let driver = self
             .ctx
@@ -1508,12 +1503,10 @@ impl<'a> Executor<'a> {
         }
 
         let size_gb = get_param_i64(&s.params, "size_gb").unwrap_or(10);
-        let vol_type =
-            get_param(&s.params, "type").unwrap_or_else(|| "virtio-blk".into());
+        let vol_type = get_param(&s.params, "type").unwrap_or_else(|| "virtio-blk".into());
         let encrypted = get_param_bool(&s.params, "encrypted").unwrap_or(false);
         let iops = get_param_i64(&s.params, "iops").map(|v| v as i32);
-        let labels = get_param(&s.params, "labels")
-            .and_then(|s| serde_json::from_str(&s).ok());
+        let labels = get_param(&s.params, "labels").and_then(|s| serde_json::from_str(&s).ok());
 
         let params = VolumeParams {
             id,
@@ -1529,19 +1522,21 @@ impl<'a> Executor<'a> {
             .await
             .map_err(|e| format!("driver create_volume failed: {e}"))?;
 
-        self.ctx.registry.insert_volume(
-            &vol.id,
-            &provider_id,
-            &vol_type,
-            size_gb,
-            &vol.status,
-            iops.map(|v| v as i64),
-            encrypted,
-            None,
-        ).map_err(|e| format!("registry insert_volume failed: {e}"))?;
+        self.ctx
+            .registry
+            .insert_volume(
+                &vol.id,
+                &provider_id,
+                &vol_type,
+                size_gb,
+                &vol.status,
+                iops.map(|v| v as i64),
+                encrypted,
+                None,
+            )
+            .map_err(|e| format!("registry insert_volume failed: {e}"))?;
 
-        let val = serde_json::to_value(&vol)
-            .map_err(|e| format!("serialization error: {e}"))?;
+        let val = serde_json::to_value(&vol).map_err(|e| format!("serialization error: {e}"))?;
         Ok(StmtOutcome::ok_val(val))
     }
 
@@ -1611,16 +1606,13 @@ impl<'a> Executor<'a> {
         let driver = self
             .ctx
             .get_driver(&vol_row.provider_id)
-            .ok_or_else(|| {
-                format!("no driver for provider '{}'", vol_row.provider_id)
-            })?
+            .ok_or_else(|| format!("no driver for provider '{}'", vol_row.provider_id))?
             .clone();
         let vol = driver
             .resize_volume(&s.volume_id, s.new_size_gb)
             .await
             .map_err(|e| format!("driver resize_volume failed: {e}"))?;
-        let val = serde_json::to_value(&vol)
-            .map_err(|e| format!("serialization error: {e}"))?;
+        let val = serde_json::to_value(&vol).map_err(|e| format!("serialization error: {e}"))?;
         Ok(StmtOutcome::ok_val(val))
     }
 
@@ -1628,10 +1620,7 @@ impl<'a> Executor<'a> {
     // ALTER MICROVM / VOLUME
     // =======================================================================
 
-    async fn exec_alter_microvm(
-        &self,
-        s: &AlterMicrovmStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    async fn exec_alter_microvm(&self, s: &AlterMicrovmStmt) -> Result<StmtOutcome, EngineError> {
         let row = self
             .ctx
             .registry
@@ -1659,15 +1648,11 @@ impl<'a> Executor<'a> {
             .alter(&s.id, serde_json::Value::Object(json_params))
             .await
             .map_err(|e| format!("driver alter failed: {e}"))?;
-        let val = serde_json::to_value(&vm)
-            .map_err(|e| format!("serialization error: {e}"))?;
+        let val = serde_json::to_value(&vm).map_err(|e| format!("serialization error: {e}"))?;
         Ok(StmtOutcome::ok_val(val))
     }
 
-    async fn exec_alter_volume(
-        &self,
-        s: &AlterVolumeStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    async fn exec_alter_volume(&self, s: &AlterVolumeStmt) -> Result<StmtOutcome, EngineError> {
         let vol_row = self
             .ctx
             .registry
@@ -1698,13 +1683,21 @@ impl<'a> Executor<'a> {
                     let val_str = match &item.value {
                         Value::String(s) => s.clone(),
                         Value::Integer(n) => n.to_string(),
-                        Value::Boolean(b) => if *b { "1".into() } else { "0".into() },
+                        Value::Boolean(b) => {
+                            if *b {
+                                "1".into()
+                            } else {
+                                "0".into()
+                            }
+                        }
                         other => format!("{other:?}"),
                     };
                     self.ctx
                         .registry
                         .update_volume_field(&s.id, &item.key, &val_str)
-                        .map_err(|e| format!("failed to update volume field '{}': {e}", item.key))?;
+                        .map_err(|e| {
+                            format!("failed to update volume field '{}': {e}", item.key)
+                        })?;
                     notifications.push(Notification {
                         level: "INFO".into(),
                         code: "CAP_001".into(),
@@ -1757,27 +1750,17 @@ impl<'a> Executor<'a> {
     // IMPORT / REMOVE IMAGE
     // =======================================================================
 
-    async fn exec_import_image(
-        &self,
-        s: &ImportImageStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    async fn exec_import_image(&self, s: &ImportImageStmt) -> Result<StmtOutcome, EngineError> {
         let (provider_id, driver) = self.any_driver()?;
 
-        let id = get_param(&s.params, "id")
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let name = get_param(&s.params, "name")
-            .unwrap_or_else(|| "unnamed".into());
+        let id = get_param(&s.params, "id").unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let name = get_param(&s.params, "name").unwrap_or_else(|| "unnamed".into());
         let os = get_param(&s.params, "os").unwrap_or_else(|| "linux".into());
-        let distro = get_param(&s.params, "distro")
-            .unwrap_or_else(|| "unknown".into());
-        let version = get_param(&s.params, "version")
-            .unwrap_or_else(|| "latest".into());
-        let arch = get_param(&s.params, "arch")
-            .unwrap_or_else(|| "x86_64".into());
-        let image_type = get_param(&s.params, "type")
-            .unwrap_or_else(|| "rootfs".into());
-        let source = get_param(&s.params, "source")
-            .unwrap_or_else(|| "local".into());
+        let distro = get_param(&s.params, "distro").unwrap_or_else(|| "unknown".into());
+        let version = get_param(&s.params, "version").unwrap_or_else(|| "latest".into());
+        let arch = get_param(&s.params, "arch").unwrap_or_else(|| "x86_64".into());
+        let image_type = get_param(&s.params, "type").unwrap_or_else(|| "rootfs".into());
+        let source = get_param(&s.params, "source").unwrap_or_else(|| "local".into());
         let kernel = get_param(&s.params, "kernel");
         let rootfs = get_param(&s.params, "rootfs");
         let checksum = get_param(&s.params, "checksum");
@@ -1815,24 +1798,20 @@ impl<'a> Executor<'a> {
             Some(provider_id.as_str()),
             kernel.as_deref(),
             rootfs.as_deref(),
-            None,   // disk_path
-            None,   // cloud_ref
+            None, // disk_path
+            None, // cloud_ref
             &source,
-            None,   // checksum_sha256
-            None,   // size_mb
+            None, // checksum_sha256
+            None, // size_mb
             "available",
-            None,   // labels
+            None, // labels
         );
 
-        let val = serde_json::to_value(&img)
-            .map_err(|e| format!("serialization error: {e}"))?;
+        let val = serde_json::to_value(&img).map_err(|e| format!("serialization error: {e}"))?;
         Ok(StmtOutcome::ok_val(val))
     }
 
-    async fn exec_remove_image(
-        &self,
-        s: &RemoveImageStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    async fn exec_remove_image(&self, s: &RemoveImageStmt) -> Result<StmtOutcome, EngineError> {
         let (_provider_id, driver) = self.any_driver()?;
         driver
             .remove_image(&s.image_id, s.force)
@@ -2389,7 +2368,8 @@ impl<'a> Executor<'a> {
                             provider_id: Some(pid.clone()),
                             ..Default::default()
                         },
-                    ).into());
+                    )
+                    .into());
                 }
                 // No provider specified — show all capabilities across all drivers
                 let mut rows = Vec::new();
@@ -2490,9 +2470,17 @@ impl<'a> Executor<'a> {
                 Value::Integer(n) => n.to_string(),
                 Value::Float(fv) => fv.to_string(),
                 Value::Boolean(b) => b.to_string(),
-                _ => return Err("variable value must be a string, integer, float, or boolean".into()),
+                _ => {
+                    return Err(
+                        "variable value must be a string, integer, float, or boolean".into(),
+                    )
+                }
             };
-            self.ctx.variables.write().unwrap().insert(var_name.clone(), val.clone());
+            self.ctx
+                .variables
+                .write()
+                .unwrap()
+                .insert(var_name.clone(), val.clone());
             return Ok(StmtOutcome::ok_val(serde_json::json!({
                 "variable": &s.key,
                 "value": val
@@ -2676,8 +2664,7 @@ impl<'a> Executor<'a> {
         let mut revoked = 0i64;
         for grant in &grants {
             // Parse verbs from the grant
-            let grant_verbs: Vec<String> =
-                serde_json::from_str(&grant.verbs).unwrap_or_default();
+            let grant_verbs: Vec<String> = serde_json::from_str(&grant.verbs).unwrap_or_default();
 
             // Check if scope matches
             let scope_matches = grant.scope_type == revoke_scope_type
@@ -2719,7 +2706,11 @@ impl<'a> Executor<'a> {
         if let Some(obj) = resolved.as_object_mut() {
             let keys_to_resolve = ["ssh_key", "cloud_init", "password", "auth"];
             for key in &keys_to_resolve {
-                if let Some(val) = obj.get(*key).and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                if let Some(val) = obj
+                    .get(*key)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                {
                     if val == "generate" {
                         continue;
                     }
@@ -2734,10 +2725,7 @@ impl<'a> Executor<'a> {
         resolved
     }
 
-    fn exec_create_resource(
-        &self,
-        s: &CreateResourceStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    fn exec_create_resource(&self, s: &CreateResourceStmt) -> Result<StmtOutcome, EngineError> {
         if self.ctx.simulate {
             return self.exec_create_resource_simulated(s);
         }
@@ -2745,8 +2733,7 @@ impl<'a> Executor<'a> {
         // Resolve variable references in params
         let params = self.resolve_params(&s.params);
 
-        let id = get_param(&params, "id")
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let id = get_param(&params, "id").unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // IF NOT EXISTS: skip silently if resource already exists
         if s.if_not_exists {
@@ -2761,7 +2748,10 @@ impl<'a> Executor<'a> {
                     level: "INFO".into(),
                     code: "RES_EXISTS".into(),
                     provider_id: None,
-                    message: format!("Resource '{}' '{}' already exists -- skipped", s.resource_type, id),
+                    message: format!(
+                        "Resource '{}' '{}' already exists -- skipped",
+                        s.resource_type, id
+                    ),
                 });
                 return Ok(outcome);
             }
@@ -2796,7 +2786,10 @@ impl<'a> Executor<'a> {
         // the resource type or the provider type from the registry.
         let mut notifications: Vec<Notification> = Vec::new();
         let (status, outputs) = {
-            let provider_type = self.ctx.registry.get_provider(&provider_id)
+            let provider_type = self
+                .ctx
+                .registry
+                .get_provider(&provider_id)
                 .ok()
                 .map(|p| p.provider_type.clone())
                 .unwrap_or_default();
@@ -2813,11 +2806,9 @@ impl<'a> Executor<'a> {
                     "cf_zone" | "cf_dns_record" | "cf_firewall_rule" | "cf_page_rule"
                 );
 
-            let is_github = provider_type == "github"
-                || s.resource_type.starts_with("gh_");
+            let is_github = provider_type == "github" || s.resource_type.starts_with("gh_");
 
-            let is_k8s = provider_type == "kubernetes"
-                || s.resource_type.starts_with("k8s_");
+            let is_k8s = provider_type == "kubernetes" || s.resource_type.starts_with("k8s_");
 
             let is_ssh = provider_type == "ssh"
                 || matches!(
@@ -2868,9 +2859,9 @@ impl<'a> Executor<'a> {
                                         id, e
                                     ),
                                 });
-                                return Err(format!(
-                                    "failed to resolve content reference: {e}"
-                                ).into());
+                                return Err(
+                                    format!("failed to resolve content reference: {e}").into()
+                                );
                             }
                         }
                     }
@@ -2898,10 +2889,7 @@ impl<'a> Executor<'a> {
                                         kvmql_auth::resolver::CredentialResolver::resolve(&a).ok()
                                     });
                                 if let Some(t) = token {
-                                    obj.insert(
-                                        "cf_api_token".into(),
-                                        serde_json::Value::String(t),
-                                    );
+                                    obj.insert("cf_api_token".into(), serde_json::Value::String(t));
                                 }
                             }
                         }
@@ -2913,10 +2901,7 @@ impl<'a> Executor<'a> {
                     .map_err(|e| format!("ssh provisioner setup failed: {e}"))?;
 
                 match provisioner.create(&s.resource_type, &cfg_with_content) {
-                    Ok(result) => (
-                        result.status,
-                        result.outputs.map(|o| o.to_string()),
-                    ),
+                    Ok(result) => (result.status, result.outputs.map(|o| o.to_string())),
                     Err(e) => {
                         let remediation_msg = with_remediation(
                             "SSH_PROVISION_FAILED",
@@ -2943,10 +2928,7 @@ impl<'a> Executor<'a> {
                 let provisioner = self.get_k8s_provisioner(&provider_id);
 
                 match provisioner.create(&s.resource_type, &config_value) {
-                    Ok(result) => (
-                        result.status,
-                        result.outputs.map(|o| o.to_string()),
-                    ),
+                    Ok(result) => (result.status, result.outputs.map(|o| o.to_string())),
                     Err(e) => {
                         let remediation_msg = with_remediation(
                             "K8S_PROVISION_FAILED",
@@ -2973,10 +2955,7 @@ impl<'a> Executor<'a> {
                 let provisioner = self.get_cloudflare_provisioner(&provider_id);
 
                 match provisioner.create(&s.resource_type, &config_value) {
-                    Ok(result) => (
-                        result.status,
-                        result.outputs.map(|o| o.to_string()),
-                    ),
+                    Ok(result) => (result.status, result.outputs.map(|o| o.to_string())),
                     Err(e) => {
                         let remediation_msg = with_remediation(
                             "CF_PROVISION_FAILED",
@@ -3003,10 +2982,7 @@ impl<'a> Executor<'a> {
                 let provisioner = self.get_github_provisioner(&provider_id);
 
                 match provisioner.create(&s.resource_type, &config_value) {
-                    Ok(result) => (
-                        result.status,
-                        result.outputs.map(|o| o.to_string()),
-                    ),
+                    Ok(result) => (result.status, result.outputs.map(|o| o.to_string())),
                     Err(e) => {
                         let remediation_msg = with_remediation(
                             "GH_PROVISION_FAILED",
@@ -3033,10 +3009,7 @@ impl<'a> Executor<'a> {
                 let provisioner = self.get_aws_provisioner(&provider_id);
 
                 match provisioner.create(&s.resource_type, &config_value) {
-                    Ok(result) => (
-                        result.status,
-                        result.outputs.map(|o| o.to_string()),
-                    ),
+                    Ok(result) => (result.status, result.outputs.map(|o| o.to_string())),
                     Err(e) => {
                         let remediation_msg = with_remediation(
                             "AWS_PROVISION_FAILED",
@@ -3063,10 +3036,7 @@ impl<'a> Executor<'a> {
                 let provisioner = self.get_azure_provisioner(&provider_id);
 
                 match provisioner.create(&s.resource_type, &config_value) {
-                    Ok(result) => (
-                        result.status,
-                        result.outputs.map(|o| o.to_string()),
-                    ),
+                    Ok(result) => (result.status, result.outputs.map(|o| o.to_string())),
                     Err(e) => {
                         // If az CLI fails, still write to registry but with status "pending"
                         let remediation_msg = with_remediation(
@@ -3133,20 +3103,14 @@ impl<'a> Executor<'a> {
         Ok(outcome)
     }
 
-    fn exec_alter_resource(
-        &self,
-        s: &AlterResourceStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    fn exec_alter_resource(&self, s: &AlterResourceStmt) -> Result<StmtOutcome, EngineError> {
         if self.ctx.simulate {
             return self.exec_alter_resource_simulated(s);
         }
 
         // Get existing resource
-        let existing = self
-            .ctx
-            .registry
-            .get_resource(&s.id)
-            .map_err(|e| with_remediation(
+        let existing = self.ctx.registry.get_resource(&s.id).map_err(|e| {
+            with_remediation(
                 "RESOURCE_NOT_FOUND",
                 &format!("resource lookup failed: {e}"),
                 &ErrorContext {
@@ -3154,14 +3118,16 @@ impl<'a> Executor<'a> {
                     resource_type: Some(s.resource_type.clone()),
                     ..Default::default()
                 },
-            ))?;
+            )
+        })?;
 
         // Verify resource type matches
         if existing.resource_type != s.resource_type {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ).into());
+            )
+            .into());
         }
 
         // Resolve variable references in set_items
@@ -3242,14 +3208,19 @@ impl<'a> Executor<'a> {
                     level: "WARN".into(),
                     code: "AWS_UPDATE_NOT_IMPLEMENTED".into(),
                     provider_id: Some(existing.provider_id.clone()),
-                    message: "AWS resource update not yet implemented, config updated in registry only".into(),
+                    message:
+                        "AWS resource update not yet implemented, config updated in registry only"
+                            .into(),
                 });
             } else {
                 let provisioner = self.get_azure_provisioner(&existing.provider_id);
                 match provisioner.update(&s.resource_type, &s.id, &config) {
                     Ok(result) => {
                         if let Some(outputs) = result.outputs {
-                            let _ = self.ctx.registry.update_resource_outputs(&s.id, &outputs.to_string());
+                            let _ = self
+                                .ctx
+                                .registry
+                                .update_resource_outputs(&s.id, &outputs.to_string());
                         }
                     }
                     Err(e) => {
@@ -3294,20 +3265,14 @@ impl<'a> Executor<'a> {
         Ok(outcome)
     }
 
-    fn exec_destroy_resource(
-        &self,
-        s: &DestroyResourceStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    fn exec_destroy_resource(&self, s: &DestroyResourceStmt) -> Result<StmtOutcome, EngineError> {
         if self.ctx.simulate {
             return self.exec_destroy_resource_simulated(s);
         }
 
         // Verify resource exists and type matches
-        let existing = self
-            .ctx
-            .registry
-            .get_resource(&s.id)
-            .map_err(|e| with_remediation(
+        let existing = self.ctx.registry.get_resource(&s.id).map_err(|e| {
+            with_remediation(
                 "RESOURCE_NOT_FOUND",
                 &format!("resource lookup failed: {e}"),
                 &ErrorContext {
@@ -3315,13 +3280,15 @@ impl<'a> Executor<'a> {
                     resource_type: Some(s.resource_type.clone()),
                     ..Default::default()
                 },
-            ))?;
+            )
+        })?;
 
         if existing.resource_type != s.resource_type {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ).into());
+            )
+            .into());
         }
 
         // Attempt real deletion via the appropriate cloud CLI
@@ -3406,8 +3373,7 @@ impl<'a> Executor<'a> {
                     .and_then(|c| serde_json::from_str(c).ok())
                     .unwrap_or_else(|| serde_json::json!({}));
                 if let Some(outputs_str) = existing.outputs.as_deref() {
-                    if let Ok(outputs_val) =
-                        serde_json::from_str::<serde_json::Value>(outputs_str)
+                    if let Ok(outputs_val) = serde_json::from_str::<serde_json::Value>(outputs_str)
                     {
                         if let (Some(merged_obj), Some(out_obj)) =
                             (merged.as_object_mut(), outputs_val.as_object())
@@ -3437,9 +3403,7 @@ impl<'a> Executor<'a> {
                         level: "WARN".into(),
                         code: "AWS_DELETE_FAILED".into(),
                         provider_id: Some(existing.provider_id.clone()),
-                        message: format!(
-                            "AWS deletion failed, removing from registry anyway: {e}"
-                        ),
+                        message: format!("AWS deletion failed, removing from registry anyway: {e}"),
                     });
                 }
             } else {
@@ -3479,8 +3443,7 @@ impl<'a> Executor<'a> {
         s: &CreateResourceStmt,
     ) -> Result<StmtOutcome, EngineError> {
         let params = self.resolve_params(&s.params);
-        let id = get_param(&params, "id")
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let id = get_param(&params, "id").unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // IF NOT EXISTS: skip silently if resource already exists
         if s.if_not_exists {
@@ -3495,13 +3458,17 @@ impl<'a> Executor<'a> {
                     level: "INFO".into(),
                     code: "RES_EXISTS".into(),
                     provider_id: None,
-                    message: format!("Resource '{}' '{}' already exists -- skipped", s.resource_type, id),
+                    message: format!(
+                        "Resource '{}' '{}' already exists -- skipped",
+                        s.resource_type, id
+                    ),
                 });
                 return Ok(outcome);
             }
         }
         let name = get_param(&params, "name");
-        let provider_id = self.resolve_provider(&s.on)
+        let provider_id = self
+            .resolve_provider(&s.on)
             .unwrap_or_else(|_| "simulate".into());
 
         let config_value = self.params_to_json(&s.params);
@@ -3525,7 +3492,10 @@ impl<'a> Executor<'a> {
             .map_err(|e| format!("failed to create resource (simulated): {e}"))?;
 
         if let Some(ref out) = outputs {
-            let _ = self.ctx.registry.update_resource_outputs(&id, &out.to_string());
+            let _ = self
+                .ctx
+                .registry
+                .update_resource_outputs(&id, &out.to_string());
         }
 
         let val = serde_json::json!({
@@ -3554,11 +3524,8 @@ impl<'a> Executor<'a> {
         &self,
         s: &AlterResourceStmt,
     ) -> Result<StmtOutcome, EngineError> {
-        let existing = self
-            .ctx
-            .registry
-            .get_resource(&s.id)
-            .map_err(|e| with_remediation(
+        let existing = self.ctx.registry.get_resource(&s.id).map_err(|e| {
+            with_remediation(
                 "RESOURCE_NOT_FOUND",
                 &format!("resource lookup failed: {e}"),
                 &ErrorContext {
@@ -3566,13 +3533,15 @@ impl<'a> Executor<'a> {
                     resource_type: Some(s.resource_type.clone()),
                     ..Default::default()
                 },
-            ))?;
+            )
+        })?;
 
         if existing.resource_type != s.resource_type {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ).into());
+            )
+            .into());
         }
 
         let set_items = self.resolve_params(&s.set_items);
@@ -3623,11 +3592,8 @@ impl<'a> Executor<'a> {
         &self,
         s: &DestroyResourceStmt,
     ) -> Result<StmtOutcome, EngineError> {
-        let existing = self
-            .ctx
-            .registry
-            .get_resource(&s.id)
-            .map_err(|e| with_remediation(
+        let existing = self.ctx.registry.get_resource(&s.id).map_err(|e| {
+            with_remediation(
                 "RESOURCE_NOT_FOUND",
                 &format!("resource lookup failed: {e}"),
                 &ErrorContext {
@@ -3635,13 +3601,15 @@ impl<'a> Executor<'a> {
                     resource_type: Some(s.resource_type.clone()),
                     ..Default::default()
                 },
-            ))?;
+            )
+        })?;
 
         if existing.resource_type != s.resource_type {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ).into());
+            )
+            .into());
         }
 
         self.ctx
@@ -3669,16 +3637,10 @@ impl<'a> Executor<'a> {
     // Day-2 Operations: BACKUP, RESTORE RESOURCE, SCALE, UPGRADE
     // =======================================================================
 
-    fn exec_backup(
-        &self,
-        s: &BackupStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    fn exec_backup(&self, s: &BackupStmt) -> Result<StmtOutcome, EngineError> {
         // Verify resource exists and type matches
-        let existing = self
-            .ctx
-            .registry
-            .get_resource(&s.id)
-            .map_err(|e| with_remediation(
+        let existing = self.ctx.registry.get_resource(&s.id).map_err(|e| {
+            with_remediation(
                 "RESOURCE_NOT_FOUND",
                 &format!("resource lookup failed: {e}"),
                 &ErrorContext {
@@ -3686,13 +3648,15 @@ impl<'a> Executor<'a> {
                     resource_type: Some(s.resource_type.clone()),
                     ..Default::default()
                 },
-            ))?;
+            )
+        })?;
 
         if existing.resource_type != s.resource_type {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ).into());
+            )
+            .into());
         }
 
         if self.ctx.simulate {
@@ -3708,7 +3672,10 @@ impl<'a> Executor<'a> {
                 level: "INFO".into(),
                 code: "SIM_001".into(),
                 provider_id: Some(existing.provider_id.clone()),
-                message: format!("BACKUP '{}' '{}' simulated -- no cloud calls made", s.resource_type, s.id),
+                message: format!(
+                    "BACKUP '{}' '{}' simulated -- no cloud calls made",
+                    s.resource_type, s.id
+                ),
             });
             return Ok(outcome);
         }
@@ -3724,9 +3691,15 @@ impl<'a> Executor<'a> {
         ) {
             Ok(result) => {
                 if let Some(ref outputs) = result.outputs {
-                    let _ = self.ctx.registry.update_resource_outputs(&s.id, &outputs.to_string());
+                    let _ = self
+                        .ctx
+                        .registry
+                        .update_resource_outputs(&s.id, &outputs.to_string());
                 }
-                let _ = self.ctx.registry.update_resource_status(&s.id, &result.status);
+                let _ = self
+                    .ctx
+                    .registry
+                    .update_resource_status(&s.id, &result.status);
             }
             Err(e) => {
                 notifications.push(Notification {
@@ -3755,16 +3728,10 @@ impl<'a> Executor<'a> {
         Ok(outcome)
     }
 
-    fn exec_restore_resource(
-        &self,
-        s: &RestoreResourceStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    fn exec_restore_resource(&self, s: &RestoreResourceStmt) -> Result<StmtOutcome, EngineError> {
         // Verify resource exists and type matches
-        let existing = self
-            .ctx
-            .registry
-            .get_resource(&s.id)
-            .map_err(|e| with_remediation(
+        let existing = self.ctx.registry.get_resource(&s.id).map_err(|e| {
+            with_remediation(
                 "RESOURCE_NOT_FOUND",
                 &format!("resource lookup failed: {e}"),
                 &ErrorContext {
@@ -3772,13 +3739,15 @@ impl<'a> Executor<'a> {
                     resource_type: Some(s.resource_type.clone()),
                     ..Default::default()
                 },
-            ))?;
+            )
+        })?;
 
         if existing.resource_type != s.resource_type {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ).into());
+            )
+            .into());
         }
 
         if self.ctx.simulate {
@@ -3794,7 +3763,10 @@ impl<'a> Executor<'a> {
                 level: "INFO".into(),
                 code: "SIM_001".into(),
                 provider_id: Some(existing.provider_id.clone()),
-                message: format!("RESTORE '{}' '{}' simulated -- no cloud calls made", s.resource_type, s.id),
+                message: format!(
+                    "RESTORE '{}' '{}' simulated -- no cloud calls made",
+                    s.resource_type, s.id
+                ),
             });
             return Ok(outcome);
         }
@@ -3805,9 +3777,15 @@ impl<'a> Executor<'a> {
         match provisioner.restore_resource(&s.resource_type, &s.id, &s.source) {
             Ok(result) => {
                 if let Some(ref outputs) = result.outputs {
-                    let _ = self.ctx.registry.update_resource_outputs(&s.id, &outputs.to_string());
+                    let _ = self
+                        .ctx
+                        .registry
+                        .update_resource_outputs(&s.id, &outputs.to_string());
                 }
-                let _ = self.ctx.registry.update_resource_status(&s.id, &result.status);
+                let _ = self
+                    .ctx
+                    .registry
+                    .update_resource_status(&s.id, &result.status);
             }
             Err(e) => {
                 notifications.push(Notification {
@@ -3836,16 +3814,10 @@ impl<'a> Executor<'a> {
         Ok(outcome)
     }
 
-    fn exec_scale(
-        &self,
-        s: &ScaleStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    fn exec_scale(&self, s: &ScaleStmt) -> Result<StmtOutcome, EngineError> {
         // Verify resource exists and type matches
-        let existing = self
-            .ctx
-            .registry
-            .get_resource(&s.id)
-            .map_err(|e| with_remediation(
+        let existing = self.ctx.registry.get_resource(&s.id).map_err(|e| {
+            with_remediation(
                 "RESOURCE_NOT_FOUND",
                 &format!("resource lookup failed: {e}"),
                 &ErrorContext {
@@ -3853,13 +3825,15 @@ impl<'a> Executor<'a> {
                     resource_type: Some(s.resource_type.clone()),
                     ..Default::default()
                 },
-            ))?;
+            )
+        })?;
 
         if existing.resource_type != s.resource_type {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ).into());
+            )
+            .into());
         }
 
         if self.ctx.simulate {
@@ -3876,7 +3850,10 @@ impl<'a> Executor<'a> {
                 level: "INFO".into(),
                 code: "SIM_001".into(),
                 provider_id: Some(existing.provider_id.clone()),
-                message: format!("SCALE '{}' '{}' simulated -- no cloud calls made", s.resource_type, s.id),
+                message: format!(
+                    "SCALE '{}' '{}' simulated -- no cloud calls made",
+                    s.resource_type, s.id
+                ),
             });
             return Ok(outcome);
         }
@@ -3903,9 +3880,15 @@ impl<'a> Executor<'a> {
         match provisioner.scale(&s.resource_type, &s.id, &params_value) {
             Ok(result) => {
                 if let Some(ref outputs) = result.outputs {
-                    let _ = self.ctx.registry.update_resource_outputs(&s.id, &outputs.to_string());
+                    let _ = self
+                        .ctx
+                        .registry
+                        .update_resource_outputs(&s.id, &outputs.to_string());
                 }
-                let _ = self.ctx.registry.update_resource_status(&s.id, &result.status);
+                let _ = self
+                    .ctx
+                    .registry
+                    .update_resource_status(&s.id, &result.status);
             }
             Err(e) => {
                 notifications.push(Notification {
@@ -3933,7 +3916,10 @@ impl<'a> Executor<'a> {
             };
             config[&p.key] = v;
         }
-        let _ = self.ctx.registry.update_resource_config(&s.id, &config.to_string());
+        let _ = self
+            .ctx
+            .registry
+            .update_resource_config(&s.id, &config.to_string());
 
         let row = self
             .ctx
@@ -3953,16 +3939,10 @@ impl<'a> Executor<'a> {
         Ok(outcome)
     }
 
-    fn exec_upgrade(
-        &self,
-        s: &UpgradeStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    fn exec_upgrade(&self, s: &UpgradeStmt) -> Result<StmtOutcome, EngineError> {
         // Verify resource exists and type matches
-        let existing = self
-            .ctx
-            .registry
-            .get_resource(&s.id)
-            .map_err(|e| with_remediation(
+        let existing = self.ctx.registry.get_resource(&s.id).map_err(|e| {
+            with_remediation(
                 "RESOURCE_NOT_FOUND",
                 &format!("resource lookup failed: {e}"),
                 &ErrorContext {
@@ -3970,13 +3950,15 @@ impl<'a> Executor<'a> {
                     resource_type: Some(s.resource_type.clone()),
                     ..Default::default()
                 },
-            ))?;
+            )
+        })?;
 
         if existing.resource_type != s.resource_type {
             return Err(format!(
                 "resource '{}' is of type '{}', not '{}'",
                 s.id, existing.resource_type, s.resource_type
-            ).into());
+            )
+            .into());
         }
 
         if self.ctx.simulate {
@@ -3993,7 +3975,10 @@ impl<'a> Executor<'a> {
                 level: "INFO".into(),
                 code: "SIM_001".into(),
                 provider_id: Some(existing.provider_id.clone()),
-                message: format!("UPGRADE '{}' '{}' simulated -- no cloud calls made", s.resource_type, s.id),
+                message: format!(
+                    "UPGRADE '{}' '{}' simulated -- no cloud calls made",
+                    s.resource_type, s.id
+                ),
             });
             return Ok(outcome);
         }
@@ -4020,9 +4005,15 @@ impl<'a> Executor<'a> {
         match provisioner.upgrade(&s.resource_type, &s.id, &params_value) {
             Ok(result) => {
                 if let Some(ref outputs) = result.outputs {
-                    let _ = self.ctx.registry.update_resource_outputs(&s.id, &outputs.to_string());
+                    let _ = self
+                        .ctx
+                        .registry
+                        .update_resource_outputs(&s.id, &outputs.to_string());
                 }
-                let _ = self.ctx.registry.update_resource_status(&s.id, &result.status);
+                let _ = self
+                    .ctx
+                    .registry
+                    .update_resource_status(&s.id, &result.status);
             }
             Err(e) => {
                 notifications.push(Notification {
@@ -4050,7 +4041,10 @@ impl<'a> Executor<'a> {
             };
             config[&p.key] = v;
         }
-        let _ = self.ctx.registry.update_resource_config(&s.id, &config.to_string());
+        let _ = self
+            .ctx
+            .registry
+            .update_resource_config(&s.id, &config.to_string());
 
         let row = self
             .ctx
@@ -4074,8 +4068,8 @@ impl<'a> Executor<'a> {
     // Helpers
     // =======================================================================
 
-    /// Resolve which provider to target. If an `ON PROVIDER 'x'` clause is
-    /// present we use that, otherwise we pick the first registered driver.
+    // Resolve which provider to target. If an `ON PROVIDER 'x'` clause is
+    // present we use that, otherwise we pick the first registered driver.
     // =======================================================================
     // WATCH
     // =======================================================================
@@ -4184,17 +4178,14 @@ impl<'a> Executor<'a> {
         }
         // Fall back to first registered driver
         let drivers = self.ctx.drivers.read().unwrap();
-        drivers
-            .keys()
-            .next()
-            .cloned()
-            .ok_or_else(|| {
-                with_remediation(
-                    "NO_DRIVERS",
-                    "no drivers registered",
-                    &ErrorContext::default(),
-                ).into()
-            })
+        drivers.keys().next().cloned().ok_or_else(|| {
+            with_remediation(
+                "NO_DRIVERS",
+                "no drivers registered",
+                &ErrorContext::default(),
+            )
+            .into()
+        })
     }
 
     /// Return any available driver (first in the map).
@@ -4209,7 +4200,8 @@ impl<'a> Executor<'a> {
                     "NO_DRIVERS",
                     "no drivers registered",
                     &ErrorContext::default(),
-                ).into()
+                )
+                .into()
             })
     }
 
@@ -4235,10 +4227,13 @@ impl<'a> Executor<'a> {
 
     /// Resolve all variable references in a parameter list.
     fn resolve_params(&self, params: &[Param]) -> Vec<Param> {
-        params.iter().map(|p| Param {
-            key: p.key.clone(),
-            value: self.resolve_value(&p.value),
-        }).collect()
+        params
+            .iter()
+            .map(|p| Param {
+                key: p.key.clone(),
+                value: self.resolve_value(&p.value),
+            })
+            .collect()
     }
 
     // =======================================================================
@@ -4271,7 +4266,8 @@ impl<'a> Executor<'a> {
                         "config": row.config,
                         "outputs": row.outputs,
                         "labels": row.labels,
-                    }).to_string();
+                    })
+                    .to_string();
                     let _ = self.ctx.registry.insert_state_snapshot(
                         &uuid::Uuid::new_v4().to_string(),
                         tag.as_deref(),
@@ -4294,14 +4290,16 @@ impl<'a> Executor<'a> {
                             "status": r.status, "image_id": r.image_id,
                             "vcpus": r.vcpus, "memory_mb": r.memory_mb,
                             "hostname": r.hostname, "metadata": r.metadata, "labels": r.labels,
-                        }).to_string()
+                        })
+                        .to_string()
                     }),
                     DestroyTarget::Volume => self.ctx.registry.get_volume(&s.id).ok().map(|r| {
                         serde_json::json!({
                             "id": r.id, "provider_id": r.provider_id, "size_gb": r.size_gb,
                             "status": r.status, "volume_type": r.volume_type,
                             "iops": r.iops, "encrypted": r.encrypted, "labels": r.labels,
-                        }).to_string()
+                        })
+                        .to_string()
                     }),
                 };
                 let _ = self.ctx.registry.insert_state_snapshot(
@@ -4320,7 +4318,8 @@ impl<'a> Executor<'a> {
                         "provider_id": row.provider_id, "name": row.name,
                         "config": row.config, "status": row.status,
                         "outputs": row.outputs, "labels": row.labels,
-                    }).to_string();
+                    })
+                    .to_string();
                     let _ = self.ctx.registry.insert_state_snapshot(
                         &uuid::Uuid::new_v4().to_string(),
                         tag.as_deref(),
@@ -4337,7 +4336,8 @@ impl<'a> Executor<'a> {
                         "id": row.id, "provider_id": row.provider_id, "tenant": row.tenant,
                         "status": row.status, "vcpus": row.vcpus, "memory_mb": row.memory_mb,
                         "hostname": row.hostname, "metadata": row.metadata, "labels": row.labels,
-                    }).to_string();
+                    })
+                    .to_string();
                     let _ = self.ctx.registry.insert_state_snapshot(
                         &uuid::Uuid::new_v4().to_string(),
                         tag.as_deref(),
@@ -4355,7 +4355,8 @@ impl<'a> Executor<'a> {
                         "size_gb": row.size_gb, "status": row.status,
                         "volume_type": row.volume_type, "iops": row.iops,
                         "encrypted": row.encrypted, "labels": row.labels,
-                    }).to_string();
+                    })
+                    .to_string();
                     let _ = self.ctx.registry.insert_state_snapshot(
                         &uuid::Uuid::new_v4().to_string(),
                         tag.as_deref(),
@@ -4376,29 +4377,35 @@ impl<'a> Executor<'a> {
 
     fn exec_rollback(&self, s: &RollbackStmt) -> Result<StmtOutcome, EngineError> {
         let snapshot = match &s.target {
-            RollbackTarget::Last => {
-                self.ctx.registry.get_last_snapshot()
-                    .map_err(|e| format!("failed to get last snapshot: {e}"))?
-                    .ok_or_else(|| with_remediation(
+            RollbackTarget::Last => self
+                .ctx
+                .registry
+                .get_last_snapshot()
+                .map_err(|e| format!("failed to get last snapshot: {e}"))?
+                .ok_or_else(|| {
+                    with_remediation(
                         "ROLLBACK_NO_SNAPSHOTS",
                         "no snapshots available for rollback",
                         &ErrorContext::default(),
-                    ))?
-            }
-            RollbackTarget::Tag(tag) => {
-                self.ctx.registry.get_snapshot_by_tag(tag)
-                    .map_err(|e| format!("failed to get snapshot: {e}"))?
-                    .ok_or_else(|| format!("no snapshot found with tag '{tag}'"))?
-            }
-            RollbackTarget::Resource { resource_type, id } => {
-                self.ctx.registry.get_snapshot_for_resource(resource_type, id)
-                    .map_err(|e| format!("failed to get snapshot: {e}"))?
-                    .ok_or_else(|| format!("no snapshot found for {} '{}'", resource_type, id))?
-            }
+                    )
+                })?,
+            RollbackTarget::Tag(tag) => self
+                .ctx
+                .registry
+                .get_snapshot_by_tag(tag)
+                .map_err(|e| format!("failed to get snapshot: {e}"))?
+                .ok_or_else(|| format!("no snapshot found with tag '{tag}'"))?,
+            RollbackTarget::Resource { resource_type, id } => self
+                .ctx
+                .registry
+                .get_snapshot_for_resource(resource_type, id)
+                .map_err(|e| format!("failed to get snapshot: {e}"))?
+                .ok_or_else(|| format!("no snapshot found for {} '{}'", resource_type, id))?,
         };
 
         // Parse the previous state
-        let previous = snapshot.previous_state
+        let previous = snapshot
+            .previous_state
             .as_deref()
             .ok_or("snapshot has no previous state -- cannot rollback")?;
         let state: serde_json::Value = serde_json::from_str(previous)
@@ -4415,20 +4422,39 @@ impl<'a> Executor<'a> {
                 let name = state["name"].as_str();
                 let status = state["status"].as_str().unwrap_or("available");
                 let config = state.get("config").and_then(|c| {
-                    if c.is_null() { None } else { Some(c.to_string()) }
+                    if c.is_null() {
+                        None
+                    } else {
+                        Some(c.to_string())
+                    }
                 });
                 let labels = state.get("labels").and_then(|l| {
-                    if l.is_null() { None } else { Some(l.to_string()) }
+                    if l.is_null() {
+                        None
+                    } else {
+                        Some(l.to_string())
+                    }
                 });
 
-                self.ctx.registry.insert_resource(
-                    id, rtype, provider, name, status,
-                    config.as_deref(), labels.as_deref(),
-                ).map_err(|e| format!("rollback failed: {e}"))?;
+                self.ctx
+                    .registry
+                    .insert_resource(
+                        id,
+                        rtype,
+                        provider,
+                        name,
+                        status,
+                        config.as_deref(),
+                        labels.as_deref(),
+                    )
+                    .map_err(|e| format!("rollback failed: {e}"))?;
 
                 if let Some(outputs) = state.get("outputs") {
                     if !outputs.is_null() {
-                        let _ = self.ctx.registry.update_resource_outputs(id, &outputs.to_string());
+                        let _ = self
+                            .ctx
+                            .registry
+                            .update_resource_outputs(id, &outputs.to_string());
                     }
                 }
             }
@@ -4443,17 +4469,35 @@ impl<'a> Executor<'a> {
                 let memory_mb = state["memory_mb"].as_i64();
                 let hostname = state["hostname"].as_str();
                 let metadata = state.get("metadata").and_then(|m| {
-                    if m.is_null() { None } else { Some(m.to_string()) }
+                    if m.is_null() {
+                        None
+                    } else {
+                        Some(m.to_string())
+                    }
                 });
                 let labels = state.get("labels").and_then(|l| {
-                    if l.is_null() { None } else { Some(l.to_string()) }
+                    if l.is_null() {
+                        None
+                    } else {
+                        Some(l.to_string())
+                    }
                 });
 
-                self.ctx.registry.insert_microvm(
-                    id, provider, tenant, status, image_id,
-                    vcpus, memory_mb, hostname,
-                    metadata.as_deref(), labels.as_deref(),
-                ).map_err(|e| format!("rollback failed: {e}"))?;
+                self.ctx
+                    .registry
+                    .insert_microvm(
+                        id,
+                        provider,
+                        tenant,
+                        status,
+                        image_id,
+                        vcpus,
+                        memory_mb,
+                        hostname,
+                        metadata.as_deref(),
+                        labels.as_deref(),
+                    )
+                    .map_err(|e| format!("rollback failed: {e}"))?;
             }
             "volume" => {
                 let _ = self.ctx.registry.delete_volume(&snapshot.target_id);
@@ -4465,13 +4509,26 @@ impl<'a> Executor<'a> {
                 let iops = state["iops"].as_i64();
                 let encrypted = state["encrypted"].as_bool().unwrap_or(false);
                 let labels = state.get("labels").and_then(|l| {
-                    if l.is_null() { None } else { Some(l.to_string()) }
+                    if l.is_null() {
+                        None
+                    } else {
+                        Some(l.to_string())
+                    }
                 });
 
-                self.ctx.registry.insert_volume(
-                    id, provider, vol_type, size_gb, status,
-                    iops, encrypted, labels.as_deref(),
-                ).map_err(|e| format!("rollback failed: {e}"))?;
+                self.ctx
+                    .registry
+                    .insert_volume(
+                        id,
+                        provider,
+                        vol_type,
+                        size_gb,
+                        status,
+                        iops,
+                        encrypted,
+                        labels.as_deref(),
+                    )
+                    .map_err(|e| format!("rollback failed: {e}"))?;
             }
             other => return Err(format!("rollback not supported for type: {other}").into()),
         }
@@ -4698,8 +4755,8 @@ impl<'a> Executor<'a> {
         let (provider_ids, path) = match fc.args.len() {
             1 => {
                 // file_stat(path) — fan out across all ssh providers
-                let p = arg_str(&fc.args, 0)
-                    .ok_or("file_stat(path): path must be a string literal")?;
+                let p =
+                    arg_str(&fc.args, 0).ok_or("file_stat(path): path must be a string literal")?;
                 let providers = self
                     .ctx
                     .registry
@@ -4722,11 +4779,7 @@ impl<'a> Executor<'a> {
                     .ok_or("file_stat(provider_id, path): second arg must be a string literal")?;
                 (vec![pid], p)
             }
-            n => {
-                return Err(format!(
-                    "file_stat expects 1 or 2 args, got {n}"
-                ))
-            }
+            n => return Err(format!("file_stat expects 1 or 2 args, got {n}")),
         };
 
         // In simulate mode we never reach a real SSH host.  Return one
@@ -4784,7 +4837,12 @@ impl<'a> Executor<'a> {
                 .get_provider(&pid)
                 .ok()
                 .and_then(|p| p.host.clone());
-            rows.push(build_file_stat_row(&provisioner, &pid, host.as_deref(), &path));
+            rows.push(build_file_stat_row(
+                &provisioner,
+                &pid,
+                host.as_deref(),
+                &path,
+            ));
         }
         Ok(rows)
     }
@@ -4826,25 +4884,23 @@ impl<'a> Executor<'a> {
         // Resolve which provider(s) to discover from.
         let provider_ids: Vec<String> = match &s.source {
             ImportSource::SingleProvider(id) => vec![id.clone()],
-            ImportSource::ProvidersByType(ptype) => {
-                self.ctx
-                    .registry
-                    .list_providers()
-                    .map_err(|e| format!("list providers: {e}"))?
-                    .into_iter()
-                    .filter(|p| p.provider_type == *ptype)
-                    .map(|p| p.id)
-                    .collect()
-            }
-            ImportSource::AllProviders => {
-                self.ctx
-                    .registry
-                    .list_providers()
-                    .map_err(|e| format!("list providers: {e}"))?
-                    .into_iter()
-                    .map(|p| p.id)
-                    .collect()
-            }
+            ImportSource::ProvidersByType(ptype) => self
+                .ctx
+                .registry
+                .list_providers()
+                .map_err(|e| format!("list providers: {e}"))?
+                .into_iter()
+                .filter(|p| p.provider_type == *ptype)
+                .map(|p| p.id)
+                .collect(),
+            ImportSource::AllProviders => self
+                .ctx
+                .registry
+                .list_providers()
+                .map_err(|e| format!("list providers: {e}"))?
+                .into_iter()
+                .map(|p| p.id)
+                .collect(),
         };
 
         if provider_ids.is_empty() {
@@ -4877,23 +4933,27 @@ impl<'a> Executor<'a> {
                 }
             };
 
-            let discovered = match self.discover_resources(&provider, s.resource_type_filter.as_deref()) {
-                Ok(d) => d,
-                Err(e) => {
-                    notifications.push(Notification {
-                        level: "WARN".into(),
-                        code: "IMPORT_DISCOVER_ERR".into(),
-                        provider_id: Some(pid.clone()),
-                        message: format!("discover failed for '{pid}': {e}"),
-                    });
-                    total_errors += 1;
-                    continue;
-                }
-            };
+            let discovered =
+                match self.discover_resources(&provider, s.resource_type_filter.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        notifications.push(Notification {
+                            level: "WARN".into(),
+                            code: "IMPORT_DISCOVER_ERR".into(),
+                            provider_id: Some(pid.clone()),
+                            message: format!("discover failed for '{pid}': {e}"),
+                        });
+                        total_errors += 1;
+                        continue;
+                    }
+                };
 
             for entry in discovered {
                 let resource_id = entry["id"].as_str().unwrap_or_default().to_string();
-                let resource_type = entry["resource_type"].as_str().unwrap_or("unknown").to_string();
+                let resource_type = entry["resource_type"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string();
 
                 if resource_id.is_empty() {
                     total_errors += 1;
@@ -4904,10 +4964,10 @@ impl<'a> Executor<'a> {
                 if let Ok(_existing) = self.ctx.registry.get_resource(&resource_id) {
                     // Update metadata but don't change status
                     if let Some(config) = entry.get("config") {
-                        let _ = self.ctx.registry.update_resource_config(
-                            &resource_id,
-                            &config.to_string(),
-                        );
+                        let _ = self
+                            .ctx
+                            .registry
+                            .update_resource_config(&resource_id, &config.to_string());
                     }
                     total_skipped += 1;
 
@@ -4926,7 +4986,11 @@ impl<'a> Executor<'a> {
                 let name = entry["name"].as_str();
                 let config = entry.get("config").map(|c| c.to_string());
                 let labels = entry.get("labels").and_then(|l| {
-                    if l.is_null() { None } else { Some(l.to_string()) }
+                    if l.is_null() {
+                        None
+                    } else {
+                        Some(l.to_string())
+                    }
                 });
 
                 match self.ctx.registry.insert_resource(
@@ -4941,10 +5005,10 @@ impl<'a> Executor<'a> {
                     Ok(_) => {
                         // Store outputs if present
                         if let Some(outputs) = entry.get("outputs") {
-                            let _ = self.ctx.registry.update_resource_outputs(
-                                &resource_id,
-                                &outputs.to_string(),
-                            );
+                            let _ = self
+                                .ctx
+                                .registry
+                                .update_resource_outputs(&resource_id, &outputs.to_string());
                         }
                         total_imported += 1;
                         let _ = self.ctx.registry.insert_import_log(
@@ -5018,11 +5082,15 @@ impl<'a> Executor<'a> {
                 p.discover().map_err(|e| e.to_string())?
             }
             "ssh" => {
-                let p = self.get_ssh_provisioner(&provider.id).map_err(|e| e.to_string())?;
+                let p = self
+                    .get_ssh_provisioner(&provider.id)
+                    .map_err(|e| e.to_string())?;
                 p.discover().map_err(|e| e.to_string())?
             }
             other => {
-                return Err(format!("discover not supported for provider type '{other}'"));
+                return Err(format!(
+                    "discover not supported for provider type '{other}'"
+                ));
             }
         };
 
@@ -5046,8 +5114,7 @@ impl<'a> Executor<'a> {
     fn eval_assertion_predicate<'b>(
         &'b self,
         pred: &'b Predicate,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + 'b>>
-    {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + 'b>> {
         Box::pin(async move {
             match pred {
                 Predicate::And(a, b) => Ok(self.eval_assertion_predicate(a).await?
@@ -5070,10 +5137,7 @@ impl<'a> Executor<'a> {
     }
 
     /// Evaluate a comparison where either side may be a scalar subquery.
-    async fn eval_assertion_comparison(
-        &self,
-        cmp: &Comparison,
-    ) -> Result<bool, String> {
+    async fn eval_assertion_comparison(&self, cmp: &Comparison) -> Result<bool, String> {
         let lhs = self.eval_expr_value(&cmp.left).await?;
         let rhs = self.eval_expr_value(&cmp.right).await?;
         Ok(compare_json(&lhs, &cmp.op, &rhs))
@@ -5083,9 +5147,8 @@ impl<'a> Executor<'a> {
     fn eval_expr_value<'b>(
         &'b self,
         expr: &'b kvmql_parser::ast::Expr,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + 'b>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + 'b>>
+    {
         use kvmql_parser::ast::Expr;
         Box::pin(async move {
             match expr {
@@ -5149,7 +5212,11 @@ impl<'a> Executor<'a> {
 // Simulation: realistic fake outputs per resource type
 // ---------------------------------------------------------------------------
 
-fn simulate_outputs(resource_type: &str, id: &str, config: &serde_json::Value) -> Option<serde_json::Value> {
+fn simulate_outputs(
+    resource_type: &str,
+    id: &str,
+    config: &serde_json::Value,
+) -> Option<serde_json::Value> {
     match resource_type {
         "postgres" => Some(serde_json::json!({
             "fqdn": format!("{id}.postgres.database.azure.com"),
@@ -5256,7 +5323,7 @@ fn project_rows(
         FieldList::Fields(fs) => {
             // Detect aggregate mode: any FnCall whose name is a known
             // aggregate.  In that mode we return exactly one row.
-            let has_aggregate = fs.iter().any(|f| field_is_aggregate(f));
+            let has_aggregate = fs.iter().any(field_is_aggregate);
 
             if has_aggregate {
                 let mut row = serde_json::Map::new();
@@ -5443,11 +5510,7 @@ fn build_file_stat_row(
             // SHA-256 is best-effort — a permission denied on a file we
             // can stat but not read shouldn't turn the whole row into an
             // error.  Propagate it as a null with a warning on the row.
-            let sha = provisioner
-                .client
-                .sha256(path)
-                .ok()
-                .flatten();
+            let sha = provisioner.client.sha256(path).ok().flatten();
             serde_json::json!({
                 "provider_id": provider_id,
                 "host": host,
@@ -5511,13 +5574,21 @@ fn resolve_aws_profile(auth_ref: &str) -> Option<String> {
 /// - anything else — treat as a literal string and pass through.
 fn resolve_content_reference(raw: &str) -> Result<String, String> {
     if let Some(rest) = raw.strip_prefix("file:") {
-        return std::fs::read_to_string(rest)
-            .map_err(|e| format!("failed to read {rest}: {e}"));
+        return std::fs::read_to_string(rest).map_err(|e| format!("failed to read {rest}: {e}"));
     }
     // Any other recognised credential scheme goes through the resolver.
-    let is_credential_scheme = ["env:", "op:", "vault:", "aws-sm:", "gcp-sm:", "azure-kv:", "sops:", "k8s:"]
-        .iter()
-        .any(|p| raw.starts_with(p));
+    let is_credential_scheme = [
+        "env:",
+        "op:",
+        "vault:",
+        "aws-sm:",
+        "gcp-sm:",
+        "azure-kv:",
+        "sops:",
+        "k8s:",
+    ]
+    .iter()
+    .any(|p| raw.starts_with(p));
     if is_credential_scheme {
         return kvmql_auth::resolver::CredentialResolver::resolve(raw)
             .map_err(|e| format!("credential resolve failed: {e}"));
@@ -5537,10 +5608,7 @@ fn parse_ssh_connection_hints(labels: Option<&str>) -> (Option<String>, Option<u
     let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
         return (None, None);
     };
-    let user = v
-        .get("ssh_user")
-        .and_then(|x| x.as_str())
-        .map(String::from);
+    let user = v.get("ssh_user").and_then(|x| x.as_str()).map(String::from);
     let port = v
         .get("ssh_port")
         .and_then(|x| x.as_u64())
@@ -5586,33 +5654,42 @@ fn write_ephemeral_key(key_material: &str) -> Result<std::path::PathBuf, String>
 }
 
 fn get_param(params: &[Param], key: &str) -> Option<String> {
-    params.iter().find(|p| p.key == key).and_then(|p| match &p.value {
-        Value::String(s) => Some(s.clone()),
-        Value::Integer(n) => Some(n.to_string()),
-        Value::Float(f) => Some(f.to_string()),
-        Value::Boolean(b) => Some(b.to_string()),
-        _ => None,
-    })
+    params
+        .iter()
+        .find(|p| p.key == key)
+        .and_then(|p| match &p.value {
+            Value::String(s) => Some(s.clone()),
+            Value::Integer(n) => Some(n.to_string()),
+            Value::Float(f) => Some(f.to_string()),
+            Value::Boolean(b) => Some(b.to_string()),
+            _ => None,
+        })
 }
 
 fn get_param_i64(params: &[Param], key: &str) -> Option<i64> {
-    params.iter().find(|p| p.key == key).and_then(|p| match &p.value {
-        Value::Integer(n) => Some(*n),
-        Value::String(s) => s.parse().ok(),
-        _ => None,
-    })
+    params
+        .iter()
+        .find(|p| p.key == key)
+        .and_then(|p| match &p.value {
+            Value::Integer(n) => Some(*n),
+            Value::String(s) => s.parse().ok(),
+            _ => None,
+        })
 }
 
 fn get_param_bool(params: &[Param], key: &str) -> Option<bool> {
-    params.iter().find(|p| p.key == key).and_then(|p| match &p.value {
-        Value::Boolean(b) => Some(*b),
-        Value::String(s) => match s.as_str() {
-            "true" | "1" | "yes" => Some(true),
-            "false" | "0" | "no" => Some(false),
+    params
+        .iter()
+        .find(|p| p.key == key)
+        .and_then(|p| match &p.value {
+            Value::Boolean(b) => Some(*b),
+            Value::String(s) => match s.as_str() {
+                "true" | "1" | "yes" => Some(true),
+                "false" | "0" | "no" => Some(false),
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    })
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -5654,9 +5731,7 @@ fn eval_comparison(cmp: &Comparison, row: &serde_json::Value) -> bool {
         ComparisonOp::GtEq => compare_numeric(row_val, &cmp.right, |a, b| a >= b),
         ComparisonOp::LtEq => compare_numeric(row_val, &cmp.right, |a, b| a <= b),
         ComparisonOp::Like => {
-            if let (Some(hay), Expr::StringLit(pat)) =
-                (row_val.as_str(), &cmp.right)
-            {
+            if let (Some(hay), Expr::StringLit(pat)) = (row_val.as_str(), &cmp.right) {
                 simple_like(hay, pat)
             } else {
                 false
@@ -5680,11 +5755,7 @@ fn expr_matches_json(expr: &Expr, val: &serde_json::Value) -> bool {
     }
 }
 
-fn compare_numeric(
-    val: &serde_json::Value,
-    expr: &Expr,
-    f: fn(f64, f64) -> bool,
-) -> bool {
+fn compare_numeric(val: &serde_json::Value, expr: &Expr, f: fn(f64, f64) -> bool) -> bool {
     let lhs = val.as_f64().or_else(|| val.as_i64().map(|n| n as f64));
     let rhs = match expr {
         Expr::Integer(n) => Some(*n as f64),
@@ -5739,10 +5810,7 @@ async fn run_table_function(
     fn arg_int(args: &[Expr], idx: usize) -> Result<i64, String> {
         match args.get(idx) {
             Some(Expr::Integer(n)) => Ok(*n),
-            Some(other) => Err(format!(
-                "expected integer at arg {}, got {:?}",
-                idx, other
-            )),
+            Some(other) => Err(format!("expected integer at arg {}, got {:?}", idx, other)),
             None => Err(format!("missing required arg {}", idx)),
         }
     }
@@ -5937,7 +6005,7 @@ mod tests {
 
     fn setup() -> EngineContext {
         let registry = Registry::open_in_memory().unwrap();
-        let mut ctx = EngineContext::new(registry);
+        let ctx = EngineContext::new(registry);
         let driver = Arc::new(MockDriver::new());
         ctx.register_driver("test-provider".into(), driver);
         ctx
@@ -6064,7 +6132,9 @@ mod tests {
         let exec = Executor::new(&ctx);
 
         let r = exec
-            .execute("CREATE VOLUME id='vol-1' size_gb=20 type='virtio-blk' ON PROVIDER 'test-provider'")
+            .execute(
+                "CREATE VOLUME id='vol-1' size_gb=20 type='virtio-blk' ON PROVIDER 'test-provider'",
+            )
             .await;
         assert_eq!(r.status, ResultStatus::Ok, "create vol: {r:?}");
 
@@ -6423,9 +6493,7 @@ mod tests {
         let exec = Executor::new(&ctx);
 
         // First create a VM (will be denied since CREATE is not granted)
-        let r = exec
-            .execute("DESTROY MICROVM 'vm-nonexistent'")
-            .await;
+        let r = exec.execute("DESTROY MICROVM 'vm-nonexistent'").await;
         assert_eq!(r.status, ResultStatus::Error, "expected auth denial: {r:?}");
         assert!(
             r.notifications
@@ -6441,10 +6509,7 @@ mod tests {
     #[tokio::test]
     async fn test_auth_enabled_permits_authorized() {
         // Principal has DESTROY + CREATE + SELECT
-        let ctx = setup_with_auth(
-            "usr-admin",
-            r#"["SELECT","CREATE","DESTROY"]"#,
-        );
+        let ctx = setup_with_auth("usr-admin", r#"["SELECT","CREATE","DESTROY"]"#);
         let exec = Executor::new(&ctx);
 
         // Create a VM first
@@ -6458,7 +6523,11 @@ mod tests {
 
         // Destroy it — should be permitted
         let r2 = exec.execute("DESTROY MICROVM 'vm-auth'").await;
-        assert_eq!(r2.status, ResultStatus::Ok, "destroy should succeed: {r2:?}");
+        assert_eq!(
+            r2.status,
+            ResultStatus::Ok,
+            "destroy should succeed: {r2:?}"
+        );
     }
 
     // ── test_auth_disabled_permits_all ────────────────────────────────
@@ -6562,7 +6631,10 @@ mod tests {
 
         // Verify the registry was updated
         let image = ctx.registry.get_image("img-pub").unwrap();
-        assert!(image.cloud_ref.is_some(), "cloud_ref should be set in registry");
+        assert!(
+            image.cloud_ref.is_some(),
+            "cloud_ref should be set in registry"
+        );
         assert!(
             image.cloud_ref.unwrap().contains("img-pub"),
             "cloud_ref should reference image id"
@@ -6648,7 +6720,8 @@ mod tests {
 
         // Verify the config was updated
         let row = ctx.registry.get_resource("db-alt").unwrap();
-        let config: serde_json::Value = serde_json::from_str(row.config.as_deref().unwrap()).unwrap();
+        let config: serde_json::Value =
+            serde_json::from_str(row.config.as_deref().unwrap()).unwrap();
         assert_eq!(config["sku"], "Standard_B2s");
         assert_eq!(config["storage_gb"], 64);
         // Original values should still be there
@@ -6701,9 +6774,7 @@ mod tests {
         assert_eq!(resources[0]["resource_type"], "aks");
 
         // Destroy
-        let r3 = exec
-            .execute("DESTROY RESOURCE 'aks' 'k8s-1'")
-            .await;
+        let r3 = exec.execute("DESTROY RESOURCE 'aks' 'k8s-1'").await;
         assert_eq!(r3.status, ResultStatus::Ok, "destroy: {r3:?}");
 
         // Verify empty
@@ -6749,9 +6820,7 @@ mod tests {
         )
         .await;
 
-        let r = exec
-            .execute("BACKUP RESOURCE 'postgres' 'db-bak'")
-            .await;
+        let r = exec.execute("BACKUP RESOURCE 'postgres' 'db-bak'").await;
         assert_eq!(r.status, ResultStatus::Ok, "backup: {r:?}");
 
         let logs = ctx.registry.list_audit_log(None).unwrap();
@@ -6863,9 +6932,7 @@ mod tests {
         .await;
 
         // Backup with wrong resource type — in permissive mode, errors produce Warn
-        let r = exec
-            .execute("BACKUP RESOURCE 'postgres' 'k8s-bak'")
-            .await;
+        let r = exec.execute("BACKUP RESOURCE 'postgres' 'k8s-bak'").await;
         assert!(
             r.status == ResultStatus::Error || r.status == ResultStatus::Warn,
             "should fail with type mismatch: {r:?}"
@@ -6928,7 +6995,10 @@ mod tests {
             steps[0]["command"]
         );
         assert!(
-            steps[0]["command"].as_str().unwrap().contains("flexible-server"),
+            steps[0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("flexible-server"),
             "should show flexible-server subcommand"
         );
 
@@ -6937,7 +7007,11 @@ mod tests {
         assert_eq!(r2.status, ResultStatus::Ok);
         let resources = r2.result.unwrap();
         let resources = resources.as_array().unwrap();
-        assert_eq!(resources.len(), 0, "EXPLAIN should not create any resources");
+        assert_eq!(
+            resources.len(),
+            0,
+            "EXPLAIN should not create any resources"
+        );
     }
 
     #[tokio::test]
@@ -7011,9 +7085,7 @@ mod tests {
 
         // Creating a resource in dry-run mode should NOT actually create it
         let r = exec
-            .execute(
-                "CREATE RESOURCE 'postgres' id='db1' version='16' ON PROVIDER 'test-provider'",
-            )
+            .execute("CREATE RESOURCE 'postgres' id='db1' version='16' ON PROVIDER 'test-provider'")
             .await;
         assert_eq!(r.status, ResultStatus::Ok, "dry-run envelope: {r:?}");
 
@@ -7026,7 +7098,11 @@ mod tests {
         assert_eq!(r2.status, ResultStatus::Ok);
         let resources = r2.result.unwrap();
         let resources = resources.as_array().unwrap();
-        assert_eq!(resources.len(), 0, "dry-run should not create any resources");
+        assert_eq!(
+            resources.len(),
+            0,
+            "dry-run should not create any resources"
+        );
     }
 
     #[tokio::test]
@@ -7046,7 +7122,10 @@ mod tests {
         assert_eq!(r.status, ResultStatus::Ok, "select in dry-run: {r:?}");
         // Result should be an array (actual execution), not an explain plan
         let result = r.result.unwrap();
-        assert!(result.is_array(), "SELECT should return array, not explain plan");
+        assert!(
+            result.is_array(),
+            "SELECT should return array, not explain plan"
+        );
     }
 
     #[tokio::test]
@@ -7063,7 +7142,10 @@ mod tests {
         assert_eq!(r.status, ResultStatus::Ok, "show in dry-run: {r:?}");
         let result = r.result.unwrap();
         // SHOW VERSION returns a version object, not an explain plan
-        assert!(result.get("explain").is_none(), "SHOW should not be wrapped in explain");
+        assert!(
+            result.get("explain").is_none(),
+            "SHOW should not be wrapped in explain"
+        );
     }
 
     // ── ROLLBACK ──────────────────────────────────────────────────────
@@ -7080,9 +7162,7 @@ mod tests {
         assert_eq!(r.status, ResultStatus::Ok, "create resource: {r:?}");
 
         // Destroy it (this should capture a snapshot)
-        let r = exec
-            .execute("DESTROY RESOURCE 'postgres' 'db1'")
-            .await;
+        let r = exec.execute("DESTROY RESOURCE 'postgres' 'db1'").await;
         assert_eq!(r.status, ResultStatus::Ok, "destroy resource: {r:?}");
 
         // Verify it's gone
@@ -7095,7 +7175,10 @@ mod tests {
         assert_eq!(result["rolled_back"], true);
         assert_eq!(result["target_type"], "resource");
         assert_eq!(result["target_id"], "db1");
-        assert!(result["note"].as_str().unwrap().contains("Registry state restored"));
+        assert!(result["note"]
+            .as_str()
+            .unwrap()
+            .contains("Registry state restored"));
 
         // Verify it's back
         let row = ctx.registry.get_resource("db1").unwrap();
@@ -7120,9 +7203,7 @@ mod tests {
         assert_eq!(r.status, ResultStatus::Ok, "set tag: {r:?}");
 
         // Destroy it (this should capture a snapshot with the tag)
-        let r = exec
-            .execute("DESTROY RESOURCE 'postgres' 'db2'")
-            .await;
+        let r = exec.execute("DESTROY RESOURCE 'postgres' 'db2'").await;
         assert_eq!(r.status, ResultStatus::Ok, "destroy: {r:?}");
 
         // Rollback by tag
@@ -7155,8 +7236,14 @@ mod tests {
         let exec = Executor::new(&ctx);
 
         // Create two resources
-        exec.execute("CREATE RESOURCE 'postgres' id='r1' status='available' ON PROVIDER 'test-provider'").await;
-        exec.execute("CREATE RESOURCE 'redis' id='r2' status='available' ON PROVIDER 'test-provider'").await;
+        exec.execute(
+            "CREATE RESOURCE 'postgres' id='r1' status='available' ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE RESOURCE 'redis' id='r2' status='available' ON PROVIDER 'test-provider'",
+        )
+        .await;
 
         // Destroy both
         exec.execute("DESTROY RESOURCE 'postgres' 'r1'").await;
@@ -7193,18 +7280,14 @@ mod tests {
         assert_eq!(val["enabled"], true);
 
         // Grant SELECT on microvms
-        let r2 = exec
-            .execute("GRANT SELECT ON MICROVMS TO 'alice'")
-            .await;
+        let r2 = exec.execute("GRANT SELECT ON MICROVMS TO 'alice'").await;
         assert_eq!(r2.status, ResultStatus::Ok, "grant: {r2:?}");
         let grant_val = r2.result.unwrap();
         assert_eq!(grant_val["principal_id"], "alice");
         assert_eq!(grant_val["scope_type"], "global");
 
         // Verify via SHOW GRANTS FOR 'alice'
-        let r3 = exec
-            .execute("SHOW GRANTS FOR 'alice'")
-            .await;
+        let r3 = exec.execute("SHOW GRANTS FOR 'alice'").await;
         assert_eq!(r3.status, ResultStatus::Ok, "show grants: {r3:?}");
         let grants = r3.result.unwrap();
         let grants = grants.as_array().unwrap();
@@ -7232,9 +7315,7 @@ mod tests {
         assert_eq!(grants.as_array().unwrap().len(), 1);
 
         // Revoke
-        let r2 = exec
-            .execute("REVOKE SELECT ON MICROVMS FROM 'bob'")
-            .await;
+        let r2 = exec.execute("REVOKE SELECT ON MICROVMS FROM 'bob'").await;
         assert_eq!(r2.status, ResultStatus::Ok, "revoke: {r2:?}");
         let revoke_val = r2.result.unwrap();
         assert_eq!(revoke_val["revoked_count"], 1);
@@ -7256,8 +7337,16 @@ mod tests {
 
         ctx.registry
             .insert_provider(
-                "test-provider", "kvm", "firecracker", "healthy", true,
-                Some("localhost"), None, "env:X", None, None,
+                "test-provider",
+                "kvm",
+                "firecracker",
+                "healthy",
+                true,
+                Some("localhost"),
+                None,
+                "env:X",
+                None,
+                None,
             )
             .unwrap();
 
@@ -7293,7 +7382,11 @@ mod tests {
                  ON PROVIDER 'test-provider'",
             )
             .await;
-        assert_eq!(r2.status, ResultStatus::Error, "create should be denied: {r2:?}");
+        assert_eq!(
+            r2.status,
+            ResultStatus::Error,
+            "create should be denied: {r2:?}"
+        );
         assert!(
             r2.notifications
                 .iter()
@@ -7344,10 +7437,7 @@ mod tests {
         assert_eq!(r.status, ResultStatus::Ok, "select query_history: {r:?}");
         let arr = r.result.unwrap();
         let rows = arr.as_array().unwrap();
-        assert!(
-            !rows.is_empty(),
-            "expected at least one query_history row"
-        );
+        assert!(!rows.is_empty(), "expected at least one query_history row");
         assert!(rows[0].get("verb").is_some());
         assert!(rows[0].get("executed_at").is_some());
     }
@@ -7442,7 +7532,11 @@ mod tests {
 
         // Should have a CAP_001 notification
         let has_cap_note = r.notifications.iter().any(|n| n.code == "CAP_001");
-        assert!(has_cap_note, "expected CAP_001 notification: {:?}", r.notifications);
+        assert!(
+            has_cap_note,
+            "expected CAP_001 notification: {:?}",
+            r.notifications
+        );
     }
 
     #[tokio::test]
@@ -7488,10 +7582,7 @@ mod tests {
         let result = r.result.unwrap();
         let rows = result.as_array().unwrap();
         // Mock driver has many capabilities
-        assert!(
-            !rows.is_empty(),
-            "expected capability rows, got none"
-        );
+        assert!(!rows.is_empty(), "expected capability rows, got none");
         // Each row should have provider_id, capability, supported
         let first = &rows[0];
         assert!(first.get("provider_id").is_some());
@@ -7580,11 +7671,17 @@ mod tests {
         // Verify outputs have realistic FQDN
         let outputs = &result["outputs"];
         assert!(
-            outputs["fqdn"].as_str().unwrap().contains("postgres.database.azure.com"),
+            outputs["fqdn"]
+                .as_str()
+                .unwrap()
+                .contains("postgres.database.azure.com"),
             "expected realistic FQDN, got: {outputs}"
         );
         assert_eq!(outputs["port"], 5432);
-        assert!(outputs["connection_string"].as_str().unwrap().contains("postgresql://"));
+        assert!(outputs["connection_string"]
+            .as_str()
+            .unwrap()
+            .contains("postgresql://"));
     }
 
     #[tokio::test]
@@ -7592,10 +7689,8 @@ mod tests {
         let ctx = setup_simulate();
         let exec = Executor::new(&ctx);
 
-        exec.execute(
-            "CREATE RESOURCE 'postgres' id='simdb' name='simdb' ON PROVIDER 'simulate'",
-        )
-        .await;
+        exec.execute("CREATE RESOURCE 'postgres' id='simdb' name='simdb' ON PROVIDER 'simulate'")
+            .await;
 
         // Use SELECT FROM resources to verify status
         let r = exec.execute("SELECT * FROM resources").await;
@@ -7647,9 +7742,8 @@ mod tests {
         ];
 
         for (rtype, id) in &types {
-            let stmt = format!(
-                "CREATE RESOURCE '{rtype}' id='{id}' name='{id}' ON PROVIDER 'simulate'"
-            );
+            let stmt =
+                format!("CREATE RESOURCE '{rtype}' id='{id}' name='{id}' ON PROVIDER 'simulate'");
             let r = exec.execute(&stmt).await;
             assert_eq!(
                 r.status,
@@ -7670,9 +7764,7 @@ mod tests {
 
         // Create a resource
         let r = exec
-            .execute(
-                "CREATE RESOURCE 'postgres' id='delsim' name='delsim' ON PROVIDER 'simulate'",
-            )
+            .execute("CREATE RESOURCE 'postgres' id='delsim' name='delsim' ON PROVIDER 'simulate'")
             .await;
         assert_eq!(r.status, ResultStatus::Ok);
 
@@ -7728,7 +7820,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_microvm_with_ssh_key() {
-        std::env::set_var("KVMQL_TEST_SSH_KEY", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey test@kvmql");
+        std::env::set_var(
+            "KVMQL_TEST_SSH_KEY",
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey test@kvmql",
+        );
         let ctx = setup_simulate();
         let exec = Executor::new(&ctx);
 
@@ -7738,7 +7833,11 @@ mod tests {
                  image='img-1' ssh_key='env:KVMQL_TEST_SSH_KEY' ON PROVIDER 'simulate'",
             )
             .await;
-        assert_eq!(r.status, ResultStatus::Ok, "create with ssh_key failed: {r:?}");
+        assert_eq!(
+            r.status,
+            ResultStatus::Ok,
+            "create with ssh_key failed: {r:?}"
+        );
 
         let result = r.result.unwrap();
         assert_eq!(result["id"], "ssh-vm");
@@ -7756,7 +7855,11 @@ mod tests {
                  image='img-1' admin_user='deployer' ON PROVIDER 'simulate'",
             )
             .await;
-        assert_eq!(r.status, ResultStatus::Ok, "create with admin_user failed: {r:?}");
+        assert_eq!(
+            r.status,
+            ResultStatus::Ok,
+            "create with admin_user failed: {r:?}"
+        );
 
         let result = r.result.unwrap();
         assert_eq!(result["id"], "admin-vm");
@@ -7776,7 +7879,11 @@ mod tests {
                  image='img-1' ssh_key='env:KVMQL_TEST_SSH_RESOLVE' ON PROVIDER 'simulate'",
             )
             .await;
-        assert_eq!(r.status, ResultStatus::Ok, "credential resolution failed: {r:?}");
+        assert_eq!(
+            r.status,
+            ResultStatus::Ok,
+            "credential resolution failed: {r:?}"
+        );
 
         let result = r.result.unwrap();
         assert_eq!(result["id"], "resolve-vm");
@@ -7794,11 +7901,17 @@ mod tests {
                  image='img-1' password='insecure123' ON PROVIDER 'simulate'",
             )
             .await;
-        assert_eq!(r.status, ResultStatus::Ok, "create with password failed: {r:?}");
+        assert_eq!(
+            r.status,
+            ResultStatus::Ok,
+            "create with password failed: {r:?}"
+        );
 
         // Should have a WARN notification about password usage
         assert!(
-            r.notifications.iter().any(|n| n.code == "SEC_001" && n.level == "WARN"),
+            r.notifications
+                .iter()
+                .any(|n| n.code == "SEC_001" && n.level == "WARN"),
             "expected SEC_001 warning for password auth, got: {:?}",
             r.notifications
         );
@@ -7822,7 +7935,11 @@ mod tests {
             path.to_str().unwrap()
         );
         let r = exec.execute(&stmt).await;
-        assert_eq!(r.status, ResultStatus::Ok, "create with cloud_init file ref failed: {r:?}");
+        assert_eq!(
+            r.status,
+            ResultStatus::Ok,
+            "create with cloud_init file ref failed: {r:?}"
+        );
 
         let result = r.result.unwrap();
         assert_eq!(result["id"], "ci-vm");
@@ -7842,7 +7959,11 @@ mod tests {
                  image='img-1' ssh_key='generate' ON PROVIDER 'simulate'",
             )
             .await;
-        assert_eq!(r.status, ResultStatus::Ok, "create with ssh_key=generate failed: {r:?}");
+        assert_eq!(
+            r.status,
+            ResultStatus::Ok,
+            "create with ssh_key=generate failed: {r:?}"
+        );
 
         let result = r.result.unwrap();
         assert_eq!(result["id"], "gen-vm");
@@ -7872,7 +7993,7 @@ mod tests {
     #[tokio::test]
     async fn test_if_not_exists_skips_duplicate_resource() {
         let ctx = setup_with_provider();
-        ctx.simulate.then(|| ()); // Not needed, just using registry directly
+        ctx.simulate.then_some(()); // Not needed, just using registry directly
         let exec = Executor::new(&ctx);
 
         // First create succeeds
@@ -7919,7 +8040,11 @@ mod tests {
             )
             .await;
         // The engine wraps single-statement errors as Warn with error notifications
-        assert_ne!(r2.status, ResultStatus::Ok, "duplicate should not be Ok: {r2:?}");
+        assert_ne!(
+            r2.status,
+            ResultStatus::Ok,
+            "duplicate should not be Ok: {r2:?}"
+        );
         assert!(
             r2.notifications.iter().any(|n| n.level == "ERROR"),
             "should have error notification: {r2:?}"

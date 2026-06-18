@@ -22,9 +22,7 @@ impl HashicorpVaultResolver {
             CredentialError::VaultAuthFailed("VAULT_ADDR environment variable not set".to_string())
         })?;
         let token = std::env::var("VAULT_TOKEN").map_err(|_| {
-            CredentialError::VaultAuthFailed(
-                "VAULT_TOKEN environment variable not set".to_string(),
-            )
+            CredentialError::VaultAuthFailed("VAULT_TOKEN environment variable not set".to_string())
         })?;
         Ok(Self { address, token })
     }
@@ -182,7 +180,10 @@ mod tests {
         let result = resolver.resolve("secret", "test", None);
         assert!(result.is_err());
         assert!(
-            matches!(result.unwrap_err(), CredentialError::VaultConnectionFailed(_)),
+            matches!(
+                result.unwrap_err(),
+                CredentialError::VaultConnectionFailed(_)
+            ),
             "expected VaultConnectionFailed"
         );
     }

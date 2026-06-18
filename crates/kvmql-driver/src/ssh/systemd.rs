@@ -201,7 +201,8 @@ impl<'a> SystemdProvisioner<'a> {
                 "systemctl list-units failed (exit {}): {}",
                 out.exit_code,
                 out.stderr.trim()
-            ).into());
+            )
+            .into());
         }
 
         let mut rows = Vec::new();
@@ -235,9 +236,7 @@ impl<'a> SystemdProvisioner<'a> {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        Ok(self.client
-            .exec_checked(&cmd)
-            .map_err(|e| e.to_string())?)
+        Ok(self.client.exec_checked(&cmd).map_err(|e| e.to_string())?)
     }
 
     fn is_enabled(&self, unit: &str) -> bool {

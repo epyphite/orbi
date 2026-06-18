@@ -83,7 +83,7 @@ impl Parser {
 
     fn check(&self, token: &Token) -> bool {
         self.peek()
-            .map_or(false, |t| std::mem::discriminant(t) == std::mem::discriminant(token))
+            .is_some_and(|t| std::mem::discriminant(t) == std::mem::discriminant(token))
     }
 
     fn eat(&mut self, token: &Token) -> bool {
@@ -305,9 +305,10 @@ impl Parser {
                 self.advance();
                 self.parse_alter_resource().map(Statement::AlterResource)
             }
-            _ => Err(self.error_expected(
-                "MICROVM, VOLUME, PROVIDER, CLUSTER, or RESOURCE after ALTER",
-            )),
+            _ => {
+                Err(self
+                    .error_expected("MICROVM, VOLUME, PROVIDER, CLUSTER, or RESOURCE after ALTER"))
+            }
         }
     }
 
@@ -349,7 +350,10 @@ impl Parser {
             Some(Token::Provider) => {
                 self.advance();
                 let params = self.parse_param_list()?;
-                Ok(Statement::AddProvider(AddProviderStmt { if_not_exists, params }))
+                Ok(Statement::AddProvider(AddProviderStmt {
+                    if_not_exists,
+                    params,
+                }))
             }
             Some(Token::Cluster) => {
                 self.advance();
@@ -360,11 +364,12 @@ impl Parser {
             Some(Token::Principal) => {
                 self.advance();
                 let params = self.parse_param_list()?;
-                Ok(Statement::AddPrincipal(AddPrincipalStmt { if_not_exists, params }))
+                Ok(Statement::AddPrincipal(AddPrincipalStmt {
+                    if_not_exists,
+                    params,
+                }))
             }
-            _ => Err(self.error_expected(
-                "PROVIDER, CLUSTER, or PRINCIPAL after ADD",
-            )),
+            _ => Err(self.error_expected("PROVIDER, CLUSTER, or PRINCIPAL after ADD")),
         }
     }
 }
@@ -488,7 +493,11 @@ impl Parser {
         } else {
             None
         };
-        Ok(CreateVolumeStmt { if_not_exists: false, params, on })
+        Ok(CreateVolumeStmt {
+            if_not_exists: false,
+            params,
+            on,
+        })
     }
 
     fn parse_require_clause(&mut self) -> Result<RequireClause, ParseError> {
@@ -564,17 +573,26 @@ impl Parser {
                 self.advance();
                 let id = self.expect_id_expr()?;
                 let force = self.eat(&Token::Force);
-                Ok(Statement::Destroy(DestroyStmt { target: DestroyTarget::Microvm, id, force }))
+                Ok(Statement::Destroy(DestroyStmt {
+                    target: DestroyTarget::Microvm,
+                    id,
+                    force,
+                }))
             }
             Some(Token::Volume) => {
                 self.advance();
                 let id = self.expect_id_expr()?;
                 let force = self.eat(&Token::Force);
-                Ok(Statement::Destroy(DestroyStmt { target: DestroyTarget::Volume, id, force }))
+                Ok(Statement::Destroy(DestroyStmt {
+                    target: DestroyTarget::Volume,
+                    id,
+                    force,
+                }))
             }
             Some(Token::Resource) => {
                 self.advance();
-                self.parse_destroy_resource().map(Statement::DestroyResource)
+                self.parse_destroy_resource()
+                    .map(Statement::DestroyResource)
             }
             _ => Err(self.error_expected("MICROVM, VOLUME, or RESOURCE after DESTROY")),
         }
@@ -592,7 +610,12 @@ impl Parser {
         } else {
             None
         };
-        Ok(CreateResourceStmt { if_not_exists: false, resource_type, params, on })
+        Ok(CreateResourceStmt {
+            if_not_exists: false,
+            resource_type,
+            params,
+            on,
+        })
     }
 
     fn parse_alter_resource(&mut self) -> Result<AlterResourceStmt, ParseError> {
@@ -600,14 +623,22 @@ impl Parser {
         let id = self.expect_string()?;
         self.expect(&Token::Set)?;
         let set_items = self.parse_set_list()?;
-        Ok(AlterResourceStmt { resource_type, id, set_items })
+        Ok(AlterResourceStmt {
+            resource_type,
+            id,
+            set_items,
+        })
     }
 
     fn parse_destroy_resource(&mut self) -> Result<DestroyResourceStmt, ParseError> {
         let resource_type = self.expect_string()?;
         let id = self.expect_string()?;
         let force = self.eat(&Token::Force);
-        Ok(DestroyResourceStmt { resource_type, id, force })
+        Ok(DestroyResourceStmt {
+            resource_type,
+            id,
+            force,
+        })
     }
 }
 
@@ -937,7 +968,11 @@ impl Parser {
             }
         }
         self.expect(&Token::RBracket)?;
-        Ok(AddClusterStmt { if_not_exists: false, name, members })
+        Ok(AddClusterStmt {
+            if_not_exists: false,
+            name,
+            members,
+        })
     }
 }
 
@@ -1022,17 +1057,25 @@ impl Parser {
                 // Handle noun identifiers (may be Ident or keyword tokens)
                 if let Some(name) = self.peek_ident_like() {
                     match name.to_lowercase().as_str() {
-                        "microvms" => { self.advance(); Ok(GrantScope::Microvms) }
-                        "volumes" => { self.advance(); Ok(GrantScope::Volumes) }
-                        "images" => { self.advance(); Ok(GrantScope::Images) }
-                        _ => Err(self.error_expected(
-                            "CLUSTER, PROVIDER, microvms, volumes, or images",
-                        )),
+                        "microvms" => {
+                            self.advance();
+                            Ok(GrantScope::Microvms)
+                        }
+                        "volumes" => {
+                            self.advance();
+                            Ok(GrantScope::Volumes)
+                        }
+                        "images" => {
+                            self.advance();
+                            Ok(GrantScope::Images)
+                        }
+                        _ => {
+                            Err(self
+                                .error_expected("CLUSTER, PROVIDER, microvms, volumes, or images"))
+                        }
                     }
                 } else {
-                    Err(self.error_expected(
-                        "CLUSTER, PROVIDER, microvms, volumes, or images",
-                    ))
+                    Err(self.error_expected("CLUSTER, PROVIDER, microvms, volumes, or images"))
                 }
             }
         }
@@ -1049,7 +1092,10 @@ impl Parser {
             self.advance();
             self.expect(&Token::Eq)?;
             let value = self.parse_value()?;
-            return Ok(SetStmt { key: format!("@{name}"), value });
+            return Ok(SetStmt {
+                key: format!("@{name}"),
+                value,
+            });
         }
         let key = self.expect_ident()?;
         self.expect(&Token::Eq)?;
@@ -1170,8 +1216,8 @@ impl Parser {
     fn parse_select_source(&mut self) -> Result<SelectSource, ParseError> {
         // Look-ahead: if we see an identifier-like token immediately followed
         // by `(`, it's a table-valued function. Otherwise parse a noun.
-        let is_function = self.peek_ident_like().is_some()
-            && self.peek_at(1) == Some(&Token::LParen);
+        let is_function =
+            self.peek_ident_like().is_some() && self.peek_at(1) == Some(&Token::LParen);
 
         if !is_function {
             return self.parse_noun().map(SelectSource::Noun);
@@ -1409,9 +1455,7 @@ impl Parser {
                 return Ok(ComparisonOp::NotIn);
             }
             _ => {
-                return Err(
-                    self.error_expected("comparison operator (=, !=, >, <, IN, LIKE, ...)")
-                );
+                return Err(self.error_expected("comparison operator (=, !=, >, <, IN, LIKE, ...)"));
             }
         };
         self.advance();

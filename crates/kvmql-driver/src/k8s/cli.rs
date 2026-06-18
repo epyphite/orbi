@@ -11,7 +11,9 @@ use std::process::{Command, Stdio};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KubectlError {
-    #[error("kubectl CLI not found in PATH -- install from https://kubernetes.io/docs/tasks/tools/")]
+    #[error(
+        "kubectl CLI not found in PATH -- install from https://kubernetes.io/docs/tasks/tools/"
+    )]
     NotInstalled,
     #[error("kubectl command failed: {0}")]
     CommandFailed(String),
@@ -168,11 +170,7 @@ impl KubectlCli {
     /// - `Some("*")` or `Some("all")` → `--all-namespaces`
     /// - `Some(ns)` → `-n <ns>`
     /// - `None` → `--all-namespaces` (the default for cluster-wide queries)
-    pub fn get_list(
-        &self,
-        kind: &str,
-        namespace: Option<&str>,
-    ) -> Result<Value, KubectlError> {
+    pub fn get_list(&self, kind: &str, namespace: Option<&str>) -> Result<Value, KubectlError> {
         let mut args = vec!["get", kind, "-o", "json"];
         match namespace {
             Some(ns) if ns == "*" || ns == "all" => args.push("--all-namespaces"),

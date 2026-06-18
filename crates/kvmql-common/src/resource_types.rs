@@ -15,7 +15,13 @@ pub const RESOURCE_TYPES: &[ResourceTypeDef] = &[
         name: "postgres",
         description: "PostgreSQL Flexible Server",
         required_params: &["id", "version"],
-        optional_params: &["sku", "storage_gb", "backup_retention_days", "geo_redundant_backup", "high_availability"],
+        optional_params: &[
+            "sku",
+            "storage_gb",
+            "backup_retention_days",
+            "geo_redundant_backup",
+            "high_availability",
+        ],
     },
     ResourceTypeDef {
         name: "redis",
@@ -27,7 +33,12 @@ pub const RESOURCE_TYPES: &[ResourceTypeDef] = &[
         name: "aks",
         description: "Azure Kubernetes Service",
         required_params: &["id", "node_count"],
-        optional_params: &["vm_size", "kubernetes_version", "network_plugin", "dns_prefix"],
+        optional_params: &[
+            "vm_size",
+            "kubernetes_version",
+            "network_plugin",
+            "dns_prefix",
+        ],
     },
     ResourceTypeDef {
         name: "storage_account",
@@ -87,13 +98,25 @@ pub const RESOURCE_TYPES: &[ResourceTypeDef] = &[
         name: "nsg_rule",
         description: "Network Security Group Rule",
         required_params: &["id", "nsg", "priority"],
-        optional_params: &["direction", "access", "protocol", "source_address", "destination_port", "source_port", "destination_address"],
+        optional_params: &[
+            "direction",
+            "access",
+            "protocol",
+            "source_address",
+            "destination_port",
+            "source_port",
+            "destination_address",
+        ],
     },
     ResourceTypeDef {
         name: "vnet_peering",
         description: "VNet Peering",
         required_params: &["id", "vnet", "remote_vnet"],
-        optional_params: &["allow_forwarded_traffic", "allow_gateway_transit", "use_remote_gateways"],
+        optional_params: &[
+            "allow_forwarded_traffic",
+            "allow_gateway_transit",
+            "use_remote_gateways",
+        ],
     },
     ResourceTypeDef {
         name: "pg_database",
@@ -111,8 +134,20 @@ pub const RESOURCE_TYPES: &[ResourceTypeDef] = &[
     ResourceTypeDef {
         name: "rds_postgres",
         description: "AWS RDS PostgreSQL",
-        required_params: &["id", "instance_class", "engine_version", "master_username", "master_password", "storage_gb"],
-        optional_params: &["multi_az", "backup_retention", "vpc_security_group_ids", "db_subnet_group"],
+        required_params: &[
+            "id",
+            "instance_class",
+            "engine_version",
+            "master_username",
+            "master_password",
+            "storage_gb",
+        ],
+        optional_params: &[
+            "multi_az",
+            "backup_retention",
+            "vpc_security_group_ids",
+            "db_subnet_group",
+        ],
     },
     ResourceTypeDef {
         name: "vpc",

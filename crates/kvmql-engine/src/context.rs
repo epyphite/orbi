@@ -64,18 +64,15 @@ impl EngineContext {
         }
 
         // Insert principal (ignore AlreadyExists).
-        let _ = self.registry.insert_principal(
-            "admin",
-            "user",
-            "env:ORBI_ADMIN_TOKEN",
-            true,
-        );
+        let _ = self
+            .registry
+            .insert_principal("admin", "user", "env:ORBI_ADMIN_TOKEN", true);
 
         // Insert a global grant covering all verbs.
         let all_verbs = serde_json::json!([
-            "SELECT", "CREATE", "ALTER", "DESTROY", "PAUSE", "RESUME",
-            "SNAPSHOT", "RESTORE", "ATTACH", "DETACH", "RESIZE", "WATCH",
-            "IMPORT", "PUBLISH", "ADD", "REMOVE", "GRANT", "REVOKE", "SHOW", "SET"
+            "SELECT", "CREATE", "ALTER", "DESTROY", "PAUSE", "RESUME", "SNAPSHOT", "RESTORE",
+            "ATTACH", "DETACH", "RESIZE", "WATCH", "IMPORT", "PUBLISH", "ADD", "REMOVE", "GRANT",
+            "REVOKE", "SHOW", "SET"
         ]);
         let _ = self.registry.insert_grant(
             "grant-admin-global",

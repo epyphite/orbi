@@ -85,16 +85,11 @@ pub struct OrderItem {
     pub direction: SortDirection,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum SortDirection {
+    #[default]
     Asc,
     Desc,
-}
-
-impl Default for SortDirection {
-    fn default() -> Self {
-        Self::Asc
-    }
 }
 
 // ── Nouns ──────────────────────────────────────────────────────────

@@ -52,15 +52,27 @@ fn build_mock_manifest() -> CapabilityManifest {
     use Capability::*;
 
     let supported = [
-        Create, Destroy, Pause, Resume, Snapshot, Restore,
-        AlterCpuLive, AlterMemoryLive, WatchMetric,
-        CustomKernel, Vsock, Balloon, HotplugVolume, HotplugNetwork,
-        VolumeResizeLive, ImageImport, ImagePublish, NestedVirt,
+        Create,
+        Destroy,
+        Pause,
+        Resume,
+        Snapshot,
+        Restore,
+        AlterCpuLive,
+        AlterMemoryLive,
+        WatchMetric,
+        CustomKernel,
+        Vsock,
+        Balloon,
+        HotplugVolume,
+        HotplugNetwork,
+        VolumeResizeLive,
+        ImageImport,
+        ImagePublish,
+        NestedVirt,
     ];
 
-    let unsupported = [
-        Placement, LiveMigration, GpuPassthrough, VolumeEncrypt,
-    ];
+    let unsupported = [Placement, LiveMigration, GpuPassthrough, VolumeEncrypt];
 
     let mut capabilities = HashMap::new();
 
@@ -277,11 +289,7 @@ impl Driver for MockDriver {
             .cloned()
             .ok_or_else(|| DriverError::NotFound(format!("snapshot from source '{source}'")))?;
 
-        let vm_id = if state.vms.contains_key(id) {
-            id.to_string()
-        } else {
-            id.to_string()
-        };
+        let vm_id = id.to_string();
 
         let vm = MicroVm {
             id: vm_id.clone(),
@@ -798,10 +806,7 @@ mod tests {
         let vol = d.create_volume(vol_params()).await.unwrap();
         d.attach_volume(&vol.id, &vm.id, None).await.unwrap();
 
-        let err = d
-            .attach_volume(&vol.id, &vm.id, None)
-            .await
-            .unwrap_err();
+        let err = d.attach_volume(&vol.id, &vm.id, None).await.unwrap_err();
         assert!(matches!(err, DriverError::InvalidState(_)));
     }
 

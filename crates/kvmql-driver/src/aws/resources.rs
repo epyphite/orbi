@@ -5,6 +5,9 @@ use tracing::{debug, error};
 
 use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
 
+/// A named collector function used during resource discovery.
+type DiscoverCollector = (&'static str, fn(&AwsResourceProvisioner) -> Vec<Value>);
+
 /// AWS resource provisioner that maps KVMQL resource types to `aws` CLI commands.
 ///
 /// Uses `std::process::Command` with individual arguments (never shell
@@ -28,7 +31,11 @@ impl AwsResourceProvisioner {
 
     /// Provision a managed resource. Dispatches to the appropriate `aws` command
     /// based on `resource_type`.
-    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub fn create(
+        &self,
+        resource_type: &str,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "rds_postgres" => self.create_rds_postgres(params),
             "vpc" => self.create_vpc(params),
@@ -70,7 +77,12 @@ impl AwsResourceProvisioner {
     }
 
     /// Delete a sub-resource that requires extra context (e.g. sg_rule needs group_id).
-    pub fn delete_with_params(&self, resource_type: &str, _id: &str, params: &Value) -> Result<(), ProvisionError> {
+    pub fn delete_with_params(
+        &self,
+        resource_type: &str,
+        _id: &str,
+        params: &Value,
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "sg_rule" => {
                 let group_id = param_str(params, "security_group_id")?;
@@ -78,11 +90,16 @@ impl AwsResourceProvisioner {
                 let port = param_str(params, "port")?;
                 let cidr = param_str(params, "cidr")?;
                 self.run_aws(&[
-                    "ec2", "revoke-security-group-ingress",
-                    "--group-id", &group_id,
-                    "--protocol", &protocol,
-                    "--port", &port,
-                    "--cidr", &cidr,
+                    "ec2",
+                    "revoke-security-group-ingress",
+                    "--group-id",
+                    &group_id,
+                    "--protocol",
+                    &protocol,
+                    "--port",
+                    &port,
+                    "--cidr",
+                    &cidr,
                 ])?;
                 Ok(())
             }
@@ -93,7 +110,11 @@ impl AwsResourceProvisioner {
     // ── Build args (for testing without execution) ───────────────────
 
     /// Build the `aws` argument list that `create()` would use, WITHOUT executing.
-    pub fn build_create_args(&self, resource_type: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    pub fn build_create_args(
+        &self,
+        resource_type: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let raw = match resource_type {
             "rds_postgres" => self.build_rds_postgres_args(params)?,
             "vpc" => self.build_vpc_args(params)?,
@@ -106,20 +127,30 @@ impl AwsResourceProvisioner {
     }
 
     /// Build the `aws` argument list that `delete()` would use, WITHOUT executing.
-    pub fn build_delete_args(&self, resource_type: &str, id: &str) -> Result<Vec<String>, ProvisionError> {
+    pub fn build_delete_args(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Vec<String>, ProvisionError> {
         let base: Vec<&str> = match resource_type {
             "rds_postgres" => vec![
-                "rds", "delete-db-instance",
-                "--db-instance-identifier", id,
+                "rds",
+                "delete-db-instance",
+                "--db-instance-identifier",
+                id,
                 "--skip-final-snapshot",
             ],
             "vpc" => vec!["ec2", "delete-vpc", "--vpc-id", id],
             "aws_subnet" => vec!["ec2", "delete-subnet", "--subnet-id", id],
             "security_group" => vec!["ec2", "delete-security-group", "--group-id", id],
             "sg_rule" => {
-                return Err("sg_rule deletion requires params; use build_delete_args_with_params()".into());
+                return Err(
+                    "sg_rule deletion requires params; use build_delete_args_with_params()".into(),
+                );
             }
-            other => return Err(format!("unsupported AWS resource type for delete: {other}").into()),
+            other => {
+                return Err(format!("unsupported AWS resource type for delete: {other}").into())
+            }
         };
         Ok(self.build_args(&base))
     }
@@ -194,7 +225,7 @@ impl AwsResourceProvisioner {
     pub fn discover(&self) -> Result<Vec<Value>, ProvisionError> {
         let mut resources: Vec<Value> = Vec::new();
 
-        let collectors: &[(&str, fn(&Self) -> Vec<Value>)] = &[
+        let collectors: &[DiscoverCollector] = &[
             ("ec2", Self::discover_ec2),
             ("rds_postgres", Self::discover_rds_postgres),
             ("vpc", Self::discover_vpcs),
@@ -225,7 +256,8 @@ impl AwsResourceProvisioner {
             Ok(v) => {
                 // Log how many top-level items were found
                 let count = match &v {
-                    Value::Object(obj) => obj.values()
+                    Value::Object(obj) => obj
+                        .values()
                         .filter_map(|v| v.as_array())
                         .map(|a| a.len())
                         .next()
@@ -427,7 +459,8 @@ impl AwsResourceProvisioner {
     }
 
     fn discover_security_groups(&self) -> Vec<Value> {
-        let output = match self.discover_run("security_group", &["ec2", "describe-security-groups"]) {
+        let output = match self.discover_run("security_group", &["ec2", "describe-security-groups"])
+        {
             Ok(v) => v,
             Err(diag) => return diag,
         };
@@ -635,9 +668,12 @@ impl AwsResourceProvisioner {
         // Tag the VPC with its name
         if let (Some(vid), Some(name)) = (vpc_id, params.get("id").and_then(|v| v.as_str())) {
             let _ = self.run_aws(&[
-                "ec2", "create-tags",
-                "--resources", vid,
-                "--tags", &format!("Key=Name,Value={name}"),
+                "ec2",
+                "create-tags",
+                "--resources",
+                vid,
+                "--tags",
+                &format!("Key=Name,Value={name}"),
             ]);
         }
 
@@ -736,7 +772,10 @@ impl AwsResourceProvisioner {
             args.push("--backup-retention-period".into());
             args.push(json_val_to_string(v));
         }
-        if let Some(v) = params.get("vpc_security_group_ids").and_then(|v| v.as_str()) {
+        if let Some(v) = params
+            .get("vpc_security_group_ids")
+            .and_then(|v| v.as_str())
+        {
             args.push("--vpc-security-group-ids".into());
             args.push(v.into());
         }
@@ -1078,7 +1117,9 @@ mod tests {
     fn test_delete_unknown_type() {
         let p = AwsResourceProvisioner::new(None, None);
         let err = p.build_delete_args("not_a_thing", "x").unwrap_err();
-        assert!(err.to_string().contains("unsupported AWS resource type for delete"));
+        assert!(err
+            .to_string()
+            .contains("unsupported AWS resource type for delete"));
     }
 
     // ── Discovery parsing tests ─────────────────────────────────────
@@ -1166,7 +1207,10 @@ mod tests {
         assert_eq!(r["config"]["instance_class"], "db.r6g.large");
         assert_eq!(r["config"]["allocated_storage"], 100);
         assert_eq!(r["config"]["multi_az"], true);
-        assert_eq!(r["outputs"]["endpoint"], "prod-db.abc.us-east-1.rds.amazonaws.com");
+        assert_eq!(
+            r["outputs"]["endpoint"],
+            "prod-db.abc.us-east-1.rds.amazonaws.com"
+        );
     }
 
     #[test]
@@ -1249,7 +1293,10 @@ mod tests {
         assert_eq!(results[0]["id"], "my-app-assets");
         assert_eq!(results[0]["resource_type"], "s3_bucket");
         assert_eq!(results[0]["name"], "my-app-assets");
-        assert_eq!(results[0]["outputs"]["creation_date"], "2024-01-15T10:30:00Z");
+        assert_eq!(
+            results[0]["outputs"]["creation_date"],
+            "2024-01-15T10:30:00Z"
+        );
         assert_eq!(results[1]["id"], "logs-bucket");
     }
 
@@ -1300,7 +1347,10 @@ mod tests {
                 { "Key": "Name", "Value": "my-resource" }
             ]
         });
-        assert_eq!(extract_name_from_tags(&with_name), Some("my-resource".to_string()));
+        assert_eq!(
+            extract_name_from_tags(&with_name),
+            Some("my-resource".to_string())
+        );
 
         let without_name = serde_json::json!({
             "Tags": [{ "Key": "Env", "Value": "prod" }]

@@ -94,8 +94,8 @@ impl GhCli {
         }
         let mut child = cmd.spawn().map_err(|_| GhError::NotInstalled)?;
         if let Some(mut stdin) = child.stdin.take() {
-            let body = serde_json::to_vec(stdin_json)
-                .map_err(|e| GhError::ParseError(e.to_string()))?;
+            let body =
+                serde_json::to_vec(stdin_json).map_err(|e| GhError::ParseError(e.to_string()))?;
             stdin
                 .write_all(&body)
                 .map_err(|e| GhError::CommandFailed(format!("stdin write: {e}")))?;
@@ -302,8 +302,7 @@ impl GhCli {
 /// We need exactly one base64 encode (workflow file PUT) and don't want to
 /// pull in a base64 crate just for that.
 fn base64_encode(input: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     let mut i = 0;
     while i + 3 <= input.len() {

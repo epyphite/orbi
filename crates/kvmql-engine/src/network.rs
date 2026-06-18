@@ -226,19 +226,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_dns_lookup_localhost() {
-        let rows = NetworkFunctions::dns_lookup("localhost", None).await.unwrap();
-        assert!(!rows.is_empty(), "localhost should resolve to at least one address");
+        let rows = NetworkFunctions::dns_lookup("localhost", None)
+            .await
+            .unwrap();
+        assert!(
+            !rows.is_empty(),
+            "localhost should resolve to at least one address"
+        );
         // localhost typically resolves to 127.0.0.1 or ::1
         let has_loopback = rows.iter().any(|r| {
             let content = r["content"].as_str().unwrap_or("");
             content == "127.0.0.1" || content == "::1"
         });
-        assert!(has_loopback, "localhost should resolve to a loopback address, got: {:?}", rows);
+        assert!(
+            has_loopback,
+            "localhost should resolve to a loopback address, got: {:?}",
+            rows
+        );
     }
 
     #[tokio::test]
     async fn test_dns_lookup_filtered_by_type() {
-        let rows = NetworkFunctions::dns_lookup("localhost", Some("A")).await.unwrap();
+        let rows = NetworkFunctions::dns_lookup("localhost", Some("A"))
+            .await
+            .unwrap();
         // Every row should be type A
         for row in &rows {
             assert_eq!(row["type"].as_str().unwrap(), "A");

@@ -66,14 +66,10 @@ pub fn map_vm(json: &Value, provider_id: &str) -> MicroVm {
     let name = json["name"].as_str().unwrap_or("unknown").to_string();
     let location = json["location"].as_str().unwrap_or("unknown").to_string();
 
-    let power_state = json["powerState"]
-        .as_str()
-        .unwrap_or("unknown");
+    let power_state = json["powerState"].as_str().unwrap_or("unknown");
     let status = map_power_state(power_state).to_string();
 
-    let vm_size = json["hardwareProfile"]["vmSize"]
-        .as_str()
-        .unwrap_or("");
+    let vm_size = json["hardwareProfile"]["vmSize"].as_str().unwrap_or("");
     let (vcpus, memory_mb) = vm_size_to_specs(vm_size);
 
     let image_ref = json["storageProfile"]["imageReference"]["offer"]
@@ -81,10 +77,7 @@ pub fn map_vm(json: &Value, provider_id: &str) -> MicroVm {
         .or_else(|| json["storageProfile"]["imageReference"]["id"].as_str())
         .map(|s| s.to_string());
 
-    let created_at = json["timeCreated"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let created_at = json["timeCreated"].as_str().unwrap_or("").to_string();
 
     let hostname = json["osProfile"]["computerName"]
         .as_str()
@@ -129,9 +122,7 @@ pub fn map_disk(json: &Value, provider_id: &str) -> Volume {
     let name = json["name"].as_str().unwrap_or("unknown").to_string();
     let size_gb = json["diskSizeGb"].as_i64().unwrap_or(0);
 
-    let disk_state = json["diskState"]
-        .as_str()
-        .unwrap_or("Unknown");
+    let disk_state = json["diskState"].as_str().unwrap_or("Unknown");
     let status = match disk_state {
         "Attached" => "attached",
         "Unattached" => "available",
@@ -140,12 +131,10 @@ pub fn map_disk(json: &Value, provider_id: &str) -> Volume {
     }
     .to_string();
 
-    let managed_by = json["managedBy"]
-        .as_str()
-        .map(|s| {
-            // managedBy is a full ARM resource ID; extract the VM name.
-            s.rsplit('/').next().unwrap_or(s).to_string()
-        });
+    let managed_by = json["managedBy"].as_str().map(|s| {
+        // managedBy is a full ARM resource ID; extract the VM name.
+        s.rsplit('/').next().unwrap_or(s).to_string()
+    });
 
     let sku = json["sku"]["name"]
         .as_str()
@@ -157,10 +146,7 @@ pub fn map_disk(json: &Value, provider_id: &str) -> Volume {
         .map(|t| t != "None")
         .unwrap_or(false);
 
-    let created_at = json["timeCreated"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let created_at = json["timeCreated"].as_str().unwrap_or("").to_string();
 
     let labels = json.get("tags").cloned();
 
@@ -192,21 +178,16 @@ pub fn map_snapshot(json: &Value, provider_id: &str) -> Snapshot {
         .split('/')
         .collect::<Vec<&str>>()
         .iter()
-        .rev()
-        .nth(0)
+        .next_back()
         .unwrap_or(&"unknown")
         .to_string();
 
-    let size_mb = json["diskSizeBytes"]
-        .as_i64()
-        .map(|b| b / (1024 * 1024));
+    let size_mb = json["diskSizeBytes"].as_i64().map(|b| b / (1024 * 1024));
 
-    let taken_at = json["timeCreated"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let taken_at = json["timeCreated"].as_str().unwrap_or("").to_string();
 
-    let tag = json.get("tags")
+    let tag = json
+        .get("tags")
         .and_then(|t| t.get("kvmql_tag"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());

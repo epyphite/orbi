@@ -326,10 +326,7 @@ impl SshClient {
         }
         // Both tools print "<hex>  <path>".  Grab the first whitespace-
         // separated token.
-        Ok(stdout
-            .split_whitespace()
-            .next()
-            .map(|h| h.to_string()))
+        Ok(stdout.split_whitespace().next().map(|h| h.to_string()))
     }
 
     /// Parsed `stat` info, or `None` if the file doesn't exist.  Tries the
@@ -386,9 +383,7 @@ impl SshClient {
     /// readlink, or `None` if the path is not a symlink.
     pub fn readlink(&self, remote_path: &str) -> Result<Option<String>, SshError> {
         let q = shell_single_quote(remote_path);
-        let cmd = format!(
-            "if [ -L {q} ]; then readlink {q}; else echo NOTLINK; fi"
-        );
+        let cmd = format!("if [ -L {q} ]; then readlink {q}; else echo NOTLINK; fi");
         let out = self.exec.exec(&cmd)?;
         if out.exit_code != 0 {
             return Err(SshError::CommandFailed {

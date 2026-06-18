@@ -73,7 +73,7 @@ impl FirecrackerClient {
         let json = serde_json::to_string(body)
             .map_err(|e| ClientError::Request(format!("serialization failed: {e}")))?;
         let (status, body) = self.raw_request("PUT", path, Some(&json)).await?;
-        if status >= 200 && status < 300 {
+        if (200..300).contains(&status) {
             Ok(())
         } else {
             Err(ClientError::ApiError { status, body })
@@ -84,7 +84,7 @@ impl FirecrackerClient {
         let json = serde_json::to_string(body)
             .map_err(|e| ClientError::Request(format!("serialization failed: {e}")))?;
         let (status, body) = self.raw_request("PATCH", path, Some(&json)).await?;
-        if status >= 200 && status < 300 {
+        if (200..300).contains(&status) {
             Ok(())
         } else {
             Err(ClientError::ApiError { status, body })
@@ -93,7 +93,7 @@ impl FirecrackerClient {
 
     async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, ClientError> {
         let (status, body) = self.raw_request("GET", path, None).await?;
-        if status >= 200 && status < 300 {
+        if (200..300).contains(&status) {
             serde_json::from_str(&body)
                 .map_err(|e| ClientError::Request(format!("deserialization failed: {e}")))
         } else {
@@ -104,15 +104,14 @@ impl FirecrackerClient {
     // ── High-level operations ──────────────────────────────────────
 
     /// Set the number of vCPUs and memory (in MiB) for the VM.
-    pub async fn set_machine_config(
-        &self,
-        vcpus: i32,
-        mem_mib: i32,
-    ) -> Result<(), ClientError> {
-        self.put("/machine-config", &serde_json::json!({
-            "vcpu_count": vcpus,
-            "mem_size_mib": mem_mib
-        }))
+    pub async fn set_machine_config(&self, vcpus: i32, mem_mib: i32) -> Result<(), ClientError> {
+        self.put(
+            "/machine-config",
+            &serde_json::json!({
+                "vcpu_count": vcpus,
+                "mem_size_mib": mem_mib
+            }),
+        )
         .await
     }
 
@@ -122,10 +121,13 @@ impl FirecrackerClient {
         kernel_path: &str,
         boot_args: &str,
     ) -> Result<(), ClientError> {
-        self.put("/boot-source", &serde_json::json!({
-            "kernel_image_path": kernel_path,
-            "boot_args": boot_args
-        }))
+        self.put(
+            "/boot-source",
+            &serde_json::json!({
+                "kernel_image_path": kernel_path,
+                "boot_args": boot_args
+            }),
+        )
         .await
     }
 
@@ -138,12 +140,15 @@ impl FirecrackerClient {
         read_only: bool,
     ) -> Result<(), ClientError> {
         let endpoint = format!("/drives/{drive_id}");
-        self.put(&endpoint, &serde_json::json!({
-            "drive_id": drive_id,
-            "path_on_host": path,
-            "is_root_device": is_root,
-            "is_read_only": read_only
-        }))
+        self.put(
+            &endpoint,
+            &serde_json::json!({
+                "drive_id": drive_id,
+                "path_on_host": path,
+                "is_root_device": is_root,
+                "is_read_only": read_only
+            }),
+        )
         .await
     }
 
@@ -167,33 +172,45 @@ impl FirecrackerClient {
 
     /// Start the Firecracker instance.
     pub async fn start_instance(&self) -> Result<(), ClientError> {
-        self.put("/actions", &serde_json::json!({
-            "action_type": "InstanceStart"
-        }))
+        self.put(
+            "/actions",
+            &serde_json::json!({
+                "action_type": "InstanceStart"
+            }),
+        )
         .await
     }
 
     /// Send Ctrl+Alt+Del for graceful shutdown.
     pub async fn stop_instance(&self) -> Result<(), ClientError> {
-        self.put("/actions", &serde_json::json!({
-            "action_type": "SendCtrlAltDel"
-        }))
+        self.put(
+            "/actions",
+            &serde_json::json!({
+                "action_type": "SendCtrlAltDel"
+            }),
+        )
         .await
     }
 
     /// Pause the VM (PATCH /vm with state=Paused).
     pub async fn pause_instance(&self) -> Result<(), ClientError> {
-        self.patch("/vm", &serde_json::json!({
-            "state": "Paused"
-        }))
+        self.patch(
+            "/vm",
+            &serde_json::json!({
+                "state": "Paused"
+            }),
+        )
         .await
     }
 
     /// Resume the VM (PATCH /vm with state=Resumed).
     pub async fn resume_instance(&self) -> Result<(), ClientError> {
-        self.patch("/vm", &serde_json::json!({
-            "state": "Resumed"
-        }))
+        self.patch(
+            "/vm",
+            &serde_json::json!({
+                "state": "Resumed"
+            }),
+        )
         .await
     }
 
@@ -203,11 +220,14 @@ impl FirecrackerClient {
         snapshot_path: &str,
         mem_path: &str,
     ) -> Result<(), ClientError> {
-        self.put("/snapshot/create", &serde_json::json!({
-            "snapshot_type": "Full",
-            "snapshot_path": snapshot_path,
-            "mem_file_path": mem_path
-        }))
+        self.put(
+            "/snapshot/create",
+            &serde_json::json!({
+                "snapshot_type": "Full",
+                "snapshot_path": snapshot_path,
+                "mem_file_path": mem_path
+            }),
+        )
         .await
     }
 
@@ -217,13 +237,16 @@ impl FirecrackerClient {
         snapshot_path: &str,
         mem_path: &str,
     ) -> Result<(), ClientError> {
-        self.put("/snapshot/load", &serde_json::json!({
-            "snapshot_path": snapshot_path,
-            "mem_backend": {
-                "backend_path": mem_path,
-                "backend_type": "File"
-            }
-        }))
+        self.put(
+            "/snapshot/load",
+            &serde_json::json!({
+                "snapshot_path": snapshot_path,
+                "mem_backend": {
+                    "backend_path": mem_path,
+                    "backend_type": "File"
+                }
+            }),
+        )
         .await
     }
 

@@ -11,6 +11,12 @@ members = [
     "crates/kvmql-cli",
 ]
 
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+# ParseError is intentionally large for rich diagnostics — boxing
+# would add allocation overhead on every parse call for no user benefit.
+result_large_err = "allow"
+
 [workspace.package]
 version = "0.5.4"
 edition = "2021"
@@ -30,7 +36,7 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "signal"] }
 toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -42,7 +48,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Networking / TLS
 rustls = "0.23"
-rcgen = "0.13"
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"] }
 
 # CLI

@@ -25,7 +25,11 @@ impl OnePasswordResolver {
         which_tool("op")?;
 
         let mut cmd = Command::new("op");
-        cmd.arg("item").arg("get").arg(item).arg("--vault").arg(vault);
+        cmd.arg("item")
+            .arg("get")
+            .arg(item)
+            .arg("--vault")
+            .arg(vault);
 
         match field {
             Some(f) => {
@@ -36,10 +40,12 @@ impl OnePasswordResolver {
             }
         }
 
-        let output = cmd.output().map_err(|e| CredentialError::ExternalToolFailed {
-            tool: "op".to_string(),
-            stderr: e.to_string(),
-        })?;
+        let output = cmd
+            .output()
+            .map_err(|e| CredentialError::ExternalToolFailed {
+                tool: "op".to_string(),
+                stderr: e.to_string(),
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -79,7 +85,8 @@ mod tests {
 
     #[test]
     fn test_parse_ref_with_field() {
-        let (vault, item, field) = OnePasswordResolver::parse_ref("Personal/login#password").unwrap();
+        let (vault, item, field) =
+            OnePasswordResolver::parse_ref("Personal/login#password").unwrap();
         assert_eq!(vault, "Personal");
         assert_eq!(item, "login");
         assert_eq!(field, Some("password"));
@@ -107,11 +114,9 @@ mod tests {
     fn test_op_not_installed() {
         let result = which_tool("kvmql_nonexistent_op_12345");
         assert!(result.is_err());
-        assert!(
-            matches!(
-                result.unwrap_err(),
-                CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_op_12345"
-            ),
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_op_12345"
+        ),);
     }
 }

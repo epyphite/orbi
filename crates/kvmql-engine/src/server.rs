@@ -167,10 +167,7 @@ pub async fn write_frame(
 // ---------------------------------------------------------------------------
 
 /// Handle a single TCP client connection.
-async fn handle_tcp_connection(
-    ctx: Arc<Mutex<EngineContext>>,
-    mut stream: tokio::net::TcpStream,
-) {
+async fn handle_tcp_connection(ctx: Arc<Mutex<EngineContext>>, mut stream: tokio::net::TcpStream) {
     loop {
         // 1. Read a frame
         let frame = match read_frame(&mut stream).await {
@@ -211,10 +208,7 @@ async fn handle_unix_connection(
 
 /// Parse a request frame, execute the statement, and return the serialized
 /// response bytes.
-async fn process_frame(
-    ctx: &Arc<Mutex<EngineContext>>,
-    frame: &[u8],
-) -> Vec<u8> {
+async fn process_frame(ctx: &Arc<Mutex<EngineContext>>, frame: &[u8]) -> Vec<u8> {
     let stmt_str = match parse_request(frame) {
         Ok(s) => s,
         Err(err_json) => return err_json.into_bytes(),
@@ -241,16 +235,15 @@ async fn process_frame(
         }
     };
 
-    serde_json::to_vec(&envelope).unwrap_or_else(|e| {
-        format!(r#"{{"error":"serialization failed: {e}"}}"#).into_bytes()
-    })
+    serde_json::to_vec(&envelope)
+        .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#).into_bytes())
 }
 
 /// Parse a JSON request frame and extract the `statement` field.
 /// On error, returns a JSON error string suitable for sending back.
 fn parse_request(frame: &[u8]) -> Result<String, String> {
-    let v: serde_json::Value = serde_json::from_slice(frame)
-        .map_err(|e| format!(r#"{{"error":"invalid JSON: {e}"}}"#))?;
+    let v: serde_json::Value =
+        serde_json::from_slice(frame).map_err(|e| format!(r#"{{"error":"invalid JSON: {e}"}}"#))?;
     v.get("statement")
         .and_then(|s| s.as_str())
         .map(|s| s.to_owned())
@@ -366,8 +359,7 @@ mod tests {
 
         // Read the response
         let response_bytes = read_frame(&mut stream).await.unwrap().unwrap();
-        let envelope: ResultEnvelope =
-            serde_json::from_slice(&response_bytes).unwrap();
+        let envelope: ResultEnvelope = serde_json::from_slice(&response_bytes).unwrap();
 
         assert_eq!(envelope.status, ResultStatus::Ok);
         assert!(envelope.result.is_some());
@@ -431,8 +423,7 @@ mod tests {
             .await
             .unwrap();
         let resp1 = read_frame(&mut stream).await.unwrap().unwrap();
-        let env1: ResultEnvelope =
-            serde_json::from_slice(&resp1).unwrap();
+        let env1: ResultEnvelope = serde_json::from_slice(&resp1).unwrap();
         assert_eq!(env1.status, ResultStatus::Ok);
 
         // Second request: SHOW PROVIDERS
@@ -441,8 +432,7 @@ mod tests {
             .await
             .unwrap();
         let resp2 = read_frame(&mut stream).await.unwrap().unwrap();
-        let env2: ResultEnvelope =
-            serde_json::from_slice(&resp2).unwrap();
+        let env2: ResultEnvelope = serde_json::from_slice(&resp2).unwrap();
         assert_eq!(env2.status, ResultStatus::Ok);
 
         server_handle.abort();

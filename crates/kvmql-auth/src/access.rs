@@ -1,12 +1,12 @@
-/// KVMQL Access Control — Auth checker (Phase 11)
-///
-/// Evaluates whether a principal's grants permit a requested verb on a
-/// target scope.  The algorithm follows the spec Section 17:
-///
-///   1. Load all grants for the principal.
-///   2. For each grant, check verb, scope type, and scope id.
-///   3. First matching grant → PERMIT.
-///   4. No match → DENY.
+//! KVMQL Access Control — Auth checker (Phase 11)
+//!
+//! Evaluates whether a principal's grants permit a requested verb on a
+//! target scope.  The algorithm follows the spec Section 17:
+//!
+//!   1. Load all grants for the principal.
+//!   2. For each grant, check verb, scope type, and scope id.
+//!   3. First matching grant → PERMIT.
+//!   4. No match → DENY.
 
 /// A parsed grant ready for authorization checks.
 #[derive(Debug, Clone)]
@@ -88,11 +88,7 @@ impl AccessChecker {
 mod tests {
     use super::*;
 
-    fn make_grant(
-        verbs: &[&str],
-        scope_type: &str,
-        scope_id: Option<&str>,
-    ) -> Grant {
+    fn make_grant(verbs: &[&str], scope_type: &str, scope_id: Option<&str>) -> Grant {
         Grant {
             id: "g-test".into(),
             principal_id: "p-test".into(),
@@ -105,11 +101,7 @@ mod tests {
 
     #[test]
     fn test_global_grant_permits_everything() {
-        let grants = vec![make_grant(
-            &["SELECT", "CREATE", "DESTROY"],
-            "global",
-            None,
-        )];
+        let grants = vec![make_grant(&["SELECT", "CREATE", "DESTROY"], "global", None)];
         assert_eq!(
             AccessChecker::check(&grants, "SELECT", Some("cluster"), Some("prod")),
             AuthDecision::Permitted,
@@ -133,11 +125,7 @@ mod tests {
 
     #[test]
     fn test_scope_match() {
-        let grants = vec![make_grant(
-            &["SELECT", "DESTROY"],
-            "cluster",
-            Some("prod"),
-        )];
+        let grants = vec![make_grant(&["SELECT", "DESTROY"], "cluster", Some("prod"))];
         assert_eq!(
             AccessChecker::check(&grants, "DESTROY", Some("cluster"), Some("prod")),
             AuthDecision::Permitted,
@@ -146,11 +134,7 @@ mod tests {
 
     #[test]
     fn test_scope_mismatch() {
-        let grants = vec![make_grant(
-            &["SELECT", "DESTROY"],
-            "cluster",
-            Some("prod"),
-        )];
+        let grants = vec![make_grant(&["SELECT", "DESTROY"], "cluster", Some("prod"))];
         assert_eq!(
             AccessChecker::check(&grants, "DESTROY", Some("cluster"), Some("staging")),
             AuthDecision::Denied {

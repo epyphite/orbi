@@ -83,10 +83,7 @@ pub async fn run_shell(
 
                         loop {
                             let result = executor.execute(&select_stmt).await;
-                            println!(
-                                "--- {} ---",
-                                chrono::Utc::now().format("%H:%M:%S")
-                            );
+                            println!("--- {} ---", chrono::Utc::now().format("%H:%M:%S"));
                             print_result(&result, format, expanded_mode, timing);
 
                             // Sleep, but check for Ctrl+C
@@ -190,9 +187,7 @@ pub fn watch_to_select(stmt: &str) -> String {
 
 /// Case-insensitive prefix strip. Returns the remainder if prefix matches.
 fn strip_prefix_case_insensitive<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    if s.len() >= prefix.len()
-        && s[..prefix.len()].eq_ignore_ascii_case(prefix)
-    {
+    if s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
         Some(&s[prefix.len()..])
     } else {
         None
@@ -222,7 +217,8 @@ mod tests {
 
     #[test]
     fn test_watch_to_select_basic() {
-        let input = "WATCH METRIC cpu_pct, mem_used_mb FROM microvms WHERE tenant = 'acme' INTERVAL 5s;";
+        let input =
+            "WATCH METRIC cpu_pct, mem_used_mb FROM microvms WHERE tenant = 'acme' INTERVAL 5s;";
         let result = watch_to_select(input);
         assert_eq!(
             result,
@@ -253,26 +249,41 @@ mod tests {
 
     #[test]
     fn test_extract_watch_interval_seconds() {
-        assert_eq!(extract_watch_interval("WATCH METRIC * FROM microvms INTERVAL 5s;"), Some(5));
+        assert_eq!(
+            extract_watch_interval("WATCH METRIC * FROM microvms INTERVAL 5s;"),
+            Some(5)
+        );
     }
 
     #[test]
     fn test_extract_watch_interval_minutes() {
-        assert_eq!(extract_watch_interval("WATCH METRIC * FROM microvms INTERVAL 2m;"), Some(120));
+        assert_eq!(
+            extract_watch_interval("WATCH METRIC * FROM microvms INTERVAL 2m;"),
+            Some(120)
+        );
     }
 
     #[test]
     fn test_extract_watch_interval_hours() {
-        assert_eq!(extract_watch_interval("WATCH METRIC * FROM microvms INTERVAL 1h;"), Some(3600));
+        assert_eq!(
+            extract_watch_interval("WATCH METRIC * FROM microvms INTERVAL 1h;"),
+            Some(3600)
+        );
     }
 
     #[test]
     fn test_extract_watch_interval_none() {
-        assert_eq!(extract_watch_interval("WATCH METRIC * FROM microvms;"), None);
+        assert_eq!(
+            extract_watch_interval("WATCH METRIC * FROM microvms;"),
+            None
+        );
     }
 
     #[test]
     fn test_extract_watch_interval_ten_seconds() {
-        assert_eq!(extract_watch_interval("WATCH METRIC * FROM microvms INTERVAL 10s;"), Some(10));
+        assert_eq!(
+            extract_watch_interval("WATCH METRIC * FROM microvms INTERVAL 10s;"),
+            Some(10)
+        );
     }
 }

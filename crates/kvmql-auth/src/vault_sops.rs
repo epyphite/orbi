@@ -30,10 +30,12 @@ impl SopsResolver {
 
         cmd.arg(file_path);
 
-        let output = cmd.output().map_err(|e| CredentialError::ExternalToolFailed {
-            tool: "sops".to_string(),
-            stderr: e.to_string(),
-        })?;
+        let output = cmd
+            .output()
+            .map_err(|e| CredentialError::ExternalToolFailed {
+                tool: "sops".to_string(),
+                stderr: e.to_string(),
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -74,7 +76,10 @@ mod tests {
 
     #[test]
     fn test_dotted_to_extract_single() {
-        assert_eq!(SopsResolver::dotted_to_extract("password"), "[\"password\"]");
+        assert_eq!(
+            SopsResolver::dotted_to_extract("password"),
+            "[\"password\"]"
+        );
     }
 
     #[test]
@@ -111,11 +116,9 @@ mod tests {
     fn test_sops_not_installed() {
         let result = which_tool("kvmql_nonexistent_sops_12345");
         assert!(result.is_err());
-        assert!(
-            matches!(
-                result.unwrap_err(),
-                CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_sops_12345"
-            ),
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_sops_12345"
+        ),);
     }
 }

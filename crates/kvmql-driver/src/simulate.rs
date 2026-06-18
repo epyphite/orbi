@@ -9,6 +9,7 @@ use async_trait::async_trait;
 /// enriches responses with plausible cloud-like metrics and identifiers.
 pub struct SimulationDriver {
     inner: MockDriver,
+    #[allow(dead_code)] // used for future provider-specific simulation behavior
     provider_type: String, // "azure", "aws", "gcp", "kvm"
 }
 

@@ -76,7 +76,8 @@ impl<'a> NginxProvisioner<'a> {
         let ssl_cert = params.get("ssl_certificate").and_then(|v| v.as_str());
         let ssl_key = params.get("ssl_certificate_key").and_then(|v| v.as_str());
 
-        let mut config = format!("server {{\n    listen {listen};\n    server_name {server_name};\n\n");
+        let mut config =
+            format!("server {{\n    listen {listen};\n    server_name {server_name};\n\n");
         if let (Some(cert), Some(key)) = (ssl_cert, ssl_key) {
             config.push_str(&format!("    ssl_certificate {cert};\n"));
             config.push_str(&format!("    ssl_certificate_key {key};\n\n"));
@@ -93,21 +94,17 @@ impl<'a> NginxProvisioner<'a> {
         let id = param_str(params, "id")?;
         let server_name = param_str(params, "server_name")?;
         let upstream = param_str(params, "upstream")?;
-        let tls = params
-            .get("tls")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let tls = params.get("tls").and_then(|v| v.as_bool()).unwrap_or(false);
 
         let listen = if tls { "443 ssl http2" } else { "80" };
 
-        let mut config = format!(
-            "server {{\n    listen {listen};\n    server_name {server_name};\n\n"
-        );
+        let mut config =
+            format!("server {{\n    listen {listen};\n    server_name {server_name};\n\n");
 
         if tls {
             // tls_cert_from convention: 'letsencrypt:<domain>' → default cert paths
             let cert_from = params.get("tls_cert_from").and_then(|v| v.as_str());
-            let (cert, key) = if let Some(ref cf) = cert_from {
+            let (cert, key) = if let Some(cf) = cert_from {
                 if let Some(domain) = cf.strip_prefix("letsencrypt:") {
                     (
                         format!("/etc/letsencrypt/live/{domain}/fullchain.pem"),
@@ -116,14 +113,30 @@ impl<'a> NginxProvisioner<'a> {
                 } else {
                     // Fallback: expect explicit cert/key params
                     (
-                        param_str_or(params, "ssl_certificate", "/etc/ssl/certs/ssl-cert-snakeoil.pem"),
-                        param_str_or(params, "ssl_certificate_key", "/etc/ssl/private/ssl-cert-snakeoil.key"),
+                        param_str_or(
+                            params,
+                            "ssl_certificate",
+                            "/etc/ssl/certs/ssl-cert-snakeoil.pem",
+                        ),
+                        param_str_or(
+                            params,
+                            "ssl_certificate_key",
+                            "/etc/ssl/private/ssl-cert-snakeoil.key",
+                        ),
                     )
                 }
             } else {
                 (
-                    param_str_or(params, "ssl_certificate", "/etc/ssl/certs/ssl-cert-snakeoil.pem"),
-                    param_str_or(params, "ssl_certificate_key", "/etc/ssl/private/ssl-cert-snakeoil.key"),
+                    param_str_or(
+                        params,
+                        "ssl_certificate",
+                        "/etc/ssl/certs/ssl-cert-snakeoil.pem",
+                    ),
+                    param_str_or(
+                        params,
+                        "ssl_certificate_key",
+                        "/etc/ssl/private/ssl-cert-snakeoil.key",
+                    ),
                 )
             };
             config.push_str(&format!("    ssl_certificate {cert};\n"));
@@ -164,16 +177,17 @@ impl<'a> NginxProvisioner<'a> {
                 // Roll back: remove the symlink and the config
                 let _ = self.client.remove(&enabled);
                 let _ = self.client.remove(&available);
-                return Err(format!(
-                    "nginx config test failed for '{id}'; changes rolled back"
-                ).into());
+                return Err(
+                    format!("nginx config test failed for '{id}'; changes rolled back").into(),
+                );
             }
             Err(e) => {
                 let _ = self.client.remove(&enabled);
                 let _ = self.client.remove(&available);
                 return Err(format!(
                     "nginx config test error for '{id}': {e}; changes rolled back"
-                ).into());
+                )
+                .into());
             }
         }
 
@@ -323,7 +337,10 @@ mod tests {
     #[test]
     fn proxy_creates_config_and_reloads() {
         let fake = FakeExec::new(vec![
-            ("nginx -t", ok("nginx: configuration file /etc/nginx/nginx.conf test is successful\n")),
+            (
+                "nginx -t",
+                ok("nginx: configuration file /etc/nginx/nginx.conf test is successful\n"),
+            ),
             ("systemctl reload", ok("")),
         ]);
         let fake2 = fake.clone();
@@ -348,9 +365,10 @@ mod tests {
 
     #[test]
     fn proxy_rolls_back_on_config_test_failure() {
-        let fake = FakeExec::new(vec![
-            ("nginx -t", fail("nginx: emerg] unknown directive\n")),
-        ]);
+        let fake = FakeExec::new(vec![(
+            "nginx -t",
+            fail("nginx: emerg] unknown directive\n"),
+        )]);
         let client = SshClient::new(Box::new(fake));
         let p = NginxProvisioner::new(&client);
         let params = json!({
@@ -404,9 +422,7 @@ mod tests {
 
     #[test]
     fn config_test_row_valid() {
-        let fake = FakeExec::new(vec![
-            ("nginx -t", ok("test is successful\n")),
-        ]);
+        let fake = FakeExec::new(vec![("nginx -t", ok("test is successful\n"))]);
         let client = SshClient::new(Box::new(fake));
         let p = NginxProvisioner::new(&client);
         let rows = p.config_test_row().unwrap();
@@ -417,9 +433,7 @@ mod tests {
 
     #[test]
     fn config_test_row_invalid() {
-        let fake = FakeExec::new(vec![
-            ("nginx -t", fail("nginx: [emerg] broken\n")),
-        ]);
+        let fake = FakeExec::new(vec![("nginx -t", fail("nginx: [emerg] broken\n"))]);
         let client = SshClient::new(Box::new(fake));
         let p = NginxProvisioner::new(&client);
         let rows = p.config_test_row().unwrap();

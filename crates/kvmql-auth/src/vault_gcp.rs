@@ -36,10 +36,12 @@ impl GcpSecretManagerResolver {
             cmd.arg("--project").arg(proj);
         }
 
-        let output = cmd.output().map_err(|e| CredentialError::ExternalToolFailed {
-            tool: "gcloud".to_string(),
-            stderr: e.to_string(),
-        })?;
+        let output = cmd
+            .output()
+            .map_err(|e| CredentialError::ExternalToolFailed {
+                tool: "gcloud".to_string(),
+                stderr: e.to_string(),
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -93,8 +95,7 @@ mod tests {
 
     #[test]
     fn test_parse_ref_with_project() {
-        let (name, version, project) =
-            GcpSecretManagerResolver::parse_ref("my-project/my-secret");
+        let (name, version, project) = GcpSecretManagerResolver::parse_ref("my-project/my-secret");
         assert_eq!(name, "my-secret");
         assert_eq!(version, "latest");
         assert_eq!(project, Some("my-project".to_string()));
@@ -113,11 +114,9 @@ mod tests {
     fn test_gcloud_not_installed() {
         let result = which_tool("kvmql_nonexistent_gcloud_12345");
         assert!(result.is_err());
-        assert!(
-            matches!(
-                result.unwrap_err(),
-                CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_gcloud_12345"
-            ),
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_gcloud_12345"
+        ),);
     }
 }

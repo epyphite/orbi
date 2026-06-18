@@ -33,16 +33,31 @@ fn build_gcp_manifest() -> CapabilityManifest {
     use Capability::*;
 
     let supported = [
-        Create, Destroy, Snapshot, Restore,
-        WatchMetric, Placement, VolumeEncrypt,
-        ImageImport, ImagePublish, VolumeResizeLive,
+        Create,
+        Destroy,
+        Snapshot,
+        Restore,
+        WatchMetric,
+        Placement,
+        VolumeEncrypt,
+        ImageImport,
+        ImagePublish,
+        VolumeResizeLive,
     ];
 
     let unsupported = [
-        Pause, Resume, CustomKernel, Vsock, Balloon,
-        HotplugVolume, HotplugNetwork, LiveMigration,
-        NestedVirt, GpuPassthrough,
-        AlterCpuLive, AlterMemoryLive,
+        Pause,
+        Resume,
+        CustomKernel,
+        Vsock,
+        Balloon,
+        HotplugVolume,
+        HotplugNetwork,
+        LiveMigration,
+        NestedVirt,
+        GpuPassthrough,
+        AlterCpuLive,
+        AlterMemoryLive,
     ];
 
     let mut capabilities = HashMap::new();
@@ -241,6 +256,8 @@ mod tests {
         };
         let err = d.create(params).await.unwrap_err();
         assert!(matches!(err, DriverError::Connection(_)));
-        assert!(err.to_string().contains("GCP Compute Engine driver not connected"));
+        assert!(err
+            .to_string()
+            .contains("GCP Compute Engine driver not connected"));
     }
 }

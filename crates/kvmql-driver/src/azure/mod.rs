@@ -28,8 +28,7 @@ impl AzureVmDriver {
     /// Create a driver bound to a subscription (uses whatever resource group
     /// is passed per-call or inferred from labels).
     pub fn new(subscription: &str) -> Self {
-        let cli = AzureCli::new()
-            .with_subscription(subscription);
+        let cli = AzureCli::new().with_subscription(subscription);
         Self {
             subscription: subscription.to_string(),
             resource_group: None,
@@ -84,16 +83,31 @@ fn build_azure_manifest() -> CapabilityManifest {
     use Capability::*;
 
     let supported = [
-        Create, Destroy, Snapshot, Restore,
-        WatchMetric, Placement, VolumeEncrypt,
-        ImageImport, ImagePublish,
+        Create,
+        Destroy,
+        Snapshot,
+        Restore,
+        WatchMetric,
+        Placement,
+        VolumeEncrypt,
+        ImageImport,
+        ImagePublish,
     ];
 
     let unsupported = [
-        Pause, Resume, CustomKernel, Vsock, Balloon,
-        HotplugVolume, HotplugNetwork, LiveMigration,
-        NestedVirt, GpuPassthrough,
-        AlterCpuLive, AlterMemoryLive, VolumeResizeLive,
+        Pause,
+        Resume,
+        CustomKernel,
+        Vsock,
+        Balloon,
+        HotplugVolume,
+        HotplugNetwork,
+        LiveMigration,
+        NestedVirt,
+        GpuPassthrough,
+        AlterCpuLive,
+        AlterMemoryLive,
+        VolumeResizeLive,
     ];
 
     let mut capabilities = HashMap::new();
@@ -189,8 +203,7 @@ impl Driver for AzureVmDriver {
                 let init_path = if init.starts_with('/') || init.starts_with("./") {
                     init.clone()
                 } else {
-                    let tmp = std::env::temp_dir()
-                        .join(format!("kvmql-init-{}", name_clone));
+                    let tmp = std::env::temp_dir().join(format!("kvmql-init-{}", name_clone));
                     std::fs::write(&tmp, init)
                         .map_err(|e| format!("failed to write cloud-init temp file: {e}"))?;
                     tmp.to_string_lossy().to_string()
@@ -302,14 +315,9 @@ impl Driver for AzureVmDriver {
 
     async fn list(&self) -> Result<Vec<MicroVm>, DriverError> {
         let cli = self.cli.clone();
-        let rg = self
-            .resource_group
-            .clone()
-            .ok_or_else(|| {
-                DriverError::Internal(
-                    "resource group required for listing VMs".into(),
-                )
-            })?;
+        let rg = self.resource_group.clone().ok_or_else(|| {
+            DriverError::Internal("resource group required for listing VMs".into())
+        })?;
         let provider_id = self.subscription.clone();
 
         let vms = tokio::task::spawn_blocking(move || cli.vm_list(&rg))
@@ -362,12 +370,10 @@ impl Driver for AzureVmDriver {
             .unwrap_or_else(|| format!("kvmql-disk-{}", uuid::Uuid::new_v4()));
         let size_gb = params.size_gb;
 
-        let result = tokio::task::spawn_blocking(move || {
-            cli.disk_create(&disk_name, size_gb, &rg)
-        })
-        .await
-        .map_err(|e| DriverError::Internal(e.to_string()))?
-        .map_err(cli_err)?;
+        let result = tokio::task::spawn_blocking(move || cli.disk_create(&disk_name, size_gb, &rg))
+            .await
+            .map_err(|e| DriverError::Internal(e.to_string()))?
+            .map_err(cli_err)?;
 
         Ok(mapper::map_disk(&result, &provider_id))
     }
@@ -420,14 +426,9 @@ impl Driver for AzureVmDriver {
 
     async fn list_volumes(&self) -> Result<Vec<Volume>, DriverError> {
         let cli = self.cli.clone();
-        let rg = self
-            .resource_group
-            .clone()
-            .ok_or_else(|| {
-                DriverError::Internal(
-                    "resource group required for listing disks".into(),
-                )
-            })?;
+        let rg = self.resource_group.clone().ok_or_else(|| {
+            DriverError::Internal("resource group required for listing disks".into())
+        })?;
         let provider_id = self.subscription.clone();
 
         let disks = tokio::task::spawn_blocking(move || cli.disk_list(&rg))

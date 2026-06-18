@@ -45,7 +45,11 @@ impl GithubResourceProvisioner {
         })
     }
 
-    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub fn create(
+        &self,
+        resource_type: &str,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "gh_repo" => self.create_repo(params),
             "gh_ruleset" => self.create_ruleset(params),

@@ -81,12 +81,8 @@ pub async fn handle_meta_command(
         MetaAction::DescribeAll => print_noun_list(),
         MetaAction::DescribeNoun(noun) => print_noun_schema(&noun),
         MetaAction::ShowConnection => {
-            let cluster = session_cluster
-                .as_deref()
-                .unwrap_or("(none)");
-            let provider = session_provider
-                .as_deref()
-                .unwrap_or("(none)");
+            let cluster = session_cluster.as_deref().unwrap_or("(none)");
+            let provider = session_provider.as_deref().unwrap_or("(none)");
             println!("cluster:  {cluster}");
             println!("provider: {provider}");
             println!("expanded: {}", if *expanded_mode { "on" } else { "off" });
@@ -415,17 +411,11 @@ mod tests {
 
     #[test]
     fn test_parse_cluster_no_arg_shows_connection() {
-        assert_eq!(
-            parse_meta_command("\\cluster"),
-            MetaAction::ShowConnection
-        );
+        assert_eq!(parse_meta_command("\\cluster"), MetaAction::ShowConnection);
     }
 
     #[test]
     fn test_parse_provider_no_arg_shows_connection() {
-        assert_eq!(
-            parse_meta_command("\\provider"),
-            MetaAction::ShowConnection
-        );
+        assert_eq!(parse_meta_command("\\provider"), MetaAction::ShowConnection);
     }
 }

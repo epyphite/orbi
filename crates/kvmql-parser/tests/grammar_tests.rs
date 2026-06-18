@@ -27,9 +27,7 @@ fn select_star() {
 
 #[test]
 fn select_fields_with_where() {
-    let stmt = first_stmt(
-        "SELECT id, tenant, status FROM microvms WHERE status = 'running';",
-    );
+    let stmt = first_stmt("SELECT id, tenant, status FROM microvms WHERE status = 'running';");
     match stmt {
         Statement::Select(s) => {
             assert!(matches!(s.fields, FieldList::Fields(ref f) if f.len() == 3));
@@ -134,9 +132,7 @@ fn select_from_query_history_with_limit() {
 
 #[test]
 fn select_with_group_by() {
-    let stmt = first_stmt(
-        "SELECT tenant, status FROM microvms GROUP BY tenant, status;",
-    );
+    let stmt = first_stmt("SELECT tenant, status FROM microvms GROUP BY tenant, status;");
     match stmt {
         Statement::Select(s) => {
             assert!(s.group_by.is_some());
@@ -147,9 +143,7 @@ fn select_with_group_by() {
 
 #[test]
 fn select_on_provider_live() {
-    let stmt = first_stmt(
-        "SELECT * FROM microvms ON PROVIDER 'kvm.host-a' LIVE;",
-    );
+    let stmt = first_stmt("SELECT * FROM microvms ON PROVIDER 'kvm.host-a' LIVE;");
     match stmt {
         Statement::Select(s) => {
             let on = s.on.unwrap();
@@ -211,7 +205,9 @@ fn create_microvm_with_placement_require() {
         Statement::CreateMicrovm(s) => {
             assert_eq!(s.placement_policy, Some("least_loaded".to_string()));
             assert_eq!(s.require.len(), 1);
-            assert!(matches!(s.require[0], RequireClause::Capability(ref c) if c == "hotplug_volume"));
+            assert!(
+                matches!(s.require[0], RequireClause::Capability(ref c) if c == "hotplug_volume")
+            );
         }
         _ => panic!("Expected CreateMicrovm"),
     }
@@ -287,7 +283,9 @@ fn alter_cluster_remove_member() {
     let stmt = first_stmt("ALTER CLUSTER 'prod' REMOVE MEMBER 'kvm.host-b';");
     match stmt {
         Statement::AlterCluster(s) => {
-            assert!(matches!(s.action, ClusterAlterAction::RemoveMember(ref m) if m == "kvm.host-b"));
+            assert!(
+                matches!(s.action, ClusterAlterAction::RemoveMember(ref m) if m == "kvm.host-b")
+            );
         }
         _ => panic!("Expected AlterCluster"),
     }
@@ -333,9 +331,8 @@ fn pause_resume() {
 
 #[test]
 fn snapshot_with_tag() {
-    let stmt = first_stmt(
-        "SNAPSHOT MICROVM 'vm-abc' INTO 's3://snapshots/vm-abc' TAG 'pre-upgrade';",
-    );
+    let stmt =
+        first_stmt("SNAPSHOT MICROVM 'vm-abc' INTO 's3://snapshots/vm-abc' TAG 'pre-upgrade';");
     match stmt {
         Statement::Snapshot(s) => {
             assert_eq!(s.id, "vm-abc");
@@ -382,9 +379,7 @@ fn watch_metrics() {
 
 #[test]
 fn attach_volume() {
-    let stmt = first_stmt(
-        "ATTACH VOLUME 'vol-acme-logs' TO MICROVM 'vm-abc' AS '/dev/vdc';",
-    );
+    let stmt = first_stmt("ATTACH VOLUME 'vol-acme-logs' TO MICROVM 'vm-abc' AS '/dev/vdc';");
     match stmt {
         Statement::Attach(s) => {
             assert_eq!(s.volume_id, "vol-acme-logs");
@@ -423,9 +418,8 @@ fn resize_volume() {
 
 #[test]
 fn import_image() {
-    let stmt = first_stmt(
-        "IMPORT IMAGE id = 'ubuntu-22.04-lts' source = 'catalog:ubuntu-22.04-lts';",
-    );
+    let stmt =
+        first_stmt("IMPORT IMAGE id = 'ubuntu-22.04-lts' source = 'catalog:ubuntu-22.04-lts';");
     match stmt {
         Statement::ImportImage(s) => {
             assert!(s.params.len() >= 2);
@@ -436,9 +430,7 @@ fn import_image() {
 
 #[test]
 fn publish_image() {
-    let stmt = first_stmt(
-        "PUBLISH IMAGE 'ubuntu-22.04-lts' TO PROVIDER 'aws.ap-southeast-1';",
-    );
+    let stmt = first_stmt("PUBLISH IMAGE 'ubuntu-22.04-lts' TO PROVIDER 'aws.ap-southeast-1';");
     match stmt {
         Statement::PublishImage(s) => {
             assert_eq!(s.image_id, "ubuntu-22.04-lts");
@@ -487,9 +479,7 @@ fn remove_provider() {
 
 #[test]
 fn add_cluster() {
-    let stmt = first_stmt(
-        "ADD CLUSTER 'prod' MEMBERS = ['kvm.host-a', 'aws.ap-southeast-1'];",
-    );
+    let stmt = first_stmt("ADD CLUSTER 'prod' MEMBERS = ['kvm.host-a', 'aws.ap-southeast-1'];");
     match stmt {
         Statement::AddCluster(s) => {
             assert_eq!(s.name, "prod");
@@ -512,17 +502,15 @@ fn remove_cluster() {
 
 #[test]
 fn add_principal() {
-    let stmt = first_stmt(
-        "ADD PRINCIPAL id = 'ops@acme.com' type = 'user' auth = 'env:ACME_OPS_TOKEN';",
-    );
+    let stmt =
+        first_stmt("ADD PRINCIPAL id = 'ops@acme.com' type = 'user' auth = 'env:ACME_OPS_TOKEN';");
     assert!(matches!(stmt, Statement::AddPrincipal(_)));
 }
 
 #[test]
 fn grant_with_where() {
-    let stmt = first_stmt(
-        "GRANT SELECT, SNAPSHOT ON microvms WHERE tenant = 'acme' TO 'ops@acme.com';",
-    );
+    let stmt =
+        first_stmt("GRANT SELECT, SNAPSHOT ON microvms WHERE tenant = 'acme' TO 'ops@acme.com';");
     match stmt {
         Statement::Grant(s) => {
             assert_eq!(s.verbs.len(), 2);
@@ -538,9 +526,7 @@ fn grant_with_where() {
 
 #[test]
 fn grant_on_volumes() {
-    let stmt = first_stmt(
-        "GRANT SELECT ON volumes WHERE tenant = 'acme' TO 'ops@acme.com';",
-    );
+    let stmt = first_stmt("GRANT SELECT ON volumes WHERE tenant = 'acme' TO 'ops@acme.com';");
     match stmt {
         Statement::Grant(s) => {
             assert!(matches!(s.scope, GrantScope::Volumes));
@@ -551,9 +537,7 @@ fn grant_on_volumes() {
 
 #[test]
 fn revoke() {
-    let stmt = first_stmt(
-        "REVOKE SELECT, DESTROY ON CLUSTER 'prod' FROM 'ops@acme.com';",
-    );
+    let stmt = first_stmt("REVOKE SELECT, DESTROY ON CLUSTER 'prod' FROM 'ops@acme.com';");
     match stmt {
         Statement::Revoke(s) => {
             assert_eq!(s.verbs.len(), 2);
@@ -580,10 +564,30 @@ fn set_execution_mode() {
 
 #[test]
 fn show_variants() {
-    assert!(matches!(first_stmt("SHOW PROVIDERS;"), Statement::Show(ShowStmt { target: ShowTarget::Providers })));
-    assert!(matches!(first_stmt("SHOW CLUSTERS;"), Statement::Show(ShowStmt { target: ShowTarget::Clusters })));
-    assert!(matches!(first_stmt("SHOW IMAGES;"), Statement::Show(ShowStmt { target: ShowTarget::Images })));
-    assert!(matches!(first_stmt("SHOW VERSION;"), Statement::Show(ShowStmt { target: ShowTarget::Version })));
+    assert!(matches!(
+        first_stmt("SHOW PROVIDERS;"),
+        Statement::Show(ShowStmt {
+            target: ShowTarget::Providers
+        })
+    ));
+    assert!(matches!(
+        first_stmt("SHOW CLUSTERS;"),
+        Statement::Show(ShowStmt {
+            target: ShowTarget::Clusters
+        })
+    ));
+    assert!(matches!(
+        first_stmt("SHOW IMAGES;"),
+        Statement::Show(ShowStmt {
+            target: ShowTarget::Images
+        })
+    ));
+    assert!(matches!(
+        first_stmt("SHOW VERSION;"),
+        Statement::Show(ShowStmt {
+            target: ShowTarget::Version
+        })
+    ));
 }
 
 #[test]
@@ -676,13 +680,17 @@ fn select_with_offset() {
 
 #[test]
 fn arithmetic_subtract() {
-    let stmt = first_stmt(
-        "SELECT * FROM microvms WHERE cpu_pct > 100 - 10;",
-    );
+    let stmt = first_stmt("SELECT * FROM microvms WHERE cpu_pct > 100 - 10;");
     match stmt {
         Statement::Select(s) => {
             if let Some(Predicate::Comparison(c)) = s.where_clause {
-                assert!(matches!(c.right, Expr::BinaryOp { op: BinaryOp::Subtract, .. }));
+                assert!(matches!(
+                    c.right,
+                    Expr::BinaryOp {
+                        op: BinaryOp::Subtract,
+                        ..
+                    }
+                ));
             } else {
                 panic!("Expected comparison with arithmetic");
             }
@@ -693,13 +701,17 @@ fn arithmetic_subtract() {
 
 #[test]
 fn arithmetic_add() {
-    let stmt = first_stmt(
-        "SELECT * FROM microvms WHERE vcpus = 2 + 2;",
-    );
+    let stmt = first_stmt("SELECT * FROM microvms WHERE vcpus = 2 + 2;");
     match stmt {
         Statement::Select(s) => {
             if let Some(Predicate::Comparison(c)) = s.where_clause {
-                assert!(matches!(c.right, Expr::BinaryOp { op: BinaryOp::Add, .. }));
+                assert!(matches!(
+                    c.right,
+                    Expr::BinaryOp {
+                        op: BinaryOp::Add,
+                        ..
+                    }
+                ));
             } else {
                 panic!("Expected comparison with arithmetic");
             }
@@ -744,9 +756,7 @@ fn multi_statement_program() {
 
 #[test]
 fn predicate_and_or() {
-    let stmt = first_stmt(
-        "SELECT * FROM microvms WHERE status = 'running' AND tenant = 'acme';",
-    );
+    let stmt = first_stmt("SELECT * FROM microvms WHERE status = 'running' AND tenant = 'acme';");
     match stmt {
         Statement::Select(s) => {
             assert!(matches!(s.where_clause, Some(Predicate::And(_, _))));
@@ -771,9 +781,7 @@ fn predicate_grouped() {
 
 #[test]
 fn predicate_not() {
-    let stmt = first_stmt(
-        "SELECT * FROM microvms WHERE NOT status = 'error';",
-    );
+    let stmt = first_stmt("SELECT * FROM microvms WHERE NOT status = 'error';");
     match stmt {
         Statement::Select(s) => {
             assert!(matches!(s.where_clause, Some(Predicate::Not(_))));
@@ -784,9 +792,7 @@ fn predicate_not() {
 
 #[test]
 fn predicate_in() {
-    let stmt = first_stmt(
-        "SELECT * FROM microvms WHERE status IN 'running';",
-    );
+    let stmt = first_stmt("SELECT * FROM microvms WHERE status IN 'running';");
     match stmt {
         Statement::Select(s) => {
             if let Some(Predicate::Comparison(c)) = s.where_clause {
@@ -801,9 +807,7 @@ fn predicate_in() {
 
 #[test]
 fn predicate_like() {
-    let stmt = first_stmt(
-        "SELECT * FROM microvms WHERE tenant LIKE 'acme%';",
-    );
+    let stmt = first_stmt("SELECT * FROM microvms WHERE tenant LIKE 'acme%';");
     match stmt {
         Statement::Select(s) => {
             if let Some(Predicate::Comparison(c)) = s.where_clause {
@@ -821,7 +825,10 @@ fn predicate_like() {
 #[test]
 fn error_unknown_statement() {
     let err = Parser::parse("FOOBAR;").unwrap_err();
-    assert!(matches!(err.kind, kvmql_parser::error::ParseErrorKind::UnexpectedToken));
+    assert!(matches!(
+        err.kind,
+        kvmql_parser::error::ParseErrorKind::UnexpectedToken
+    ));
 }
 
 #[test]
@@ -834,7 +841,10 @@ fn error_missing_from() {
 #[test]
 fn error_invalid_noun() {
     let err = Parser::parse("SELECT * FROM foobar;").unwrap_err();
-    assert!(matches!(err.kind, kvmql_parser::error::ParseErrorKind::InvalidNoun { .. }));
+    assert!(matches!(
+        err.kind,
+        kvmql_parser::error::ParseErrorKind::InvalidNoun { .. }
+    ));
 }
 
 // ── Round-Trip ──────────────────────────────────────────────────────
@@ -850,7 +860,8 @@ fn round_trip_select() {
 
 #[test]
 fn round_trip_create_microvm() {
-    let input = "CREATE MICROVM tenant = 'acme' vcpus = 2 memory_mb = 512 image = 'ubuntu-22.04-lts' \
+    let input =
+        "CREATE MICROVM tenant = 'acme' vcpus = 2 memory_mb = 512 image = 'ubuntu-22.04-lts' \
                  VOLUME (size_gb = 10 type = 'virtio-blk') \
                  ON PROVIDER 'kvm.host-a';";
     let ast1 = parse(input);
@@ -1032,9 +1043,7 @@ fn appendix_a_full_session() {
 
 #[test]
 fn create_resource_postgres() {
-    let stmt = first_stmt(
-        "CREATE RESOURCE 'postgres' id = 'db1' version = '16';",
-    );
+    let stmt = first_stmt("CREATE RESOURCE 'postgres' id = 'db1' version = '16';");
     match stmt {
         Statement::CreateResource(s) => {
             assert_eq!(s.resource_type, "postgres");
@@ -1070,9 +1079,7 @@ fn create_resource_with_on_provider() {
 
 #[test]
 fn create_resource_redis() {
-    let stmt = first_stmt(
-        "CREATE RESOURCE 'redis' id = 'cache1' sku = 'Standard' capacity = 2;",
-    );
+    let stmt = first_stmt("CREATE RESOURCE 'redis' id = 'cache1' sku = 'Standard' capacity = 2;");
     match stmt {
         Statement::CreateResource(s) => {
             assert_eq!(s.resource_type, "redis");
@@ -1103,9 +1110,7 @@ fn alter_resource() {
 
 #[test]
 fn destroy_resource_force() {
-    let stmt = first_stmt(
-        "DESTROY RESOURCE 'redis' 'cache1' FORCE;",
-    );
+    let stmt = first_stmt("DESTROY RESOURCE 'redis' 'cache1' FORCE;");
     match stmt {
         Statement::DestroyResource(s) => {
             assert_eq!(s.resource_type, "redis");
@@ -1118,9 +1123,7 @@ fn destroy_resource_force() {
 
 #[test]
 fn destroy_resource_no_force() {
-    let stmt = first_stmt(
-        "DESTROY RESOURCE 'postgres' 'acme-db';",
-    );
+    let stmt = first_stmt("DESTROY RESOURCE 'postgres' 'acme-db';");
     match stmt {
         Statement::DestroyResource(s) => {
             assert_eq!(s.resource_type, "postgres");
@@ -1133,9 +1136,7 @@ fn destroy_resource_no_force() {
 
 #[test]
 fn select_from_resources() {
-    let stmt = first_stmt(
-        "SELECT * FROM resources WHERE resource_type = 'postgres';",
-    );
+    let stmt = first_stmt("SELECT * FROM resources WHERE resource_type = 'postgres';");
     match stmt {
         Statement::Select(s) => {
             assert_eq!(s.from, SelectSource::Noun(Noun::Resources));
@@ -1199,9 +1200,7 @@ fn round_trip_destroy_resource_no_force() {
 
 #[test]
 fn create_resource_case_insensitive() {
-    let stmt = first_stmt(
-        "create resource 'aks' id = 'k8s-1' node_count = 3;",
-    );
+    let stmt = first_stmt("create resource 'aks' id = 'k8s-1' node_count = 3;");
     assert!(matches!(stmt, Statement::CreateResource(_)));
 }
 
@@ -1387,9 +1386,8 @@ fn variable_display_roundtrip() {
 
 #[test]
 fn test_create_pg_database() {
-    let stmt = first_stmt(
-        "CREATE RESOURCE 'pg_database' id = 'drivelog' server = 'acme-pg-server';",
-    );
+    let stmt =
+        first_stmt("CREATE RESOURCE 'pg_database' id = 'drivelog' server = 'acme-pg-server';");
     match stmt {
         Statement::CreateResource(s) => {
             assert_eq!(s.resource_type, "pg_database");
@@ -1507,9 +1505,7 @@ fn test_backup_with_tag_only() {
 
 #[test]
 fn test_restore_resource() {
-    let stmt = first_stmt(
-        "RESTORE RESOURCE 'postgres' 'acme-db' FROM '2026-04-01T10:00:00Z';",
-    );
+    let stmt = first_stmt("RESTORE RESOURCE 'postgres' 'acme-db' FROM '2026-04-01T10:00:00Z';");
     match stmt {
         Statement::RestoreResource(s) => {
             assert_eq!(s.resource_type, "postgres");
@@ -1550,9 +1546,8 @@ fn test_scale_aks() {
 
 #[test]
 fn test_scale_container_app() {
-    let stmt = first_stmt(
-        "SCALE RESOURCE 'container_app' 'acme-api' min_replicas = 2 max_replicas = 10;",
-    );
+    let stmt =
+        first_stmt("SCALE RESOURCE 'container_app' 'acme-api' min_replicas = 2 max_replicas = 10;");
     match stmt {
         Statement::Scale(s) => {
             assert_eq!(s.resource_type, "container_app");
@@ -1746,9 +1741,8 @@ fn test_explain_case_insensitive() {
 
 #[test]
 fn test_explain_create_microvm() {
-    let stmt = first_stmt(
-        "EXPLAIN CREATE MICROVM tenant='acme' vcpus=2 memory_mb=512 image='img-1';",
-    );
+    let stmt =
+        first_stmt("EXPLAIN CREATE MICROVM tenant='acme' vcpus=2 memory_mb=512 image='img-1';");
     match stmt {
         Statement::Explain(inner) => {
             assert!(matches!(*inner, Statement::CreateMicrovm(_)));
@@ -1858,9 +1852,8 @@ fn test_github_project_setup_file_parses() {
 
 #[test]
 fn test_create_resource_if_not_exists() {
-    let stmt = first_stmt(
-        "CREATE IF NOT EXISTS RESOURCE 'postgres' id = 'prod-db' version = '16';",
-    );
+    let stmt =
+        first_stmt("CREATE IF NOT EXISTS RESOURCE 'postgres' id = 'prod-db' version = '16';");
     match stmt {
         Statement::CreateResource(s) => {
             assert!(s.if_not_exists);
@@ -1873,9 +1866,7 @@ fn test_create_resource_if_not_exists() {
 
 #[test]
 fn test_create_microvm_if_not_exists() {
-    let stmt = first_stmt(
-        "CREATE IF NOT EXISTS MICROVM id = 'vm-1' vcpus = 2 memory_mb = 512;",
-    );
+    let stmt = first_stmt("CREATE IF NOT EXISTS MICROVM id = 'vm-1' vcpus = 2 memory_mb = 512;");
     match stmt {
         Statement::CreateMicrovm(s) => {
             assert!(s.if_not_exists);
@@ -1887,9 +1878,7 @@ fn test_create_microvm_if_not_exists() {
 
 #[test]
 fn test_create_volume_if_not_exists() {
-    let stmt = first_stmt(
-        "CREATE IF NOT EXISTS VOLUME id = 'vol-1' size_gb = 20;",
-    );
+    let stmt = first_stmt("CREATE IF NOT EXISTS VOLUME id = 'vol-1' size_gb = 20;");
     match stmt {
         Statement::CreateVolume(s) => {
             assert!(s.if_not_exists);
@@ -1915,9 +1904,7 @@ fn test_add_provider_if_not_exists() {
 
 #[test]
 fn test_add_cluster_if_not_exists() {
-    let stmt = first_stmt(
-        "ADD IF NOT EXISTS CLUSTER 'prod' MEMBERS = ['prov-1', 'prov-2'];",
-    );
+    let stmt = first_stmt("ADD IF NOT EXISTS CLUSTER 'prod' MEMBERS = ['prov-1', 'prov-2'];");
     match stmt {
         Statement::AddCluster(s) => {
             assert!(s.if_not_exists);
@@ -1929,9 +1916,8 @@ fn test_add_cluster_if_not_exists() {
 
 #[test]
 fn test_add_principal_if_not_exists() {
-    let stmt = first_stmt(
-        "ADD IF NOT EXISTS PRINCIPAL id = 'svc-1' type = 'service' auth_ref = 'key-1';",
-    );
+    let stmt =
+        first_stmt("ADD IF NOT EXISTS PRINCIPAL id = 'svc-1' type = 'service' auth_ref = 'key-1';");
     match stmt {
         Statement::AddPrincipal(s) => {
             assert!(s.if_not_exists);
@@ -1998,9 +1984,7 @@ fn test_select_from_applied_files() {
 
 #[test]
 fn select_from_k8s_pods_with_where() {
-    let stmt = first_stmt(
-        "SELECT * FROM k8s_pods WHERE status = 'CrashLoopBackOff';",
-    );
+    let stmt = first_stmt("SELECT * FROM k8s_pods WHERE status = 'CrashLoopBackOff';");
     match stmt {
         Statement::Select(s) => {
             assert_eq!(s.from, SelectSource::Noun(Noun::K8sPods));
@@ -2012,9 +1996,7 @@ fn select_from_k8s_pods_with_where() {
 
 #[test]
 fn select_from_k8s_deployments() {
-    let stmt = first_stmt(
-        "SELECT name, replicas, ready_replicas FROM k8s_deployments;",
-    );
+    let stmt = first_stmt("SELECT name, replicas, ready_replicas FROM k8s_deployments;");
     match stmt {
         Statement::Select(s) => {
             assert_eq!(s.from, SelectSource::Noun(Noun::K8sDeployments));
@@ -2060,9 +2042,7 @@ fn import_resources_single_provider() {
 
 #[test]
 fn import_resources_with_type_filter() {
-    let stmt = first_stmt(
-        "IMPORT RESOURCES FROM PROVIDER 'aws-prod' WHERE resource_type = 'ec2';",
-    );
+    let stmt = first_stmt("IMPORT RESOURCES FROM PROVIDER 'aws-prod' WHERE resource_type = 'ec2';");
     match stmt {
         Statement::ImportResources(s) => {
             assert_eq!(s.source, ImportSource::SingleProvider("aws-prod".into()));
@@ -2079,11 +2059,10 @@ fn import_resources_with_in_filter() {
     );
     match stmt {
         Statement::ImportResources(s) => {
-            assert_eq!(s.resource_type_filter, Some(vec![
-                "ec2".into(),
-                "rds_postgres".into(),
-                "vpc".into(),
-            ]));
+            assert_eq!(
+                s.resource_type_filter,
+                Some(vec!["ec2".into(), "rds_postgres".into(), "vpc".into(),])
+            );
         }
         _ => panic!("expected ImportResources"),
     }
@@ -2137,7 +2116,9 @@ fn select_field_as_alias() {
                 match &fs[0] {
                     Field::Aliased { field, alias } => {
                         assert_eq!(alias, "total");
-                        assert!(matches!(field.as_ref(), Field::FnCall { name, star: true, .. } if name == "count"));
+                        assert!(
+                            matches!(field.as_ref(), Field::FnCall { name, star: true, .. } if name == "count")
+                        );
                     }
                     other => panic!("expected Aliased, got {other:?}"),
                 }

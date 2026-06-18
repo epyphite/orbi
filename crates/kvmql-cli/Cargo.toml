@@ -26,3 +26,6 @@ comfy-table = { workspace = true }
 sha2 = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+
+[lints]
+workspace = true

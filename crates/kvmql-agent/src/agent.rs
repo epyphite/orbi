@@ -7,6 +7,9 @@ use kvmql_driver::traits::Driver;
 
 use crate::protocol::{AgentLoad, AgentMessage, PROTOCOL_VERSION};
 
+// Agent protocol structures — fields/methods are defined for the full protocol
+// spec but not all are wired up yet.
+#[allow(dead_code)]
 pub struct AgentConfig {
     pub agent_id: String,
     pub control_plane_address: String,
@@ -18,6 +21,7 @@ pub struct AgentConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)] // all states defined per agent protocol spec, not all used yet
 pub enum AgentState {
     Disconnected,
     Connecting,
@@ -26,12 +30,14 @@ pub enum AgentState {
     ShuttingDown,
 }
 
+#[allow(dead_code)] // fields are part of the agent protocol, not yet fully wired
 pub struct Agent {
     config: AgentConfig,
     driver: Arc<dyn Driver>,
     state: RwLock<AgentState>,
 }
 
+#[allow(dead_code)] // methods are part of the agent protocol, not yet fully wired
 impl Agent {
     pub fn new(config: AgentConfig, driver: Arc<dyn Driver>) -> Self {
         Self {
@@ -192,9 +198,7 @@ mod tests {
 
         let hb = agent.build_heartbeat().await;
         match hb {
-            AgentMessage::Heartbeat {
-                agent_id, load, ..
-            } => {
+            AgentMessage::Heartbeat { agent_id, load, .. } => {
                 assert_eq!(agent_id, "test-agent");
                 assert_eq!(load.vm_count, 0);
                 assert_eq!(load.volume_count, 0);

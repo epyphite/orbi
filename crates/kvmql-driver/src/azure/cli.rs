@@ -12,6 +12,12 @@ pub struct AzureCli {
     pub resource_group: Option<String>,
 }
 
+impl Default for AzureCli {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AzureCli {
     pub fn new() -> Self {
         Self {
@@ -63,9 +69,7 @@ impl AzureCli {
             cmd.arg("--subscription").arg(sub);
         }
 
-        let output = cmd
-            .output()
-            .map_err(|e| format!("failed to run az: {e}"))?;
+        let output = cmd.output().map_err(|e| format!("failed to run az: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -107,11 +111,16 @@ impl AzureCli {
         extra_args: &[&str],
     ) -> Result<serde_json::Value, String> {
         let mut args = vec![
-            "vm", "create",
-            "--name", name,
-            "--image", image,
-            "--size", size,
-            "--resource-group", rg,
+            "vm",
+            "create",
+            "--name",
+            name,
+            "--image",
+            image,
+            "--size",
+            size,
+            "--resource-group",
+            rg,
         ];
         args.extend_from_slice(extra_args);
         self.run(&args)
@@ -120,9 +129,12 @@ impl AzureCli {
     /// Delete a VM: `az vm delete --name <name> --resource-group <rg> --yes [--force-deletion yes]`
     pub fn vm_delete(&self, name: &str, rg: &str, force: bool) -> Result<(), String> {
         let mut args = vec![
-            "vm", "delete",
-            "--name", name,
-            "--resource-group", rg,
+            "vm",
+            "delete",
+            "--name",
+            name,
+            "--resource-group",
+            rg,
             "--yes",
         ];
         if force {
@@ -135,11 +147,7 @@ impl AzureCli {
 
     /// List VMs: `az vm list --resource-group <rg>`
     pub fn vm_list(&self, rg: &str) -> Result<Vec<serde_json::Value>, String> {
-        let args = vec![
-            "vm", "list",
-            "--resource-group", rg,
-            "--show-details",
-        ];
+        let args = vec!["vm", "list", "--resource-group", rg, "--show-details"];
         let val = self.run(&args)?;
         match val {
             serde_json::Value::Array(arr) => Ok(arr),
@@ -150,40 +158,31 @@ impl AzureCli {
     /// Show a single VM: `az vm show --name <name> --resource-group <rg> --show-details`
     pub fn vm_show(&self, name: &str, rg: &str) -> Result<serde_json::Value, String> {
         self.run(&[
-            "vm", "show",
-            "--name", name,
-            "--resource-group", rg,
+            "vm",
+            "show",
+            "--name",
+            name,
+            "--resource-group",
+            rg,
             "--show-details",
         ])
     }
 
     /// Start a VM: `az vm start --name <name> --resource-group <rg>`
     pub fn vm_start(&self, name: &str, rg: &str) -> Result<(), String> {
-        self.run(&[
-            "vm", "start",
-            "--name", name,
-            "--resource-group", rg,
-        ])?;
+        self.run(&["vm", "start", "--name", name, "--resource-group", rg])?;
         Ok(())
     }
 
     /// Stop (power off) a VM: `az vm stop --name <name> --resource-group <rg>`
     pub fn vm_stop(&self, name: &str, rg: &str) -> Result<(), String> {
-        self.run(&[
-            "vm", "stop",
-            "--name", name,
-            "--resource-group", rg,
-        ])?;
+        self.run(&["vm", "stop", "--name", name, "--resource-group", rg])?;
         Ok(())
     }
 
     /// Deallocate a VM: `az vm deallocate --name <name> --resource-group <rg>`
     pub fn vm_deallocate(&self, name: &str, rg: &str) -> Result<(), String> {
-        self.run(&[
-            "vm", "deallocate",
-            "--name", name,
-            "--resource-group", rg,
-        ])?;
+        self.run(&["vm", "deallocate", "--name", name, "--resource-group", rg])?;
         Ok(())
     }
 
@@ -198,19 +197,26 @@ impl AzureCli {
     ) -> Result<serde_json::Value, String> {
         let size_str = size_gb.to_string();
         self.run(&[
-            "disk", "create",
-            "--name", name,
-            "--size-gb", &size_str,
-            "--resource-group", rg,
+            "disk",
+            "create",
+            "--name",
+            name,
+            "--size-gb",
+            &size_str,
+            "--resource-group",
+            rg,
         ])
     }
 
     /// Delete a managed disk: `az disk delete --name <name> --resource-group <rg> --yes`
     pub fn disk_delete(&self, name: &str, rg: &str) -> Result<(), String> {
         self.run(&[
-            "disk", "delete",
-            "--name", name,
-            "--resource-group", rg,
+            "disk",
+            "delete",
+            "--name",
+            name,
+            "--resource-group",
+            rg,
             "--yes",
         ])?;
         Ok(())
@@ -218,10 +224,7 @@ impl AzureCli {
 
     /// List managed disks: `az disk list --resource-group <rg>`
     pub fn disk_list(&self, rg: &str) -> Result<Vec<serde_json::Value>, String> {
-        let val = self.run(&[
-            "disk", "list",
-            "--resource-group", rg,
-        ])?;
+        let val = self.run(&["disk", "list", "--resource-group", rg])?;
         match val {
             serde_json::Value::Array(arr) => Ok(arr),
             _ => Err("expected JSON array from az disk list".into()),
@@ -233,10 +236,15 @@ impl AzureCli {
     /// Attach a disk to a VM: `az vm disk attach --vm-name <vm> --name <disk> --resource-group <rg>`
     pub fn vm_disk_attach(&self, vm: &str, disk: &str, rg: &str) -> Result<(), String> {
         self.run(&[
-            "vm", "disk", "attach",
-            "--vm-name", vm,
-            "--name", disk,
-            "--resource-group", rg,
+            "vm",
+            "disk",
+            "attach",
+            "--vm-name",
+            vm,
+            "--name",
+            disk,
+            "--resource-group",
+            rg,
         ])?;
         Ok(())
     }
@@ -244,10 +252,15 @@ impl AzureCli {
     /// Detach a disk from a VM: `az vm disk detach --vm-name <vm> --name <disk> --resource-group <rg>`
     pub fn vm_disk_detach(&self, vm: &str, disk: &str, rg: &str) -> Result<(), String> {
         self.run(&[
-            "vm", "disk", "detach",
-            "--vm-name", vm,
-            "--name", disk,
-            "--resource-group", rg,
+            "vm",
+            "disk",
+            "detach",
+            "--vm-name",
+            vm,
+            "--name",
+            disk,
+            "--resource-group",
+            rg,
         ])?;
         Ok(())
     }
@@ -262,10 +275,14 @@ impl AzureCli {
         rg: &str,
     ) -> Result<serde_json::Value, String> {
         self.run(&[
-            "snapshot", "create",
-            "--name", name,
-            "--source", source_disk,
-            "--resource-group", rg,
+            "snapshot",
+            "create",
+            "--name",
+            name,
+            "--source",
+            source_disk,
+            "--resource-group",
+            rg,
         ])
     }
 
@@ -287,11 +304,7 @@ mod tests {
             .with_subscription("sub-123")
             .with_resource_group("my-rg");
 
-        let args = cli.build_args(&[
-            "vm", "list",
-            "--resource-group", "my-rg",
-            "--show-details",
-        ]);
+        let args = cli.build_args(&["vm", "list", "--resource-group", "my-rg", "--show-details"]);
 
         assert_eq!(args[0], "az");
         assert_eq!(args[1], "vm");
@@ -307,15 +320,19 @@ mod tests {
 
     #[test]
     fn test_command_construction_vm_create() {
-        let cli = AzureCli::new()
-            .with_subscription("sub-456");
+        let cli = AzureCli::new().with_subscription("sub-456");
 
         let args = cli.build_args(&[
-            "vm", "create",
-            "--name", "test-vm",
-            "--image", "UbuntuLTS",
-            "--size", "Standard_B2s",
-            "--resource-group", "test-rg",
+            "vm",
+            "create",
+            "--name",
+            "test-vm",
+            "--image",
+            "UbuntuLTS",
+            "--size",
+            "Standard_B2s",
+            "--resource-group",
+            "test-rg",
         ]);
 
         assert_eq!(args[0], "az");
@@ -345,15 +362,18 @@ mod tests {
 
     #[test]
     fn test_command_construction_vm_delete_with_force() {
-        let cli = AzureCli::new()
-            .with_subscription("sub-789");
+        let cli = AzureCli::new().with_subscription("sub-789");
 
         let args = cli.build_args(&[
-            "vm", "delete",
-            "--name", "doomed-vm",
-            "--resource-group", "rg",
+            "vm",
+            "delete",
+            "--name",
+            "doomed-vm",
+            "--resource-group",
+            "rg",
             "--yes",
-            "--force-deletion", "yes",
+            "--force-deletion",
+            "yes",
         ]);
 
         assert!(args.contains(&"--yes".to_string()));
@@ -363,14 +383,17 @@ mod tests {
 
     #[test]
     fn test_command_construction_disk_create() {
-        let cli = AzureCli::new()
-            .with_subscription("sub-disk");
+        let cli = AzureCli::new().with_subscription("sub-disk");
 
         let args = cli.build_args(&[
-            "disk", "create",
-            "--name", "my-disk",
-            "--size-gb", "100",
-            "--resource-group", "rg",
+            "disk",
+            "create",
+            "--name",
+            "my-disk",
+            "--size-gb",
+            "100",
+            "--resource-group",
+            "rg",
         ]);
 
         assert!(args.contains(&"disk".to_string()));
@@ -383,10 +406,14 @@ mod tests {
     fn test_command_construction_snapshot() {
         let cli = AzureCli::new();
         let args = cli.build_args(&[
-            "snapshot", "create",
-            "--name", "snap-1",
-            "--source", "os-disk-1",
-            "--resource-group", "rg",
+            "snapshot",
+            "create",
+            "--name",
+            "snap-1",
+            "--source",
+            "os-disk-1",
+            "--resource-group",
+            "rg",
         ]);
 
         assert!(args.contains(&"snapshot".to_string()));

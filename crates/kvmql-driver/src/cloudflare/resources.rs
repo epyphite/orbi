@@ -29,7 +29,11 @@ impl CloudflareResourceProvisioner {
     }
 
     /// Create a Cloudflare resource.  Dispatches by `resource_type`.
-    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub fn create(
+        &self,
+        resource_type: &str,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "cf_zone" => self.create_zone(params),
             "cf_dns_record" => self.create_dns_record(params),
@@ -101,9 +105,7 @@ impl CloudflareResourceProvisioner {
         let zone_id = if id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit()) {
             id.to_string()
         } else {
-            client
-                .resolve_zone_id(id)
-                .map_err(|e| e.to_string())?
+            client.resolve_zone_id(id).map_err(|e| e.to_string())?
         };
         client
             .delete(&format!("/zones/{}", zone_id))
@@ -245,10 +247,7 @@ impl CloudflareResourceProvisioner {
             .map_err(|e| format!("failed to resolve zone: {e}"))?;
 
         let url_pattern = param_str(params, "url")?;
-        let priority = params
-            .get("priority")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(1);
+        let priority = params.get("priority").and_then(|v| v.as_i64()).unwrap_or(1);
 
         // Build actions from params — cache_level, ssl, etc.
         let mut actions = Vec::new();
@@ -259,9 +258,7 @@ impl CloudflareResourceProvisioner {
             actions.push(json!({ "id": "ssl", "value": ssl }));
         }
         if actions.is_empty() {
-            return Err(
-                "page rule requires at least one action (cache_level, ssl, etc.)".into(),
-            );
+            return Err("page rule requires at least one action (cache_level, ssl, etc.)".into());
         }
 
         let body = json!({

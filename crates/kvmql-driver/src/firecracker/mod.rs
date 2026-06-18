@@ -61,15 +61,31 @@ fn build_firecracker_manifest() -> CapabilityManifest {
     use Capability::*;
 
     let supported = [
-        Create, Destroy, Pause, Resume, Snapshot, Restore,
-        CustomKernel, Vsock, Balloon, HotplugVolume,
-        WatchMetric, ImageImport,
+        Create,
+        Destroy,
+        Pause,
+        Resume,
+        Snapshot,
+        Restore,
+        CustomKernel,
+        Vsock,
+        Balloon,
+        HotplugVolume,
+        WatchMetric,
+        ImageImport,
     ];
 
     let unsupported = [
-        AlterCpuLive, AlterMemoryLive, LiveMigration, GpuPassthrough,
-        Placement, VolumeEncrypt, ImagePublish, HotplugNetwork,
-        NestedVirt, VolumeResizeLive,
+        AlterCpuLive,
+        AlterMemoryLive,
+        LiveMigration,
+        GpuPassthrough,
+        Placement,
+        VolumeEncrypt,
+        ImagePublish,
+        HotplugNetwork,
+        NestedVirt,
+        VolumeResizeLive,
     ];
 
     let mut capabilities = HashMap::new();
@@ -136,9 +152,7 @@ impl Driver for FirecrackerDriver {
         let image = state
             .images
             .get(&params.image_id)
-            .ok_or_else(|| {
-                DriverError::NotFound(format!("Image {} not found", params.image_id))
-            })?;
+            .ok_or_else(|| DriverError::NotFound(format!("Image {} not found", params.image_id)))?;
 
         let resolved = ResolvedImage::from_image_ref(&ImageRef {
             image_id: image.id.clone(),
@@ -157,15 +171,9 @@ impl Driver for FirecrackerDriver {
 
         let vm_id = params.id.clone().unwrap_or_else(new_id);
 
-        let vm = mapper::create_vm(
-            &self.client,
-            &params,
-            &resolved,
-            &vm_id,
-            &self.provider_id,
-        )
-        .await
-        .map_err(client_err_to_driver)?;
+        let vm = mapper::create_vm(&self.client, &params, &resolved, &vm_id, &self.provider_id)
+            .await
+            .map_err(client_err_to_driver)?;
 
         state.vm = Some(vm.clone());
         Ok(vm)

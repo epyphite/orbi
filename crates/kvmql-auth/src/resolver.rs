@@ -88,8 +88,8 @@ impl CredentialResolver {
         let mut values = Vec::new();
         for var in &vars {
             let var = var.trim();
-            let val = std::env::var(var)
-                .map_err(|_| CredentialError::EnvVarNotFound(var.to_string()))?;
+            let val =
+                std::env::var(var).map_err(|_| CredentialError::EnvVarNotFound(var.to_string()))?;
             values.push(val);
         }
         Ok(values.join(","))
@@ -357,7 +357,8 @@ mod tests {
         assert!(
             matches!(
                 err,
-                CredentialError::ExternalToolNotFound(_) | CredentialError::ExternalToolFailed { .. }
+                CredentialError::ExternalToolNotFound(_)
+                    | CredentialError::ExternalToolFailed { .. }
             ),
             "expected external tool error for aws-sm, got: {err:?}"
         );
@@ -371,7 +372,8 @@ mod tests {
         assert!(
             matches!(
                 err,
-                CredentialError::ExternalToolNotFound(_) | CredentialError::ExternalToolFailed { .. }
+                CredentialError::ExternalToolNotFound(_)
+                    | CredentialError::ExternalToolFailed { .. }
             ),
             "expected external tool error for gcp-sm, got: {err:?}"
         );
@@ -401,7 +403,8 @@ mod tests {
         assert!(
             matches!(
                 err,
-                CredentialError::ExternalToolNotFound(_) | CredentialError::ExternalToolFailed { .. }
+                CredentialError::ExternalToolNotFound(_)
+                    | CredentialError::ExternalToolFailed { .. }
             ),
             "expected external tool error for op, got: {err:?}"
         );
@@ -415,7 +418,8 @@ mod tests {
         assert!(
             matches!(
                 err,
-                CredentialError::ExternalToolNotFound(_) | CredentialError::ExternalToolFailed { .. }
+                CredentialError::ExternalToolNotFound(_)
+                    | CredentialError::ExternalToolFailed { .. }
             ),
             "expected external tool error for sops, got: {err:?}"
         );
@@ -429,7 +433,8 @@ mod tests {
         assert!(
             matches!(
                 err,
-                CredentialError::ExternalToolNotFound(_) | CredentialError::ExternalToolFailed { .. }
+                CredentialError::ExternalToolNotFound(_)
+                    | CredentialError::ExternalToolFailed { .. }
             ),
             "expected external tool error for k8s, got: {err:?}"
         );

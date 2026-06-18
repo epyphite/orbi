@@ -66,16 +66,31 @@ fn build_aws_manifest() -> CapabilityManifest {
     use Capability::*;
 
     let supported = [
-        Create, Destroy, Snapshot, Restore,
-        WatchMetric, Placement, VolumeEncrypt,
-        ImageImport, ImagePublish,
+        Create,
+        Destroy,
+        Snapshot,
+        Restore,
+        WatchMetric,
+        Placement,
+        VolumeEncrypt,
+        ImageImport,
+        ImagePublish,
     ];
 
     let unsupported = [
-        Pause, Resume, CustomKernel, Vsock, Balloon,
-        HotplugVolume, HotplugNetwork, LiveMigration,
-        NestedVirt, GpuPassthrough,
-        AlterCpuLive, AlterMemoryLive, VolumeResizeLive,
+        Pause,
+        Resume,
+        CustomKernel,
+        Vsock,
+        Balloon,
+        HotplugVolume,
+        HotplugNetwork,
+        LiveMigration,
+        NestedVirt,
+        GpuPassthrough,
+        AlterCpuLive,
+        AlterMemoryLive,
+        VolumeResizeLive,
     ];
 
     let mut capabilities = HashMap::new();
@@ -157,8 +172,7 @@ impl Driver for AwsEc2Driver {
             ];
 
             // Tag the instance with its name
-            let tag_spec =
-                format!("ResourceType=instance,Tags=[{{Key=Name,Value={vm_name}}}]");
+            let tag_spec = format!("ResourceType=instance,Tags=[{{Key=Name,Value={vm_name}}}]");
             run_params.push(("tag-specifications", &tag_spec));
 
             // SSH key pair reference
@@ -172,8 +186,7 @@ impl Driver for AwsEc2Driver {
                 user_data_path = if init.starts_with('/') || init.starts_with("./") {
                     format!("file://{init}")
                 } else {
-                    let tmp = std::env::temp_dir()
-                        .join(format!("kvmql-userdata-{}", &vm_name));
+                    let tmp = std::env::temp_dir().join(format!("kvmql-userdata-{}", &vm_name));
                     std::fs::write(&tmp, init)
                         .map_err(|e| format!("failed to write user-data temp file: {e}"))?;
                     format!("file://{}", tmp.to_string_lossy())
@@ -237,12 +250,11 @@ impl Driver for AwsEc2Driver {
         let volume_id = id.to_string();
         let description = destination.to_string();
 
-        let result = tokio::task::spawn_blocking(move || {
-            cli.ec2_create_snapshot(&volume_id, &description)
-        })
-        .await
-        .map_err(|e| DriverError::Internal(e.to_string()))?
-        .map_err(cli_err)?;
+        let result =
+            tokio::task::spawn_blocking(move || cli.ec2_create_snapshot(&volume_id, &description))
+                .await
+                .map_err(|e| DriverError::Internal(e.to_string()))?
+                .map_err(cli_err)?;
 
         let mut snapshot = mapper::map_ebs_snapshot(&result, &provider_id);
         if let Some(t) = tag {
@@ -261,12 +273,10 @@ impl Driver for AwsEc2Driver {
         let cli = self.cli.clone();
         let provider_id = self.region.clone();
 
-        let instances = tokio::task::spawn_blocking(move || {
-            cli.ec2_describe_instances(None)
-        })
-        .await
-        .map_err(|e| DriverError::Internal(e.to_string()))?
-        .map_err(cli_err)?;
+        let instances = tokio::task::spawn_blocking(move || cli.ec2_describe_instances(None))
+            .await
+            .map_err(|e| DriverError::Internal(e.to_string()))?
+            .map_err(cli_err)?;
 
         Ok(instances
             .iter()
@@ -340,12 +350,10 @@ impl Driver for AwsEc2Driver {
         let instance_id = vm_id.to_string();
         let dev = device.unwrap_or("/dev/xvdf").to_string();
 
-        tokio::task::spawn_blocking(move || {
-            cli.ec2_attach_volume(&volume_id, &instance_id, &dev)
-        })
-        .await
-        .map_err(|e| DriverError::Internal(e.to_string()))?
-        .map_err(cli_err)
+        tokio::task::spawn_blocking(move || cli.ec2_attach_volume(&volume_id, &instance_id, &dev))
+            .await
+            .map_err(|e| DriverError::Internal(e.to_string()))?
+            .map_err(cli_err)
     }
 
     async fn detach_volume(&self, vol_id: &str, _vm_id: &str) -> Result<(), DriverError> {

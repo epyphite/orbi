@@ -180,11 +180,7 @@ pub struct ApiCallDescription {
 /// Build a `MetricSample` from a machine-config response. Firecracker does
 /// not expose per-VM runtime metrics via its REST API, so we return the
 /// configured values as a baseline.
-pub fn metrics_from_machine_config(
-    vm_id: &str,
-    _vcpus: i32,
-    mem_mib: i32,
-) -> MetricSample {
+pub fn metrics_from_machine_config(vm_id: &str, _vcpus: i32, mem_mib: i32) -> MetricSample {
     MetricSample {
         microvm_id: vm_id.to_string(),
         sampled_at: chrono::Utc::now().to_rfc3339(),
@@ -267,10 +263,7 @@ mod tests {
         assert_eq!(calls[1].method, "PUT");
         assert_eq!(calls[1].path, "/boot-source");
         assert_eq!(calls[1].body["kernel_image_path"], "/boot/vmlinux");
-        assert_eq!(
-            calls[1].body["boot_args"],
-            "console=ttyS0 reboot=k panic=1"
-        );
+        assert_eq!(calls[1].body["boot_args"], "console=ttyS0 reboot=k panic=1");
 
         assert_eq!(calls[2].method, "PUT");
         assert_eq!(calls[2].path, "/drives/rootfs");

@@ -104,22 +104,22 @@ impl SshResourceProvisioner {
                 .client
                 .remove(id)
                 .map_err(|e| format!("failed to delete symlink {id}: {e}").into()),
-            "systemd_service" | "systemd_timer" => {
-                super::systemd::SystemdProvisioner::new(&self.client)
-                    .delete(resource_type, id, params)
-            }
+            "systemd_service" | "systemd_timer" => super::systemd::SystemdProvisioner::new(
+                &self.client,
+            )
+            .delete(resource_type, id, params),
             "nginx_vhost" | "nginx_proxy" => {
-                super::nginx::NginxProvisioner::new(&self.client)
-                    .delete(resource_type, id, params)
+                super::nginx::NginxProvisioner::new(&self.client).delete(resource_type, id, params)
             }
             "docker_container" | "docker_volume" | "docker_network" | "docker_compose" => {
-                super::docker::DockerProvisioner::new(&self.client)
-                    .delete(resource_type, id, params)
+                super::docker::DockerProvisioner::new(&self.client).delete(
+                    resource_type,
+                    id,
+                    params,
+                )
             }
-            "letsencrypt_cert" => {
-                super::letsencrypt::LetsencryptProvisioner::new(&self.client)
-                    .delete(resource_type, id, params)
-            }
+            "letsencrypt_cert" => super::letsencrypt::LetsencryptProvisioner::new(&self.client)
+                .delete(resource_type, id, params),
             other => Err(format!("unsupported ssh resource type: {other}").into()),
         }
     }
@@ -315,7 +315,10 @@ impl SshResourceProvisioner {
             .map_err(|_| "file resource requires either content or __content_bytes".to_string())?;
         let owner = params.get("owner").and_then(|v| v.as_str());
         let group = params.get("group").and_then(|v| v.as_str());
-        let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("0644");
+        let mode = params
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0644");
 
         let bytes = content.as_bytes();
         let desired_hash = sha256_hex(bytes);
@@ -384,7 +387,10 @@ impl SshResourceProvisioner {
         let path = param_str(params, "id")?;
         let owner = params.get("owner").and_then(|v| v.as_str());
         let group = params.get("group").and_then(|v| v.as_str());
-        let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("0755");
+        let mode = params
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0755");
 
         // Check if the directory already exists before creating it, so we
         // can report a proper status.
@@ -466,7 +472,11 @@ impl SshResourceProvisioner {
             .symlink_create(&target, &link_path)
             .map_err(|e| format!("ln -sfn failed: {e}"))?;
 
-        let status = if current.is_some() { "updated" } else { "created" };
+        let status = if current.is_some() {
+            "updated"
+        } else {
+            "created"
+        };
         Ok(ProvisionResult {
             status: status.into(),
             outputs: Some(json!({
@@ -593,7 +603,10 @@ mod tests {
         let script = vec![
             ("sha256sum", ok_out("MISSING\n")),
             // First stat (post-upload) returns mode that doesn't match.
-            ("stat -c", ok_out("5|644|root|root|2026-04-09 12:00:00 +0000\n")),
+            (
+                "stat -c",
+                ok_out("5|644|root|root|2026-04-09 12:00:00 +0000\n"),
+            ),
         ];
         let exec = ScriptedExec::new(script);
         let client = SshClient::new(Box::new(exec));

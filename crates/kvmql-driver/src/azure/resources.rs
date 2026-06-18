@@ -5,6 +5,12 @@ use tracing::{debug, error};
 
 use crate::provision::{param_str, param_str_or, ProvisionError, ProvisionResult};
 
+/// A named collector function used during resource discovery.
+type AzureDiscoverCollector = (
+    &'static str,
+    fn(&AzureResourceProvisioner) -> Result<Vec<Value>, ProvisionError>,
+);
+
 /// Azure resource provisioner that maps KVMQL resource types to `az` CLI commands.
 ///
 /// Uses `std::process::Command` with individual arguments (never shell
@@ -28,7 +34,11 @@ impl AzureResourceProvisioner {
 
     /// Provision a managed resource.  Dispatches to the appropriate `az` command
     /// based on `resource_type`.
-    pub fn create(&self, resource_type: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub fn create(
+        &self,
+        resource_type: &str,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "postgres" => self.create_postgres(params),
             "redis" => self.create_redis(params),
@@ -51,7 +61,12 @@ impl AzureResourceProvisioner {
     }
 
     /// Update a managed resource in-place.
-    pub fn update(&self, resource_type: &str, id: &str, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub fn update(
+        &self,
+        resource_type: &str,
+        id: &str,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         match resource_type {
             "postgres" => {
                 let mut args = vec!["postgres", "flexible-server", "update", "--name", id];
@@ -62,7 +77,10 @@ impl AzureResourceProvisioner {
                     args.extend(["--sku-name", v]);
                 }
                 let result = self.run_az(&args)?;
-                Ok(ProvisionResult { status: "updated".into(), outputs: Some(result) })
+                Ok(ProvisionResult {
+                    status: "updated".into(),
+                    outputs: Some(result),
+                })
             }
             other => Err(format!("update not yet implemented for resource type: {other}").into()),
         }
@@ -77,7 +95,14 @@ impl AzureResourceProvisioner {
             .collect();
 
         let args: Vec<&str> = match resource_type {
-            "postgres" => vec!["postgres", "flexible-server", "delete", "--name", id, "--yes"],
+            "postgres" => vec![
+                "postgres",
+                "flexible-server",
+                "delete",
+                "--name",
+                id,
+                "--yes",
+            ],
             "redis" => vec!["redis", "delete", "--name", id, "--yes"],
             "aks" => vec!["aks", "delete", "--name", id, "--yes"],
             "storage_account" => vec!["storage", "account", "delete", "--name", id, "--yes"],
@@ -105,7 +130,12 @@ impl AzureResourceProvisioner {
     }
 
     /// Delete a sub-resource that requires parent context (e.g. subnet needs vnet name).
-    pub fn delete_with_params(&self, resource_type: &str, id: &str, params: &Value) -> Result<(), ProvisionError> {
+    pub fn delete_with_params(
+        &self,
+        resource_type: &str,
+        id: &str,
+        params: &Value,
+    ) -> Result<(), ProvisionError> {
         match resource_type {
             "subnet" => self.delete_subnet(id, params),
             "nsg_rule" => self.delete_nsg_rule(id, params),
@@ -219,7 +249,11 @@ impl AzureResourceProvisioner {
     // ── Build args (for testing without execution) ───────────────────
 
     /// Build the `az` argument list that `create()` would use, WITHOUT executing.
-    pub fn build_create_args(&self, resource_type: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    pub fn build_create_args(
+        &self,
+        resource_type: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let raw = match resource_type {
             "postgres" => self.build_postgres_args(params)?,
             "redis" => self.build_redis_args(params)?,
@@ -244,7 +278,11 @@ impl AzureResourceProvisioner {
     }
 
     /// Build the `az` argument list that `delete()` would use, WITHOUT executing.
-    pub fn build_delete_args(&self, resource_type: &str, id: &str) -> Result<Vec<String>, ProvisionError> {
+    pub fn build_delete_args(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Vec<String>, ProvisionError> {
         let rg_args: Vec<String> = self
             .resource_group
             .iter()
@@ -252,7 +290,14 @@ impl AzureResourceProvisioner {
             .collect();
 
         let base: Vec<&str> = match resource_type {
-            "postgres" => vec!["postgres", "flexible-server", "delete", "--name", id, "--yes"],
+            "postgres" => vec![
+                "postgres",
+                "flexible-server",
+                "delete",
+                "--name",
+                id,
+                "--yes",
+            ],
             "redis" => vec!["redis", "delete", "--name", id, "--yes"],
             "aks" => vec!["aks", "delete", "--name", id, "--yes"],
             "storage_account" => vec!["storage", "account", "delete", "--name", id, "--yes"],
@@ -280,7 +325,12 @@ impl AzureResourceProvisioner {
 
     /// Build the `az` argument list for deleting sub-resources that require parent
     /// context, WITHOUT executing.
-    pub fn build_delete_args_with_params(&self, resource_type: &str, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    pub fn build_delete_args_with_params(
+        &self,
+        resource_type: &str,
+        id: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let raw = match resource_type {
             "subnet" => self.build_subnet_delete_args(id, params)?,
             "nsg_rule" => self.build_nsg_rule_delete_args(id, params)?,
@@ -318,7 +368,11 @@ impl AzureResourceProvisioner {
     }
 
     /// Build the argument list for AKS node pool scale.
-    fn build_scale_aks_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    fn build_scale_aks_args(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let node_count = param_str(params, "node_count")?;
         let nodepool = param_str_or(params, "nodepool", "nodepool1");
         let mut args = vec![
@@ -340,7 +394,11 @@ impl AzureResourceProvisioner {
     }
 
     /// Build the argument list for container app scale (replica count).
-    fn build_scale_container_app_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    fn build_scale_container_app_args(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let mut args = vec![
             "containerapp".into(),
             "update".into(),
@@ -363,7 +421,11 @@ impl AzureResourceProvisioner {
     }
 
     /// Build the argument list for AKS upgrade.
-    fn build_upgrade_aks_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    fn build_upgrade_aks_args(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let version = param_str(params, "kubernetes_version")?;
         let mut args = vec![
             "aks".into(),
@@ -442,9 +504,7 @@ impl AzureResourceProvisioner {
             cmd.arg("--subscription").arg(sub);
         }
 
-        let output = cmd
-            .output()
-            .map_err(|e| format!("failed to run az: {e}"))?;
+        let output = cmd.output().map_err(|e| format!("failed to run az: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -642,8 +702,11 @@ impl AzureResourceProvisioner {
     fn build_postgres_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let mut args = vec![
-            "postgres".into(), "flexible-server".into(), "create".into(),
-            "--name".into(), name,
+            "postgres".into(),
+            "flexible-server".into(),
+            "create".into(),
+            "--name".into(),
+            name,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -675,9 +738,12 @@ impl AzureResourceProvisioner {
         let name = param_str(params, "id")?;
         let sku = param_str_or(params, "sku", "Standard");
         let mut args = vec![
-            "redis".into(), "create".into(),
-            "--name".into(), name,
-            "--sku".into(), sku,
+            "redis".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--sku".into(),
+            sku,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -698,9 +764,12 @@ impl AzureResourceProvisioner {
         let name = param_str(params, "id")?;
         let node_count = param_str_or(params, "node_count", "3");
         let mut args = vec![
-            "aks".into(), "create".into(),
-            "--name".into(), name,
-            "--node-count".into(), node_count,
+            "aks".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--node-count".into(),
+            node_count,
             "--generate-ssh-keys".into(),
         ];
         if let Some(rg) = &self.resource_group {
@@ -722,9 +791,13 @@ impl AzureResourceProvisioner {
         let name = param_str(params, "id")?;
         let sku = param_str_or(params, "sku", "Standard_LRS");
         let mut args = vec![
-            "storage".into(), "account".into(), "create".into(),
-            "--name".into(), name,
-            "--sku".into(), sku,
+            "storage".into(),
+            "account".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--sku".into(),
+            sku,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -751,9 +824,13 @@ impl AzureResourceProvisioner {
             .map(|s| s.to_string())
             .unwrap_or_else(|| "10.0.0.0/16".to_string());
         let mut args = vec![
-            "network".into(), "vnet".into(), "create".into(),
-            "--name".into(), name,
-            "--address-prefix".into(), addr,
+            "network".into(),
+            "vnet".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--address-prefix".into(),
+            addr,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -765,8 +842,11 @@ impl AzureResourceProvisioner {
     fn build_nsg_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let mut args = vec![
-            "network".into(), "nsg".into(), "create".into(),
-            "--name".into(), name,
+            "network".into(),
+            "nsg".into(),
+            "create".into(),
+            "--name".into(),
+            name,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -779,9 +859,12 @@ impl AzureResourceProvisioner {
         let name = param_str(params, "id")?;
         let sku = param_str_or(params, "sku", "Standard");
         let mut args = vec![
-            "acr".into(), "create".into(),
-            "--name".into(), name,
-            "--sku".into(), sku,
+            "acr".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--sku".into(),
+            sku,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -796,8 +879,12 @@ impl AzureResourceProvisioner {
     fn build_dns_zone_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
         let name = param_str(params, "id")?;
         let mut args = vec![
-            "network".into(), "dns".into(), "zone".into(), "create".into(),
-            "--name".into(), name,
+            "network".into(),
+            "dns".into(),
+            "zone".into(),
+            "create".into(),
+            "--name".into(),
+            name,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -810,9 +897,12 @@ impl AzureResourceProvisioner {
         let name = param_str(params, "id")?;
         let image = param_str(params, "image")?;
         let mut args = vec![
-            "containerapp".into(), "create".into(),
-            "--name".into(), name,
-            "--image".into(), image,
+            "containerapp".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--image".into(),
+            image,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -844,10 +934,15 @@ impl AzureResourceProvisioner {
         let image = param_str(params, "image")?;
         let trigger = param_str_or(params, "trigger_type", "Manual");
         let mut args = vec![
-            "containerapp".into(), "job".into(), "create".into(),
-            "--name".into(), name,
-            "--image".into(), image,
-            "--trigger-type".into(), trigger,
+            "containerapp".into(),
+            "job".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--image".into(),
+            image,
+            "--trigger-type".into(),
+            trigger,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -872,9 +967,13 @@ impl AzureResourceProvisioner {
         let name = param_str(params, "id")?;
         let sku = param_str_or(params, "sku", "Standard");
         let mut args = vec![
-            "network".into(), "lb".into(), "create".into(),
-            "--name".into(), name,
-            "--sku".into(), sku,
+            "network".into(),
+            "lb".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--sku".into(),
+            sku,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -889,7 +988,10 @@ impl AzureResourceProvisioner {
         let args = self.build_subnet_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
-        Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(result),
+        })
     }
 
     fn delete_subnet(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
@@ -904,10 +1006,16 @@ impl AzureResourceProvisioner {
         let vnet = param_str(params, "vnet")?;
         let prefix = param_str(params, "address_prefix")?;
         let mut args = vec![
-            "network".into(), "vnet".into(), "subnet".into(), "create".into(),
-            "--name".into(), name,
-            "--vnet-name".into(), vnet,
-            "--address-prefixes".into(), prefix,
+            "network".into(),
+            "vnet".into(),
+            "subnet".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--vnet-name".into(),
+            vnet,
+            "--address-prefixes".into(),
+            prefix,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -924,12 +1032,21 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_subnet_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    fn build_subnet_delete_args(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let vnet = param_str(params, "vnet")?;
         let mut args: Vec<String> = vec![
-            "network".into(), "vnet".into(), "subnet".into(), "delete".into(),
-            "--name".into(), id.into(),
-            "--vnet-name".into(), vnet,
+            "network".into(),
+            "vnet".into(),
+            "subnet".into(),
+            "delete".into(),
+            "--name".into(),
+            id.into(),
+            "--vnet-name".into(),
+            vnet,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -945,7 +1062,10 @@ impl AzureResourceProvisioner {
         let args = self.build_nsg_rule_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
-        Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(result),
+        })
     }
 
     fn delete_nsg_rule(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
@@ -963,13 +1083,22 @@ impl AzureResourceProvisioner {
         let access = param_str_or(params, "access", "Allow");
         let protocol = param_str_or(params, "protocol", "Tcp");
         let mut args = vec![
-            "network".into(), "nsg".into(), "rule".into(), "create".into(),
-            "--name".into(), name,
-            "--nsg-name".into(), nsg,
-            "--priority".into(), priority,
-            "--direction".into(), direction,
-            "--access".into(), access,
-            "--protocol".into(), protocol,
+            "network".into(),
+            "nsg".into(),
+            "rule".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--nsg-name".into(),
+            nsg,
+            "--priority".into(),
+            priority,
+            "--direction".into(),
+            direction,
+            "--access".into(),
+            access,
+            "--protocol".into(),
+            protocol,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -1000,12 +1129,21 @@ impl AzureResourceProvisioner {
         Ok(args)
     }
 
-    fn build_nsg_rule_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    fn build_nsg_rule_delete_args(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let nsg = param_str(params, "nsg")?;
         let mut args: Vec<String> = vec![
-            "network".into(), "nsg".into(), "rule".into(), "delete".into(),
-            "--name".into(), id.into(),
-            "--nsg-name".into(), nsg,
+            "network".into(),
+            "nsg".into(),
+            "rule".into(),
+            "delete".into(),
+            "--name".into(),
+            id.into(),
+            "--nsg-name".into(),
+            nsg,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -1020,7 +1158,10 @@ impl AzureResourceProvisioner {
         let args = self.build_vnet_peering_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
-        Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(result),
+        })
     }
 
     fn delete_vnet_peering(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
@@ -1035,31 +1176,54 @@ impl AzureResourceProvisioner {
         let vnet = param_str(params, "vnet")?;
         let remote_vnet = param_str(params, "remote_vnet")?;
         let mut args = vec![
-            "network".into(), "vnet".into(), "peering".into(), "create".into(),
-            "--name".into(), name,
-            "--vnet-name".into(), vnet,
-            "--remote-vnet".into(), remote_vnet,
+            "network".into(),
+            "vnet".into(),
+            "peering".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--vnet-name".into(),
+            vnet,
+            "--remote-vnet".into(),
+            remote_vnet,
             "--allow-vnet-access".into(),
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
             args.push(rg.clone());
         }
-        if params.get("allow_forwarded_traffic").and_then(|v| v.as_bool()) == Some(true) {
+        if params
+            .get("allow_forwarded_traffic")
+            .and_then(|v| v.as_bool())
+            == Some(true)
+        {
             args.push("--allow-forwarded-traffic".into());
         }
-        if params.get("allow_gateway_transit").and_then(|v| v.as_bool()) == Some(true) {
+        if params
+            .get("allow_gateway_transit")
+            .and_then(|v| v.as_bool())
+            == Some(true)
+        {
             args.push("--allow-gateway-transit".into());
         }
         Ok(args)
     }
 
-    fn build_vnet_peering_delete_args(&self, id: &str, params: &Value) -> Result<Vec<String>, ProvisionError> {
+    fn build_vnet_peering_delete_args(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
         let vnet = param_str(params, "vnet")?;
         let mut args: Vec<String> = vec![
-            "network".into(), "vnet".into(), "peering".into(), "delete".into(),
-            "--name".into(), id.into(),
-            "--vnet-name".into(), vnet,
+            "network".into(),
+            "vnet".into(),
+            "peering".into(),
+            "delete".into(),
+            "--name".into(),
+            id.into(),
+            "--vnet-name".into(),
+            vnet,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -1074,15 +1238,23 @@ impl AzureResourceProvisioner {
         let args = self.build_pg_database_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
-        Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(result),
+        })
     }
 
     fn delete_pg_database(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let server = param_str(params, "server")?;
         let mut args: Vec<String> = vec![
-            "postgres".into(), "flexible-server".into(), "db".into(), "delete".into(),
-            "--database-name".into(), id.into(),
-            "--server-name".into(), server,
+            "postgres".into(),
+            "flexible-server".into(),
+            "db".into(),
+            "delete".into(),
+            "--database-name".into(),
+            id.into(),
+            "--server-name".into(),
+            server,
             "--yes".into(),
         ];
         if let Some(rg) = &self.resource_group {
@@ -1098,9 +1270,14 @@ impl AzureResourceProvisioner {
         let name = param_str(params, "id")?;
         let server = param_str(params, "server")?;
         let mut args = vec![
-            "postgres".into(), "flexible-server".into(), "db".into(), "create".into(),
-            "--database-name".into(), name,
-            "--server-name".into(), server,
+            "postgres".into(),
+            "flexible-server".into(),
+            "db".into(),
+            "create".into(),
+            "--database-name".into(),
+            name,
+            "--server-name".into(),
+            server,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -1123,15 +1300,24 @@ impl AzureResourceProvisioner {
         let args = self.build_dns_vnet_link_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
-        Ok(ProvisionResult { status: "created".into(), outputs: Some(result) })
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(result),
+        })
     }
 
     fn delete_dns_vnet_link(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
         let zone = param_str(params, "zone_name")?;
         let mut args: Vec<String> = vec![
-            "network".into(), "private-dns".into(), "link".into(), "vnet".into(), "delete".into(),
-            "--name".into(), id.into(),
-            "--zone-name".into(), zone,
+            "network".into(),
+            "private-dns".into(),
+            "link".into(),
+            "vnet".into(),
+            "delete".into(),
+            "--name".into(),
+            id.into(),
+            "--zone-name".into(),
+            zone,
             "--yes".into(),
         ];
         if let Some(rg) = &self.resource_group {
@@ -1148,10 +1334,17 @@ impl AzureResourceProvisioner {
         let zone = param_str(params, "zone_name")?;
         let vnet = param_str(params, "vnet")?;
         let mut args = vec![
-            "network".into(), "private-dns".into(), "link".into(), "vnet".into(), "create".into(),
-            "--name".into(), name,
-            "--zone-name".into(), zone,
-            "--virtual-network".into(), vnet,
+            "network".into(),
+            "private-dns".into(),
+            "link".into(),
+            "vnet".into(),
+            "create".into(),
+            "--name".into(),
+            name,
+            "--zone-name".into(),
+            zone,
+            "--virtual-network".into(),
+            vnet,
         ];
         if let Some(rg) = &self.resource_group {
             args.push("--resource-group".into());
@@ -1172,7 +1365,7 @@ impl AzureResourceProvisioner {
     pub fn discover(&self) -> Result<Vec<Value>, ProvisionError> {
         let mut all: Vec<Value> = Vec::new();
 
-        let collectors: Vec<(&str, fn(&Self) -> Result<Vec<Value>, ProvisionError>)> = vec![
+        let collectors: Vec<AzureDiscoverCollector> = vec![
             ("vm", Self::discover_vms),
             ("postgres", Self::discover_postgres),
             ("pg_database", Self::discover_pg_databases),
@@ -1226,7 +1419,11 @@ impl AzureResourceProvisioner {
                     Value::Null => Vec::new(),
                     other => vec![other],
                 };
-                debug!(provider = "azure", count = items.len(), "discover completed");
+                debug!(
+                    provider = "azure",
+                    count = items.len(),
+                    "discover completed"
+                );
                 Ok(items)
             }
             Err(e) => {
@@ -1238,289 +1435,330 @@ impl AzureResourceProvisioner {
 
     fn discover_vms(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["vm", "list", "-d"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "vm",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "size": v.get("hardwareProfile")
-                        .and_then(|hp| hp.get("vmSize"))
-                        .and_then(|s| s.as_str())
-                        .unwrap_or(""),
-                    "os": v.get("storageProfile")
-                        .and_then(|sp| sp.get("osDisk"))
-                        .and_then(|od| od.get("osType"))
-                        .and_then(|s| s.as_str())
-                        .unwrap_or(""),
-                    "location": str_field(&v, "location"),
-                },
-                "outputs": {
-                    "state": str_field(&v, "powerState"),
-                    "public_ip": str_field(&v, "publicIps"),
-                    "private_ip": str_field(&v, "privateIps"),
-                }
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "vm",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "size": v.get("hardwareProfile")
+                            .and_then(|hp| hp.get("vmSize"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or(""),
+                        "os": v.get("storageProfile")
+                            .and_then(|sp| sp.get("osDisk"))
+                            .and_then(|od| od.get("osType"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or(""),
+                        "location": str_field(&v, "location"),
+                    },
+                    "outputs": {
+                        "state": str_field(&v, "powerState"),
+                        "public_ip": str_field(&v, "publicIps"),
+                        "private_ip": str_field(&v, "privateIps"),
+                    }
+                })
             })
-        }).collect())
+            .collect())
     }
 
     fn discover_postgres(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["postgres", "flexible-server", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "postgres",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "version": str_field(&v, "version"),
-                    "sku": v.get("sku").and_then(|s| s.get("name"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                    "storage_gb": v.get("storage")
-                        .and_then(|s| s.get("storageSizeGb"))
-                        .and_then(|s| s.as_u64()).unwrap_or(0),
-                },
-                "outputs": {
-                    "state": str_field(&v, "state"),
-                    "fqdn": str_field(&v, "fullyQualifiedDomainName"),
-                }
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "postgres",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "version": str_field(&v, "version"),
+                        "sku": v.get("sku").and_then(|s| s.get("name"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                        "storage_gb": v.get("storage")
+                            .and_then(|s| s.get("storageSizeGb"))
+                            .and_then(|s| s.as_u64()).unwrap_or(0),
+                    },
+                    "outputs": {
+                        "state": str_field(&v, "state"),
+                        "fqdn": str_field(&v, "fullyQualifiedDomainName"),
+                    }
+                })
             })
-        }).collect())
+            .collect())
     }
 
     fn discover_redis(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["redis", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "redis",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "sku": v.get("sku").and_then(|s| s.get("name"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                    "minimum_tls_version": str_field(&v, "minimumTlsVersion"),
-                },
-                "outputs": {
-                    "host_name": str_field(&v, "hostName"),
-                    "ssl_port": v.get("sslPort").and_then(|s| s.as_u64()).unwrap_or(0),
-                }
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "redis",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "sku": v.get("sku").and_then(|s| s.get("name"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                        "minimum_tls_version": str_field(&v, "minimumTlsVersion"),
+                    },
+                    "outputs": {
+                        "host_name": str_field(&v, "hostName"),
+                        "ssl_port": v.get("sslPort").and_then(|s| s.as_u64()).unwrap_or(0),
+                    }
+                })
             })
-        }).collect())
+            .collect())
     }
 
     fn discover_aks(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["aks", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            let node_count = v.get("agentPoolProfiles")
-                .and_then(|a| a.as_array())
-                .and_then(|a| a.first())
-                .and_then(|p| p.get("count"))
-                .and_then(|c| c.as_u64())
-                .unwrap_or(0);
-            let vm_size = v.get("agentPoolProfiles")
-                .and_then(|a| a.as_array())
-                .and_then(|a| a.first())
-                .and_then(|p| p.get("vmSize"))
-                .and_then(|s| s.as_str())
-                .unwrap_or("");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "aks",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "kubernetes_version": str_field(&v, "kubernetesVersion"),
-                    "node_count": node_count,
-                    "vm_size": vm_size,
-                },
-                "outputs": {
-                    "fqdn": str_field(&v, "fqdn"),
-                    "state": v.get("powerState")
-                        .and_then(|ps| ps.get("code"))
-                        .and_then(|s| s.as_str())
-                        .unwrap_or(""),
-                }
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                let node_count = v
+                    .get("agentPoolProfiles")
+                    .and_then(|a| a.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.get("count"))
+                    .and_then(|c| c.as_u64())
+                    .unwrap_or(0);
+                let vm_size = v
+                    .get("agentPoolProfiles")
+                    .and_then(|a| a.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.get("vmSize"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "aks",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "kubernetes_version": str_field(&v, "kubernetesVersion"),
+                        "node_count": node_count,
+                        "vm_size": vm_size,
+                    },
+                    "outputs": {
+                        "fqdn": str_field(&v, "fqdn"),
+                        "state": v.get("powerState")
+                            .and_then(|ps| ps.get("code"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or(""),
+                    }
+                })
             })
-        }).collect())
+            .collect())
     }
 
     fn discover_vnets(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["network", "vnet", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            let address_space = v.get("addressSpace")
-                .and_then(|a| a.get("addressPrefixes"))
-                .cloned()
-                .unwrap_or(Value::Array(Vec::new()));
-            let subnet_count = v.get("subnets")
-                .and_then(|s| s.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            serde_json::json!({
-                "id": name,
-                "resource_type": "vnet",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "address_space": address_space,
-                    "subnet_count": subnet_count,
-                },
-                "outputs": {}
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                let address_space = v
+                    .get("addressSpace")
+                    .and_then(|a| a.get("addressPrefixes"))
+                    .cloned()
+                    .unwrap_or(Value::Array(Vec::new()));
+                let subnet_count = v
+                    .get("subnets")
+                    .and_then(|s| s.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "vnet",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "address_space": address_space,
+                        "subnet_count": subnet_count,
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect())
+            .collect())
     }
 
     fn discover_nsgs(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["network", "nsg", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            let rule_count = v.get("securityRules")
-                .and_then(|s| s.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            serde_json::json!({
-                "id": name,
-                "resource_type": "nsg",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "rule_count": rule_count,
-                    "location": str_field(&v, "location"),
-                },
-                "outputs": {}
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                let rule_count = v
+                    .get("securityRules")
+                    .and_then(|s| s.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "nsg",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "rule_count": rule_count,
+                        "location": str_field(&v, "location"),
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect())
+            .collect())
     }
 
     fn discover_storage_accounts(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["storage", "account", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "storage_account",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "sku": v.get("sku").and_then(|s| s.get("name"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                    "location": str_field(&v, "location"),
-                    "minimum_tls_version": str_field(&v, "minimumTlsVersion"),
-                },
-                "outputs": {}
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "storage_account",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "sku": v.get("sku").and_then(|s| s.get("name"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                        "location": str_field(&v, "location"),
+                        "minimum_tls_version": str_field(&v, "minimumTlsVersion"),
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect())
+            .collect())
     }
 
     fn discover_keyvaults(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["keyvault", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "keyvault",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "location": str_field(&v, "location"),
-                },
-                "outputs": {}
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "keyvault",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "location": str_field(&v, "location"),
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect())
+            .collect())
     }
 
     // ── container_registry (ACR) ─────────────────────────────
 
     fn discover_container_registries(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["acr", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "container_registry",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "sku": v.get("sku").and_then(|s| s.get("name"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                    "location": str_field(&v, "location"),
-                    "admin_enabled": v.get("adminUserEnabled")
-                        .and_then(|b| b.as_bool()).unwrap_or(false),
-                },
-                "outputs": {
-                    "login_server": str_field(&v, "loginServer"),
-                }
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "container_registry",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "sku": v.get("sku").and_then(|s| s.get("name"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                        "location": str_field(&v, "location"),
+                        "admin_enabled": v.get("adminUserEnabled")
+                            .and_then(|b| b.as_bool()).unwrap_or(false),
+                    },
+                    "outputs": {
+                        "login_server": str_field(&v, "loginServer"),
+                    }
+                })
             })
-        }).collect())
+            .collect())
     }
 
     // ── container_app ────────────────────────────────────────
 
     fn discover_container_apps(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["containerapp", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            let image = v.get("properties")
-                .and_then(|p| p.get("template"))
-                .and_then(|t| t.get("containers"))
-                .and_then(|c| c.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|c| c.get("image"))
-                .and_then(|s| s.as_str())
-                .unwrap_or("");
-            let fqdn = v.get("properties")
-                .and_then(|p| p.get("configuration"))
-                .and_then(|c| c.get("ingress"))
-                .and_then(|i| i.get("fqdn"))
-                .and_then(|s| s.as_str())
-                .unwrap_or("");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "container_app",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "location": str_field(&v, "location"),
-                    "image": image,
-                    "state": v.get("properties")
-                        .and_then(|p| p.get("runningStatus"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                },
-                "outputs": { "fqdn": fqdn }
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                let image = v
+                    .get("properties")
+                    .and_then(|p| p.get("template"))
+                    .and_then(|t| t.get("containers"))
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("image"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                let fqdn = v
+                    .get("properties")
+                    .and_then(|p| p.get("configuration"))
+                    .and_then(|c| c.get("ingress"))
+                    .and_then(|i| i.get("fqdn"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "container_app",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "location": str_field(&v, "location"),
+                        "image": image,
+                        "state": v.get("properties")
+                            .and_then(|p| p.get("runningStatus"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                    },
+                    "outputs": { "fqdn": fqdn }
+                })
             })
-        }).collect())
+            .collect())
     }
 
     // ── container_job ────────────────────────────────────────
 
     fn discover_container_jobs(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["containerapp", "job", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            let schedule = v.get("properties")
-                .and_then(|p| p.get("configuration"))
-                .and_then(|c| c.get("scheduleTriggerConfig"))
-                .and_then(|s| s.get("cronExpression"))
-                .and_then(|s| s.as_str())
-                .unwrap_or("");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "container_job",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "location": str_field(&v, "location"),
-                    "schedule": schedule,
-                },
-                "outputs": {}
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                let schedule = v
+                    .get("properties")
+                    .and_then(|p| p.get("configuration"))
+                    .and_then(|c| c.get("scheduleTriggerConfig"))
+                    .and_then(|s| s.get("cronExpression"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "container_job",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "location": str_field(&v, "location"),
+                        "schedule": schedule,
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect())
+            .collect())
     }
 
     // ── dns_zone (public and private) ────────────────────────
@@ -1573,21 +1811,24 @@ impl AzureResourceProvisioner {
 
     fn discover_load_balancers(&self) -> Result<Vec<Value>, ProvisionError> {
         let items = self.run_az_list(&["network", "lb", "list"])?;
-        Ok(items.into_iter().map(|v| {
-            let name = str_field(&v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "load_balancer",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(&v, "resourceGroup"),
-                    "sku": v.get("sku").and_then(|s| s.get("name"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                    "location": str_field(&v, "location"),
-                },
-                "outputs": {}
+        Ok(items
+            .into_iter()
+            .map(|v| {
+                let name = str_field(&v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "load_balancer",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(&v, "resourceGroup"),
+                        "sku": v.get("sku").and_then(|s| s.get("name"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                        "location": str_field(&v, "location"),
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect())
+            .collect())
     }
 
     // ── Nested: subnets within VNets ─────────────────────────
@@ -1665,11 +1906,18 @@ impl AzureResourceProvisioner {
                 continue;
             }
             // List databases for this server
-            let server_dbs = self.run_az_list(&[
-                "postgres", "flexible-server", "db", "list",
-                "--server-name", &server_name,
-                "--resource-group", &rg,
-            ]).unwrap_or_default();
+            let server_dbs = self
+                .run_az_list(&[
+                    "postgres",
+                    "flexible-server",
+                    "db",
+                    "list",
+                    "--server-name",
+                    server_name,
+                    "--resource-group",
+                    rg,
+                ])
+                .unwrap_or_default();
             for db in server_dbs {
                 let name = str_field(&db, "name");
                 // Skip system databases
@@ -1780,7 +2028,9 @@ mod tests {
     fn test_delete_unknown_type() {
         let p = AzureResourceProvisioner::new(None, None);
         let err = p.build_delete_args("not_a_thing", "x").unwrap_err();
-        assert!(err.to_string().contains("unsupported resource type for delete"));
+        assert!(err
+            .to_string()
+            .contains("unsupported resource type for delete"));
     }
 
     // ── Argument construction tests ─────────────────────────────────
@@ -2116,7 +2366,9 @@ mod tests {
     fn test_subnet_delete_args() {
         let p = AzureResourceProvisioner::new(None, Some("rg-net"));
         let params = serde_json::json!({"vnet": "acme-vnet"});
-        let args = p.build_delete_args_with_params("subnet", "app-subnet", &params).unwrap();
+        let args = p
+            .build_delete_args_with_params("subnet", "app-subnet", &params)
+            .unwrap();
 
         assert!(args.contains(&"network".to_string()));
         assert!(args.contains(&"vnet".to_string()));
@@ -2201,7 +2453,9 @@ mod tests {
     fn test_nsg_rule_delete_args() {
         let p = AzureResourceProvisioner::new(None, Some("rg-sec"));
         let params = serde_json::json!({"nsg": "acme-nsg"});
-        let args = p.build_delete_args_with_params("nsg_rule", "allow-ssh", &params).unwrap();
+        let args = p
+            .build_delete_args_with_params("nsg_rule", "allow-ssh", &params)
+            .unwrap();
 
         assert!(args.contains(&"network".to_string()));
         assert!(args.contains(&"nsg".to_string()));
@@ -2413,7 +2667,9 @@ mod tests {
     #[test]
     fn test_restore_unsupported_type() {
         let p = AzureResourceProvisioner::new(None, None);
-        let err = p.build_restore_args("aks", "k8s1", "some-source").unwrap_err();
+        let err = p
+            .build_restore_args("aks", "k8s1", "some-source")
+            .unwrap_err();
         assert!(err.to_string().contains("restore not supported"));
     }
 
@@ -2489,7 +2745,9 @@ mod tests {
     fn test_upgrade_unsupported_type() {
         let p = AzureResourceProvisioner::new(None, None);
         let params = serde_json::json!({"kubernetes_version": "1.29"});
-        let err = p.build_upgrade_args("redis", "cache1", &params).unwrap_err();
+        let err = p
+            .build_upgrade_args("redis", "cache1", &params)
+            .unwrap_err();
         assert!(err.to_string().contains("upgrade not supported"));
     }
 
@@ -2509,32 +2767,37 @@ mod tests {
                 "location": "eastus2"
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "vm",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "size": v.get("hardwareProfile")
-                        .and_then(|hp| hp.get("vmSize"))
-                        .and_then(|s| s.as_str())
-                        .unwrap_or(""),
-                    "os": v.get("storageProfile")
-                        .and_then(|sp| sp.get("osDisk"))
-                        .and_then(|od| od.get("osType"))
-                        .and_then(|s| s.as_str())
-                        .unwrap_or(""),
-                    "location": str_field(v, "location"),
-                },
-                "outputs": {
-                    "state": str_field(v, "powerState"),
-                    "public_ip": str_field(v, "publicIps"),
-                    "private_ip": str_field(v, "privateIps"),
-                }
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "vm",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "size": v.get("hardwareProfile")
+                            .and_then(|hp| hp.get("vmSize"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or(""),
+                        "os": v.get("storageProfile")
+                            .and_then(|sp| sp.get("osDisk"))
+                            .and_then(|od| od.get("osType"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or(""),
+                        "location": str_field(v, "location"),
+                    },
+                    "outputs": {
+                        "state": str_field(v, "powerState"),
+                        "public_ip": str_field(v, "publicIps"),
+                        "private_ip": str_field(v, "privateIps"),
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["id"], "web-vm-01");
@@ -2560,27 +2823,32 @@ mod tests {
                 "fullyQualifiedDomainName": "acme-pg.postgres.database.azure.com"
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "postgres",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "version": str_field(v, "version"),
-                    "sku": v.get("sku").and_then(|s| s.get("name"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                    "storage_gb": v.get("storage")
-                        .and_then(|s| s.get("storageSizeGb"))
-                        .and_then(|s| s.as_u64()).unwrap_or(0),
-                },
-                "outputs": {
-                    "state": str_field(v, "state"),
-                    "fqdn": str_field(v, "fullyQualifiedDomainName"),
-                }
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "postgres",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "version": str_field(v, "version"),
+                        "sku": v.get("sku").and_then(|s| s.get("name"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                        "storage_gb": v.get("storage")
+                            .and_then(|s| s.get("storageSizeGb"))
+                            .and_then(|s| s.as_u64()).unwrap_or(0),
+                    },
+                    "outputs": {
+                        "state": str_field(v, "state"),
+                        "fqdn": str_field(v, "fullyQualifiedDomainName"),
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["name"], "acme-pg");
@@ -2588,7 +2856,10 @@ mod tests {
         assert_eq!(items[0]["config"]["sku"], "Standard_B1ms");
         assert_eq!(items[0]["config"]["storage_gb"], 128);
         assert_eq!(items[0]["outputs"]["state"], "Ready");
-        assert_eq!(items[0]["outputs"]["fqdn"], "acme-pg.postgres.database.azure.com");
+        assert_eq!(
+            items[0]["outputs"]["fqdn"],
+            "acme-pg.postgres.database.azure.com"
+        );
     }
 
     #[test]
@@ -2605,46 +2876,56 @@ mod tests {
                 "powerState": { "code": "Running" }
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            let node_count = v.get("agentPoolProfiles")
-                .and_then(|a| a.as_array())
-                .and_then(|a| a.first())
-                .and_then(|p| p.get("count"))
-                .and_then(|c| c.as_u64())
-                .unwrap_or(0);
-            let vm_size = v.get("agentPoolProfiles")
-                .and_then(|a| a.as_array())
-                .and_then(|a| a.first())
-                .and_then(|p| p.get("vmSize"))
-                .and_then(|s| s.as_str())
-                .unwrap_or("");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "aks",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "kubernetes_version": str_field(v, "kubernetesVersion"),
-                    "node_count": node_count,
-                    "vm_size": vm_size,
-                },
-                "outputs": {
-                    "fqdn": str_field(v, "fqdn"),
-                    "state": v.get("powerState")
-                        .and_then(|ps| ps.get("code"))
-                        .and_then(|s| s.as_str())
-                        .unwrap_or(""),
-                }
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                let node_count = v
+                    .get("agentPoolProfiles")
+                    .and_then(|a| a.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.get("count"))
+                    .and_then(|c| c.as_u64())
+                    .unwrap_or(0);
+                let vm_size = v
+                    .get("agentPoolProfiles")
+                    .and_then(|a| a.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.get("vmSize"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "aks",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "kubernetes_version": str_field(v, "kubernetesVersion"),
+                        "node_count": node_count,
+                        "vm_size": vm_size,
+                    },
+                    "outputs": {
+                        "fqdn": str_field(v, "fqdn"),
+                        "state": v.get("powerState")
+                            .and_then(|ps| ps.get("code"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or(""),
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["name"], "prod-k8s");
         assert_eq!(items[0]["config"]["kubernetes_version"], "1.28.5");
         assert_eq!(items[0]["config"]["node_count"], 5);
         assert_eq!(items[0]["config"]["vm_size"], "Standard_D8s_v3");
-        assert_eq!(items[0]["outputs"]["fqdn"], "prod-k8s-dns-abc123.hcp.eastus.azmk8s.io");
+        assert_eq!(
+            items[0]["outputs"]["fqdn"],
+            "prod-k8s-dns-abc123.hcp.eastus.azmk8s.io"
+        );
         assert_eq!(items[0]["outputs"]["state"], "Running");
     }
 
@@ -2661,28 +2942,35 @@ mod tests {
                 ]
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            let address_space = v.get("addressSpace")
-                .and_then(|a| a.get("addressPrefixes"))
-                .cloned()
-                .unwrap_or(Value::Array(Vec::new()));
-            let subnet_count = v.get("subnets")
-                .and_then(|s| s.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            serde_json::json!({
-                "id": name,
-                "resource_type": "vnet",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "address_space": address_space,
-                    "subnet_count": subnet_count,
-                },
-                "outputs": {}
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                let address_space = v
+                    .get("addressSpace")
+                    .and_then(|a| a.get("addressPrefixes"))
+                    .cloned()
+                    .unwrap_or(Value::Array(Vec::new()));
+                let subnet_count = v
+                    .get("subnets")
+                    .and_then(|s| s.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "vnet",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "address_space": address_space,
+                        "subnet_count": subnet_count,
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["name"], "acme-vnet");
@@ -2711,24 +2999,30 @@ mod tests {
                 "location": "westus2"
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            let rule_count = v.get("securityRules")
-                .and_then(|s| s.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            serde_json::json!({
-                "id": name,
-                "resource_type": "nsg",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "rule_count": rule_count,
-                    "location": str_field(v, "location"),
-                },
-                "outputs": {}
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                let rule_count = v
+                    .get("securityRules")
+                    .and_then(|s| s.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "nsg",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "rule_count": rule_count,
+                        "location": str_field(v, "location"),
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["name"], "web-nsg");
@@ -2747,22 +3041,27 @@ mod tests {
                 "minimumTlsVersion": "TLS1_2"
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "storage_account",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "sku": v.get("sku").and_then(|s| s.get("name"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                    "location": str_field(v, "location"),
-                    "minimum_tls_version": str_field(v, "minimumTlsVersion"),
-                },
-                "outputs": {}
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "storage_account",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "sku": v.get("sku").and_then(|s| s.get("name"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                        "location": str_field(v, "location"),
+                        "minimum_tls_version": str_field(v, "minimumTlsVersion"),
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["name"], "acmestorage");
@@ -2779,19 +3078,24 @@ mod tests {
                 "location": "centralus"
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "keyvault",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "location": str_field(v, "location"),
-                },
-                "outputs": {}
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "keyvault",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "location": str_field(v, "location"),
+                    },
+                    "outputs": {}
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["name"], "acme-kv");
@@ -2811,30 +3115,38 @@ mod tests {
                 "minimumTlsVersion": "1.2"
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "redis",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "sku": v.get("sku").and_then(|s| s.get("name"))
-                        .and_then(|s| s.as_str()).unwrap_or(""),
-                    "minimum_tls_version": str_field(v, "minimumTlsVersion"),
-                },
-                "outputs": {
-                    "host_name": str_field(v, "hostName"),
-                    "ssl_port": v.get("sslPort").and_then(|s| s.as_u64()).unwrap_or(0),
-                }
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "redis",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "sku": v.get("sku").and_then(|s| s.get("name"))
+                            .and_then(|s| s.as_str()).unwrap_or(""),
+                        "minimum_tls_version": str_field(v, "minimumTlsVersion"),
+                    },
+                    "outputs": {
+                        "host_name": str_field(v, "hostName"),
+                        "ssl_port": v.get("sslPort").and_then(|s| s.as_u64()).unwrap_or(0),
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["name"], "acme-cache");
         assert_eq!(items[0]["config"]["sku"], "Premium");
         assert_eq!(items[0]["config"]["minimum_tls_version"], "1.2");
-        assert_eq!(items[0]["outputs"]["host_name"], "acme-cache.redis.cache.windows.net");
+        assert_eq!(
+            items[0]["outputs"]["host_name"],
+            "acme-cache.redis.cache.windows.net"
+        );
         assert_eq!(items[0]["outputs"]["ssl_port"], 6380);
     }
 
@@ -2862,32 +3174,37 @@ mod tests {
                 "location": "eastus"
             }
         ]);
-        let items: Vec<Value> = sample.as_array().unwrap().iter().map(|v| {
-            let name = str_field(v, "name");
-            serde_json::json!({
-                "id": name,
-                "resource_type": "vm",
-                "name": name,
-                "config": {
-                    "resource_group": str_field(v, "resourceGroup"),
-                    "size": v.get("hardwareProfile")
-                        .and_then(|hp| hp.get("vmSize"))
-                        .and_then(|s| s.as_str())
-                        .unwrap_or(""),
-                    "os": v.get("storageProfile")
-                        .and_then(|sp| sp.get("osDisk"))
-                        .and_then(|od| od.get("osType"))
-                        .and_then(|s| s.as_str())
-                        .unwrap_or(""),
-                    "location": str_field(v, "location"),
-                },
-                "outputs": {
-                    "state": str_field(v, "powerState"),
-                    "public_ip": str_field(v, "publicIps"),
-                    "private_ip": str_field(v, "privateIps"),
-                }
+        let items: Vec<Value> = sample
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = str_field(v, "name");
+                serde_json::json!({
+                    "id": name,
+                    "resource_type": "vm",
+                    "name": name,
+                    "config": {
+                        "resource_group": str_field(v, "resourceGroup"),
+                        "size": v.get("hardwareProfile")
+                            .and_then(|hp| hp.get("vmSize"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or(""),
+                        "os": v.get("storageProfile")
+                            .and_then(|sp| sp.get("osDisk"))
+                            .and_then(|od| od.get("osType"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or(""),
+                        "location": str_field(v, "location"),
+                    },
+                    "outputs": {
+                        "state": str_field(v, "powerState"),
+                        "public_ip": str_field(v, "publicIps"),
+                        "private_ip": str_field(v, "privateIps"),
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["name"], "vm-01");

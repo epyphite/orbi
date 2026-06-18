@@ -80,7 +80,9 @@ fn extract_name_tag(json: &Value) -> Option<String> {
         .and_then(|tags| {
             tags.iter().find_map(|tag| {
                 if tag.get("Key").and_then(|k| k.as_str()) == Some("Name") {
-                    tag.get("Value").and_then(|v| v.as_str()).map(|s| s.to_string())
+                    tag.get("Value")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
                 } else {
                     None
                 }
@@ -90,31 +92,19 @@ fn extract_name_tag(json: &Value) -> Option<String> {
 
 /// Convert EC2 instance JSON (from `aws ec2 describe-instances`) to `MicroVm`.
 pub fn map_ec2_instance(json: &Value, provider_id: &str) -> MicroVm {
-    let instance_id = json["InstanceId"]
-        .as_str()
-        .unwrap_or("unknown")
-        .to_string();
+    let instance_id = json["InstanceId"].as_str().unwrap_or("unknown").to_string();
 
     let name = extract_name_tag(json).unwrap_or_else(|| instance_id.clone());
 
-    let state_name = json["State"]["Name"]
-        .as_str()
-        .unwrap_or("unknown");
+    let state_name = json["State"]["Name"].as_str().unwrap_or("unknown");
     let status = map_instance_state(state_name).to_string();
 
-    let instance_type = json["InstanceType"]
-        .as_str()
-        .unwrap_or("");
+    let instance_type = json["InstanceType"].as_str().unwrap_or("");
     let (vcpus, memory_mb) = instance_type_to_specs(instance_type);
 
-    let image_id = json["ImageId"]
-        .as_str()
-        .map(|s| s.to_string());
+    let image_id = json["ImageId"].as_str().map(|s| s.to_string());
 
-    let created_at = json["LaunchTime"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let created_at = json["LaunchTime"].as_str().unwrap_or("").to_string();
 
     let hostname = json["PublicDnsName"]
         .as_str()
@@ -129,25 +119,16 @@ pub fn map_ec2_instance(json: &Value, provider_id: &str) -> MicroVm {
 
     let labels = {
         let mut label_map = serde_json::Map::new();
-        label_map.insert(
-            "availability_zone".to_string(),
-            Value::String(az),
-        );
+        label_map.insert("availability_zone".to_string(), Value::String(az));
         label_map.insert(
             "instance_type".to_string(),
             Value::String(instance_type.to_string()),
         );
         if let Some(pub_ip) = json.get("PublicIpAddress").and_then(|v| v.as_str()) {
-            label_map.insert(
-                "public_ip".to_string(),
-                Value::String(pub_ip.to_string()),
-            );
+            label_map.insert("public_ip".to_string(), Value::String(pub_ip.to_string()));
         }
         if let Some(priv_ip) = json.get("PrivateIpAddress").and_then(|v| v.as_str()) {
-            label_map.insert(
-                "private_ip".to_string(),
-                Value::String(priv_ip.to_string()),
-            );
+            label_map.insert("private_ip".to_string(), Value::String(priv_ip.to_string()));
         }
         // Convert Tags array to a map
         if let Some(tags) = json.get("Tags").and_then(|t| t.as_array()) {
@@ -188,16 +169,11 @@ pub fn map_ec2_instance(json: &Value, provider_id: &str) -> MicroVm {
 
 /// Convert EBS volume JSON (from `aws ec2 describe-volumes`) to `Volume`.
 pub fn map_ebs_volume(json: &Value, provider_id: &str) -> Volume {
-    let volume_id = json["VolumeId"]
-        .as_str()
-        .unwrap_or("unknown")
-        .to_string();
+    let volume_id = json["VolumeId"].as_str().unwrap_or("unknown").to_string();
 
     let size_gb = json["Size"].as_i64().unwrap_or(0);
 
-    let state = json["State"]
-        .as_str()
-        .unwrap_or("unknown");
+    let state = json["State"].as_str().unwrap_or("unknown");
     let status = match state {
         "in-use" => "attached",
         "available" => "available",
@@ -225,17 +201,11 @@ pub fn map_ebs_volume(json: &Value, provider_id: &str) -> Volume {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let vol_type = json["VolumeType"]
-        .as_str()
-        .unwrap_or("gp2")
-        .to_string();
+    let vol_type = json["VolumeType"].as_str().unwrap_or("gp2").to_string();
 
     let encrypted = json["Encrypted"].as_bool().unwrap_or(false);
 
-    let created_at = json["CreateTime"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let created_at = json["CreateTime"].as_str().unwrap_or("").to_string();
 
     let iops = json["Iops"].as_i64().map(|v| v as i32);
 
@@ -270,24 +240,13 @@ pub fn map_ebs_volume(json: &Value, provider_id: &str) -> Volume {
 
 /// Convert EBS snapshot JSON to `Snapshot`.
 pub fn map_ebs_snapshot(json: &Value, provider_id: &str) -> Snapshot {
-    let snapshot_id = json["SnapshotId"]
-        .as_str()
-        .unwrap_or("unknown")
-        .to_string();
+    let snapshot_id = json["SnapshotId"].as_str().unwrap_or("unknown").to_string();
 
-    let volume_id = json["VolumeId"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let volume_id = json["VolumeId"].as_str().unwrap_or("").to_string();
 
-    let size_mb = json["VolumeSize"]
-        .as_i64()
-        .map(|gb| gb * 1024);
+    let size_mb = json["VolumeSize"].as_i64().map(|gb| gb * 1024);
 
-    let taken_at = json["StartTime"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let taken_at = json["StartTime"].as_str().unwrap_or("").to_string();
 
     let tag = json
         .get("Tags")
@@ -295,17 +254,16 @@ pub fn map_ebs_snapshot(json: &Value, provider_id: &str) -> Snapshot {
         .and_then(|tags| {
             tags.iter().find_map(|tag| {
                 if tag.get("Key").and_then(|k| k.as_str()) == Some("kvmql_tag") {
-                    tag.get("Value").and_then(|v| v.as_str()).map(|s| s.to_string())
+                    tag.get("Value")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
                 } else {
                     None
                 }
             })
         });
 
-    let description = json["Description"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let description = json["Description"].as_str().unwrap_or("").to_string();
 
     Snapshot {
         id: snapshot_id,

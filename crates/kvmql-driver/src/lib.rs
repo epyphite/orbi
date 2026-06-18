@@ -1,28 +1,28 @@
 // KVMQL Driver — Driver trait and implementations (Phase 2)
 
-pub mod types;
-pub mod capability;
-pub mod traits;
-pub mod provision;
-pub mod mock;
-pub mod firecracker;
 pub mod aws;
-pub mod gcp;
 pub mod azure;
+pub mod capability;
 pub mod cloudflare;
+pub mod firecracker;
+pub mod gcp;
 pub mod github;
 pub mod k8s;
-pub mod ssh;
+pub mod mock;
+pub mod provision;
 pub mod simulate;
+pub mod ssh;
+pub mod traits;
+pub mod types;
 
 #[cfg(test)]
 mod cloud_driver_tests {
-    use crate::capability::Capability;
-    use crate::traits::Driver;
     use crate::aws::AwsEc2Driver;
-    use crate::gcp::GcpComputeDriver;
     use crate::azure::AzureVmDriver;
+    use crate::capability::Capability;
     use crate::firecracker::FirecrackerDriver;
+    use crate::gcp::GcpComputeDriver;
+    use crate::traits::Driver;
 
     #[test]
     fn test_all_drivers_have_create() {

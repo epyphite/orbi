@@ -138,7 +138,8 @@ impl<'a> LetsencryptProvisioner<'a> {
             "cf" => self.certbot_dns01_cloudflare(params, cert_name, email, domains),
             other => Err(format!(
                 "unsupported dns_provider '{other}'; currently only 'cf' (Cloudflare) is supported"
-            ).into()),
+            )
+            .into()),
         }
     }
 
@@ -150,13 +151,10 @@ impl<'a> LetsencryptProvisioner<'a> {
         domains: &[String],
     ) -> Result<(), ProvisionError> {
         // The executor injects the resolved CF token as cf_api_token
-        let cf_token = params
-            .get("cf_api_token")
-            .and_then(|v| v.as_str())
-            .ok_or(
-                "dns-01 with cf requires a Cloudflare API token. \
+        let cf_token = params.get("cf_api_token").and_then(|v| v.as_str()).ok_or(
+            "dns-01 with cf requires a Cloudflare API token. \
                  Ensure a 'cf' provider is registered with a valid auth= credential.",
-            )?;
+        )?;
 
         // Write the Cloudflare credentials INI to a temp file on the
         // remote host.  certbot's cloudflare plugin reads it from there.
@@ -200,7 +198,8 @@ impl<'a> LetsencryptProvisioner<'a> {
                 "certbot dns-01 failed (exit {}): {}",
                 result.exit_code,
                 result.stderr.trim()
-            ).into());
+            )
+            .into());
         }
 
         Ok(())
@@ -243,7 +242,7 @@ impl<'a> LetsencryptProvisioner<'a> {
     // ── helpers ──────────────────────────────────────────────
 
     fn cert_exists(&self, cert_name: &str) -> bool {
-        let q = super::client::shell_single_quote(cert_name);
+        let _q = super::client::shell_single_quote(cert_name);
         let path = format!("/etc/letsencrypt/live/{cert_name}/fullchain.pem");
         let qp = super::client::shell_single_quote(&path);
         self.client
@@ -253,7 +252,7 @@ impl<'a> LetsencryptProvisioner<'a> {
     }
 
     fn needs_renewal(&self, cert_name: &str, renew_before_days: i64) -> bool {
-        let q = super::client::shell_single_quote(cert_name);
+        let _q = super::client::shell_single_quote(cert_name);
         // Use openssl to check expiry
         let cmd = format!(
             "openssl x509 -in /etc/letsencrypt/live/{cert_name}/fullchain.pem \
@@ -274,9 +273,7 @@ impl<'a> LetsencryptProvisioner<'a> {
     fn run_certbot_renew(&self, cert_name: &str) -> Result<(), ProvisionError> {
         let q = super::client::shell_single_quote(cert_name);
         self.client
-            .exec_checked(&format!(
-                "certbot renew --cert-name {q} --non-interactive"
-            ))
+            .exec_checked(&format!("certbot renew --cert-name {q} --non-interactive"))
             .map(|_| ())
             .map_err(|e| format!("certbot renew failed: {e}").into())
     }

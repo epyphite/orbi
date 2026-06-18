@@ -176,20 +176,54 @@ impl Default for AgentRuntimeSection {
     }
 }
 
-fn default_bind() -> String { "0.0.0.0:9090".into() }
-fn default_unix_socket() -> String { "/var/run/kvmql/control.sock".into() }
-fn default_registry_path() -> String { "/var/kvmql/state.db".into() }
-fn default_image_store_path() -> String { "/var/kvmql/images".into() }
-fn default_execution_mode() -> String { "permissive".into() }
-fn default_state_ttl() -> u64 { 30 }
-fn default_query_timeout() -> u64 { 5000 }
-fn default_fanout() -> u32 { 10 }
-fn default_heartbeat() -> u64 { 5 }
-fn default_stale_threshold() -> u32 { 5 }
-fn default_metrics_retention() -> u64 { 1 }
-fn default_log_level() -> String { "info".into() }
-fn default_log_format() -> String { "json".into() }
-fn default_log_path() -> String { "/var/log/kvmql/kvmql.log".into() }
-fn default_max_store_gb() -> u64 { 500 }
-fn default_state_push() -> u64 { 10 }
-fn default_reconnect_max() -> u64 { 60 }
+fn default_bind() -> String {
+    "0.0.0.0:9090".into()
+}
+fn default_unix_socket() -> String {
+    "/var/run/kvmql/control.sock".into()
+}
+fn default_registry_path() -> String {
+    "/var/kvmql/state.db".into()
+}
+fn default_image_store_path() -> String {
+    "/var/kvmql/images".into()
+}
+fn default_execution_mode() -> String {
+    "permissive".into()
+}
+fn default_state_ttl() -> u64 {
+    30
+}
+fn default_query_timeout() -> u64 {
+    5000
+}
+fn default_fanout() -> u32 {
+    10
+}
+fn default_heartbeat() -> u64 {
+    5
+}
+fn default_stale_threshold() -> u32 {
+    5
+}
+fn default_metrics_retention() -> u64 {
+    1
+}
+fn default_log_level() -> String {
+    "info".into()
+}
+fn default_log_format() -> String {
+    "json".into()
+}
+fn default_log_path() -> String {
+    "/var/log/kvmql/kvmql.log".into()
+}
+fn default_max_store_gb() -> u64 {
+    500
+}
+fn default_state_push() -> u64 {
+    10
+}
+fn default_reconnect_max() -> u64 {
+    60
+}

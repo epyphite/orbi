@@ -108,10 +108,7 @@ impl CloudflareClient {
         self.parse_response(resp)
     }
 
-    fn parse_response(
-        &self,
-        resp: reqwest::blocking::Response,
-    ) -> Result<Value, CloudflareError> {
+    fn parse_response(&self, resp: reqwest::blocking::Response) -> Result<Value, CloudflareError> {
         let status = resp.status();
         if status == 401 || status == 403 {
             return Err(CloudflareError::InvalidToken);
@@ -151,9 +148,9 @@ impl CloudflareClient {
         let zones = result
             .as_array()
             .ok_or_else(|| CloudflareError::Parse("expected zones array".into()))?;
-        let zone = zones.first().ok_or_else(|| {
-            CloudflareError::NotFound(format!("zone '{}' not found", zone_name))
-        })?;
+        let zone = zones
+            .first()
+            .ok_or_else(|| CloudflareError::NotFound(format!("zone '{}' not found", zone_name)))?;
         zone.get("id")
             .and_then(|v| v.as_str())
             .map(String::from)

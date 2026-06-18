@@ -41,12 +41,12 @@ impl From<&str> for EngineError {
     }
 }
 
-/// Error messages with remediation advice.
-///
-/// Every user-facing error should tell the user:
-///   1. What happened
-///   2. Why
-///   3. The exact command to fix it
+// Error messages with remediation advice.
+//
+// Every user-facing error should tell the user:
+//   1. What happened
+//   2. Why
+//   3. The exact command to fix it
 
 /// Context passed to the remediation builder so advice can be tailored.
 #[derive(Default, Debug, Clone)]
@@ -273,9 +273,18 @@ mod tests {
             ..Default::default()
         };
         let msg = with_remediation("PROVIDER_NOT_FOUND", "provider 'my-azure' not found", &ctx);
-        assert!(msg.contains("ADD PROVIDER"), "should suggest ADD PROVIDER: {msg}");
-        assert!(msg.contains("SHOW PROVIDERS"), "should suggest SHOW PROVIDERS: {msg}");
-        assert!(msg.contains("my-azure"), "should include the provider id: {msg}");
+        assert!(
+            msg.contains("ADD PROVIDER"),
+            "should suggest ADD PROVIDER: {msg}"
+        );
+        assert!(
+            msg.contains("SHOW PROVIDERS"),
+            "should suggest SHOW PROVIDERS: {msg}"
+        );
+        assert!(
+            msg.contains("my-azure"),
+            "should include the provider id: {msg}"
+        );
     }
 
     #[test]
@@ -290,7 +299,10 @@ mod tests {
             msg.contains("SELECT * FROM resources"),
             "should suggest SELECT query: {msg}"
         );
-        assert!(msg.contains("db-1"), "should include the resource id: {msg}");
+        assert!(
+            msg.contains("db-1"),
+            "should include the resource id: {msg}"
+        );
         assert!(
             msg.contains("CREATE RESOURCE"),
             "should suggest CREATE RESOURCE: {msg}"
@@ -326,10 +338,7 @@ mod tests {
             msg.contains("SHOW GRANTS"),
             "should suggest SHOW GRANTS: {msg}"
         );
-        assert!(
-            msg.contains("GRANT"),
-            "should suggest GRANT command: {msg}"
-        );
+        assert!(msg.contains("GRANT"), "should suggest GRANT command: {msg}");
         assert!(
             msg.contains("usr-readonly"),
             "should include the principal: {msg}"
@@ -375,10 +384,7 @@ mod tests {
             msg.contains("az account show"),
             "should suggest checking subscription: {msg}"
         );
-        assert!(
-            msg.contains("SYNC RESOURCE"),
-            "should suggest SYNC: {msg}"
-        );
+        assert!(msg.contains("SYNC RESOURCE"), "should suggest SYNC: {msg}");
     }
 
     #[test]

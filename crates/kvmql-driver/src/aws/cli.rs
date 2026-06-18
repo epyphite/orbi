@@ -12,6 +12,12 @@ pub struct AwsCli {
     pub profile: Option<String>,
 }
 
+impl Default for AwsCli {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AwsCli {
     pub fn new() -> Self {
         Self {
@@ -139,10 +145,8 @@ impl AwsCli {
                 .iter()
                 .map(|(name, values)| format!("Name={name},Values={values}"))
                 .collect();
-            let mut joined = Vec::new();
-            joined.push("--filters");
             filter_refs = filter_strs.iter().map(|s| s.as_str()).collect();
-            args.push(joined[0]);
+            args.push("--filters");
             args.extend_from_slice(&filter_refs);
         }
 
@@ -484,11 +488,16 @@ mod tests {
     fn test_command_construction_ec2_run_instances() {
         let cli = AwsCli::with_region("us-east-1");
         let args = cli.build_args(&[
-            "ec2", "run-instances",
-            "--image-id", "ami-12345678",
-            "--instance-type", "t3.micro",
-            "--min-count", "1",
-            "--max-count", "1",
+            "ec2",
+            "run-instances",
+            "--image-id",
+            "ami-12345678",
+            "--instance-type",
+            "t3.micro",
+            "--min-count",
+            "1",
+            "--max-count",
+            "1",
         ]);
 
         assert_eq!(args[0], "aws");
@@ -508,8 +517,10 @@ mod tests {
     fn test_command_construction_ec2_terminate() {
         let cli = AwsCli::with_region("us-west-2");
         let args = cli.build_args(&[
-            "ec2", "terminate-instances",
-            "--instance-ids", "i-1234567890abcdef0",
+            "ec2",
+            "terminate-instances",
+            "--instance-ids",
+            "i-1234567890abcdef0",
         ]);
 
         assert_eq!(args[0], "aws");
@@ -525,14 +536,22 @@ mod tests {
     fn test_command_construction_rds_create() {
         let cli = AwsCli::with_region("eu-west-1");
         let args = cli.build_args(&[
-            "rds", "create-db-instance",
-            "--db-instance-identifier", "my-pg",
-            "--db-instance-class", "db.t3.micro",
-            "--engine", "postgres",
-            "--engine-version", "16",
-            "--master-username", "admin",
-            "--master-user-password", "secret123",
-            "--allocated-storage", "20",
+            "rds",
+            "create-db-instance",
+            "--db-instance-identifier",
+            "my-pg",
+            "--db-instance-class",
+            "db.t3.micro",
+            "--engine",
+            "postgres",
+            "--engine-version",
+            "16",
+            "--master-username",
+            "admin",
+            "--master-user-password",
+            "secret123",
+            "--allocated-storage",
+            "20",
         ]);
 
         assert_eq!(args[0], "aws");
@@ -553,10 +572,7 @@ mod tests {
     #[test]
     fn test_command_construction_vpc_create() {
         let cli = AwsCli::with_region("us-east-1");
-        let args = cli.build_args(&[
-            "ec2", "create-vpc",
-            "--cidr-block", "10.0.0.0/16",
-        ]);
+        let args = cli.build_args(&["ec2", "create-vpc", "--cidr-block", "10.0.0.0/16"]);
 
         assert_eq!(args[0], "aws");
         assert!(args.contains(&"ec2".to_string()));
@@ -569,10 +585,14 @@ mod tests {
     fn test_command_construction_security_group_create() {
         let cli = AwsCli::with_region("us-east-1");
         let args = cli.build_args(&[
-            "ec2", "create-security-group",
-            "--group-name", "my-sg",
-            "--description", "My security group",
-            "--vpc-id", "vpc-12345",
+            "ec2",
+            "create-security-group",
+            "--group-name",
+            "my-sg",
+            "--description",
+            "My security group",
+            "--vpc-id",
+            "vpc-12345",
         ]);
 
         assert_eq!(args[0], "aws");
@@ -590,11 +610,16 @@ mod tests {
     fn test_command_construction_sg_rule() {
         let cli = AwsCli::with_region("us-east-1");
         let args = cli.build_args(&[
-            "ec2", "authorize-security-group-ingress",
-            "--group-id", "sg-12345",
-            "--protocol", "tcp",
-            "--port", "443",
-            "--cidr", "0.0.0.0/0",
+            "ec2",
+            "authorize-security-group-ingress",
+            "--group-id",
+            "sg-12345",
+            "--protocol",
+            "tcp",
+            "--port",
+            "443",
+            "--cidr",
+            "0.0.0.0/0",
         ]);
 
         assert_eq!(args[0], "aws");
@@ -638,10 +663,14 @@ mod tests {
     fn test_command_construction_ebs_create_volume() {
         let cli = AwsCli::with_region("us-east-1");
         let args = cli.build_args(&[
-            "ec2", "create-volume",
-            "--size", "100",
-            "--availability-zone", "us-east-1a",
-            "--volume-type", "gp3",
+            "ec2",
+            "create-volume",
+            "--size",
+            "100",
+            "--availability-zone",
+            "us-east-1a",
+            "--volume-type",
+            "gp3",
         ]);
 
         assert!(args.contains(&"create-volume".to_string()));
@@ -667,9 +696,12 @@ mod tests {
     fn test_command_construction_import_key_pair() {
         let cli = AwsCli::with_region("us-east-1");
         let args = cli.build_args(&[
-            "ec2", "import-key-pair",
-            "--key-name", "kvmql-my-vm",
-            "--public-key-material", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample",
+            "ec2",
+            "import-key-pair",
+            "--key-name",
+            "kvmql-my-vm",
+            "--public-key-material",
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample",
         ]);
 
         assert_eq!(args[0], "aws");

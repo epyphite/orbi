@@ -89,7 +89,7 @@ fn print_table(envelope: &ResultEnvelope, expanded: bool) {
     }
 
     let mut table = Table::new();
-    table.set_header(headers.iter().map(|h| Cell::new(h)));
+    table.set_header(headers.iter().map(Cell::new));
 
     for row in &rows {
         let cells: Vec<Cell> = headers
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(format_value(&serde_json::json!("hello")), "hello");
         assert_eq!(format_value(&serde_json::json!(true)), "true");
         assert_eq!(format_value(&serde_json::json!(42)), "42");
-        assert_eq!(format_value(&serde_json::json!(3.14)), "3.14");
+        assert_eq!(format_value(&serde_json::json!(3.15)), "3.15");
     }
 
     #[test]
@@ -287,10 +287,7 @@ mod tests {
     #[test]
     fn test_row_count_from_result() {
         assert_eq!(row_count_from_result(&None), 0);
-        assert_eq!(
-            row_count_from_result(&Some(serde_json::json!("scalar"))),
-            1
-        );
+        assert_eq!(row_count_from_result(&Some(serde_json::json!("scalar"))), 1);
         assert_eq!(
             row_count_from_result(&Some(serde_json::json!([1, 2, 3]))),
             3

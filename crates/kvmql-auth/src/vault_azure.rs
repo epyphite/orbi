@@ -85,11 +85,9 @@ mod tests {
     fn test_az_not_installed() {
         let result = which_tool("kvmql_nonexistent_az_12345");
         assert!(result.is_err());
-        assert!(
-            matches!(
-                result.unwrap_err(),
-                CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_az_12345"
-            ),
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_az_12345"
+        ),);
     }
 }

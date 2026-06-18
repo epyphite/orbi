@@ -54,7 +54,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT,
                 labels TEXT
-            );"
+            );",
         )
         .map_err(|e| RegistryError::Migration(format!("v2 DDL failed: {e}")))?;
 
@@ -77,7 +77,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
                 target_id TEXT NOT NULL,
                 previous_state TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );"
+            );",
         )
         .map_err(|e| RegistryError::Migration(format!("v3 DDL failed: {e}")))?;
 
@@ -108,7 +108,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
                 applied_by TEXT,
                 error TEXT,
                 environment TEXT
-            );"
+            );",
         )
         .map_err(|e| RegistryError::Migration(format!("v4 DDL failed: {e}")))?;
 
@@ -133,7 +133,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
                 environment TEXT,
                 status TEXT NOT NULL DEFAULT 'applied'
                     CHECK (status IN ('applied', 'partial', 'failed'))
-            );"
+            );",
         )
         .map_err(|e| RegistryError::Migration(format!("v5 DDL failed: {e}")))?;
 
@@ -223,7 +223,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
                 imported_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_import_log_provider ON import_log(provider_id);
-            CREATE INDEX IF NOT EXISTS idx_import_log_action ON import_log(action);"
+            CREATE INDEX IF NOT EXISTS idx_import_log_action ON import_log(action);",
         )
         .map_err(|e| RegistryError::Migration(format!("v8 DDL failed: {e}")))?;
 

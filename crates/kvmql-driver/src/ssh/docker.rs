@@ -304,9 +304,7 @@ impl<'a> DockerProvisioner<'a> {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        Ok(self.client
-            .exec_checked(&cmd)
-            .map_err(|e| e.to_string())?)
+        Ok(self.client.exec_checked(&cmd).map_err(|e| e.to_string())?)
     }
 
     fn container_exists(&self, name: &str) -> bool {
@@ -419,9 +417,7 @@ mod tests {
 
     #[test]
     fn container_unchanged_when_existing() {
-        let fake = FakeExec::new(vec![
-            ("docker inspect", ok("yes\n")),
-        ]);
+        let fake = FakeExec::new(vec![("docker inspect", ok("yes\n"))]);
         let client = SshClient::new(Box::new(fake));
         let p = DockerProvisioner::new(&client);
         let params = json!({
@@ -461,9 +457,7 @@ mod tests {
 
     #[test]
     fn compose_uploads_and_starts() {
-        let fake = FakeExec::new(vec![
-            ("docker compose", ok("")),
-        ]);
+        let fake = FakeExec::new(vec![("docker compose", ok(""))]);
         let client = SshClient::new(Box::new(fake));
         let p = DockerProvisioner::new(&client);
         let params = json!({

@@ -36,11 +36,7 @@ impl KubernetesQueryEngine {
     /// `noun` is the normalised KVMQL noun (e.g. `"k8s_pods"`).
     /// `namespace` is optional; `None` (or `Some("*")`/`Some("all")`)
     /// queries every namespace.
-    pub fn query(
-        &self,
-        noun: &str,
-        namespace: Option<&str>,
-    ) -> Result<Vec<Value>, String> {
+    pub fn query(&self, noun: &str, namespace: Option<&str>) -> Result<Vec<Value>, String> {
         let cli = self
             .cli
             .as_ref()
@@ -130,16 +126,12 @@ fn flatten_k8s_item(item: &Value, kind: &str) -> Value {
             let (ready, restarts, reason) = container_statuses
                 .map(|cs| {
                     let ready = !cs.is_empty()
-                        && cs.iter().all(|c| {
-                            c.get("ready").and_then(|v| v.as_bool()).unwrap_or(false)
-                        });
+                        && cs
+                            .iter()
+                            .all(|c| c.get("ready").and_then(|v| v.as_bool()).unwrap_or(false));
                     let restarts: i64 = cs
                         .iter()
-                        .map(|c| {
-                            c.get("restartCount")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(0)
-                        })
+                        .map(|c| c.get("restartCount").and_then(|v| v.as_i64()).unwrap_or(0))
                         .sum();
                     // Surface waiting-state reasons (CrashLoopBackOff,
                     // ImagePullBackOff, ...) so users can filter on them
@@ -210,9 +202,7 @@ fn flatten_k8s_item(item: &Value, kind: &str) -> Value {
                 .map(|rules| {
                     rules
                         .iter()
-                        .filter_map(|r| {
-                            r.get("host").and_then(|h| h.as_str()).map(String::from)
-                        })
+                        .filter_map(|r| r.get("host").and_then(|h| h.as_str()).map(String::from))
                         .collect::<Vec<_>>()
                         .join(",")
                 })
@@ -225,9 +215,9 @@ fn flatten_k8s_item(item: &Value, kind: &str) -> Value {
                 .and_then(|s| s.get("conditions"))
                 .and_then(|v| v.as_array())
                 .and_then(|conds| {
-                    conds.iter().find(|c| {
-                        c.get("type").and_then(|t| t.as_str()) == Some("Ready")
-                    })
+                    conds
+                        .iter()
+                        .find(|c| c.get("type").and_then(|t| t.as_str()) == Some("Ready"))
                 })
                 .and_then(|c| c.get("status").and_then(|s| s.as_str()))
                 .map(|s| s == "True")

@@ -357,7 +357,9 @@ impl fmt::Display for ImportResourcesStmt {
         write!(f, "IMPORT RESOURCES FROM ")?;
         match &self.source {
             ImportSource::SingleProvider(id) => write!(f, "PROVIDER {}", quote_string(id))?,
-            ImportSource::ProvidersByType(t) => write!(f, "PROVIDERS WHERE type = {}", quote_string(t))?,
+            ImportSource::ProvidersByType(t) => {
+                write!(f, "PROVIDERS WHERE type = {}", quote_string(t))?
+            }
             ImportSource::AllProviders => write!(f, "ALL PROVIDERS")?,
         }
         if let Some(ref types) = self.resource_type_filter {
@@ -615,7 +617,11 @@ impl fmt::Display for RemoveImageStmt {
 impl fmt::Display for CreateResourceStmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.if_not_exists {
-            write!(f, "CREATE IF NOT EXISTS RESOURCE {}", quote_string(&self.resource_type))?;
+            write!(
+                f,
+                "CREATE IF NOT EXISTS RESOURCE {}",
+                quote_string(&self.resource_type)
+            )?;
         } else {
             write!(f, "CREATE RESOURCE {}", quote_string(&self.resource_type))?;
         }
@@ -665,7 +671,12 @@ impl fmt::Display for DestroyResourceStmt {
 
 impl fmt::Display for BackupStmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BACKUP RESOURCE {} {}", quote_string(&self.resource_type), quote_string(&self.id))?;
+        write!(
+            f,
+            "BACKUP RESOURCE {} {}",
+            quote_string(&self.resource_type),
+            quote_string(&self.id)
+        )?;
         if let Some(ref dest) = self.destination {
             write!(f, " INTO {}", quote_string(dest))?;
         }
@@ -690,14 +701,24 @@ impl fmt::Display for RestoreResourceStmt {
 
 impl fmt::Display for ScaleStmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SCALE RESOURCE {} {}", quote_string(&self.resource_type), quote_string(&self.id))?;
+        write!(
+            f,
+            "SCALE RESOURCE {} {}",
+            quote_string(&self.resource_type),
+            quote_string(&self.id)
+        )?;
         write_params(f, &self.params)
     }
 }
 
 impl fmt::Display for UpgradeStmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UPGRADE RESOURCE {} {}", quote_string(&self.resource_type), quote_string(&self.id))?;
+        write!(
+            f,
+            "UPGRADE RESOURCE {} {}",
+            quote_string(&self.resource_type),
+            quote_string(&self.id)
+        )?;
         write_params(f, &self.params)
     }
 }
@@ -716,7 +737,12 @@ impl fmt::Display for RollbackTarget {
             RollbackTarget::Last => write!(f, "LAST"),
             RollbackTarget::Tag(tag) => write!(f, "TO TAG {}", quote_string(tag)),
             RollbackTarget::Resource { resource_type, id } => {
-                write!(f, "RESOURCE {} {}", quote_string(resource_type), quote_string(id))
+                write!(
+                    f,
+                    "RESOURCE {} {}",
+                    quote_string(resource_type),
+                    quote_string(id)
+                )
             }
         }
     }
@@ -771,7 +797,12 @@ impl fmt::Display for AddClusterStmt {
 
 impl fmt::Display for AlterClusterStmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ALTER CLUSTER {} {}", quote_string(&self.name), self.action)
+        write!(
+            f,
+            "ALTER CLUSTER {} {}",
+            quote_string(&self.name),
+            self.action
+        )
     }
 }
 
@@ -984,8 +1015,14 @@ mod tests {
         let stmt = CreateMicrovmStmt {
             if_not_exists: false,
             params: vec![
-                Param { key: "vcpus".into(), value: Value::Integer(2) },
-                Param { key: "mem_mb".into(), value: Value::Integer(512) },
+                Param {
+                    key: "vcpus".into(),
+                    value: Value::Integer(2),
+                },
+                Param {
+                    key: "mem_mb".into(),
+                    value: Value::Integer(512),
+                },
             ],
             volumes: vec![],
             on: None,
@@ -1032,8 +1069,14 @@ mod tests {
     #[test]
     fn display_value_map() {
         let val = Value::Map(vec![
-            MapEntry { key: "a".into(), value: Value::Integer(1) },
-            MapEntry { key: "b".into(), value: Value::String("hello".into()) },
+            MapEntry {
+                key: "a".into(),
+                value: Value::Integer(1),
+            },
+            MapEntry {
+                key: "b".into(),
+                value: Value::String("hello".into()),
+            },
         ]);
         assert_eq!(val.to_string(), "{a: 1, b: 'hello'}");
     }
@@ -1050,9 +1093,15 @@ mod tests {
 
     #[test]
     fn display_duration() {
-        let d = DurationValue { magnitude: 30, unit: DurationUnit::Seconds };
+        let d = DurationValue {
+            magnitude: 30,
+            unit: DurationUnit::Seconds,
+        };
         assert_eq!(d.to_string(), "30s");
-        let d = DurationValue { magnitude: 5, unit: DurationUnit::Minutes };
+        let d = DurationValue {
+            magnitude: 5,
+            unit: DurationUnit::Minutes,
+        };
         assert_eq!(d.to_string(), "5m");
     }
 
@@ -1064,7 +1113,10 @@ mod tests {
             where_clause: None,
             principal: "admin".into(),
         };
-        assert_eq!(stmt.to_string(), "GRANT SELECT, CREATE ON MICROVMS TO 'admin'");
+        assert_eq!(
+            stmt.to_string(),
+            "GRANT SELECT, CREATE ON MICROVMS TO 'admin'"
+        );
     }
 
     #[test]
@@ -1081,8 +1133,12 @@ mod tests {
     fn display_program() {
         let program = Program {
             statements: vec![
-                Statement::Show(ShowStmt { target: ShowTarget::Version }),
-                Statement::Show(ShowStmt { target: ShowTarget::Providers }),
+                Statement::Show(ShowStmt {
+                    target: ShowTarget::Version,
+                }),
+                Statement::Show(ShowStmt {
+                    target: ShowTarget::Providers,
+                }),
             ],
         };
         assert_eq!(program.to_string(), "SHOW VERSION;\nSHOW PROVIDERS;");
@@ -1112,7 +1168,10 @@ mod tests {
             metrics: FieldList::Fields(vec![Field::Simple("cpu".into())]),
             from: Noun::Metrics,
             where_clause: None,
-            interval: DurationValue { magnitude: 5, unit: DurationUnit::Seconds },
+            interval: DurationValue {
+                magnitude: 5,
+                unit: DurationUnit::Seconds,
+            },
         };
         assert_eq!(stmt.to_string(), "WATCH cpu FROM metrics INTERVAL 5s");
     }

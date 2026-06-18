@@ -115,8 +115,7 @@ mod tests {
 
     #[test]
     fn test_parse_ref_valid() {
-        let (ns, name, key) =
-            K8sSecretResolver::parse_ref("default/my-secret#password").unwrap();
+        let (ns, name, key) = K8sSecretResolver::parse_ref("default/my-secret#password").unwrap();
         assert_eq!(ns, "default");
         assert_eq!(name, "my-secret");
         assert_eq!(key, "password");
@@ -153,11 +152,9 @@ mod tests {
     fn test_kubectl_not_installed() {
         let result = which_tool("kvmql_nonexistent_kubectl_12345");
         assert!(result.is_err());
-        assert!(
-            matches!(
-                result.unwrap_err(),
-                CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_kubectl_12345"
-            ),
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            CredentialError::ExternalToolNotFound(ref t) if t == "kvmql_nonexistent_kubectl_12345"
+        ),);
     }
 }

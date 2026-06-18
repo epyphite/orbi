@@ -35,9 +35,10 @@ pub enum AgentMessage {
     },
 }
 
-/// Messages sent from control plane -> agent
+/// Messages sent from control plane -> agent (defined per protocol spec, not yet consumed)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[allow(dead_code)]
 pub enum ControlMessage {
     #[serde(rename = "ack")]
     Ack,
@@ -65,6 +66,7 @@ pub struct AgentLoad {
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Encode a message as length-prefixed JSON (4-byte big-endian + JSON payload).
+#[allow(dead_code)] // part of agent protocol, not yet wired to TCP transport
 pub fn encode_message<T: Serialize>(msg: &T) -> Result<Vec<u8>, serde_json::Error> {
     let json = serde_json::to_vec(msg)?;
     let len = (json.len() as u32).to_be_bytes();
@@ -75,6 +77,7 @@ pub fn encode_message<T: Serialize>(msg: &T) -> Result<Vec<u8>, serde_json::Erro
 }
 
 /// Decode a length-prefixed JSON message.
+#[allow(dead_code)] // part of agent protocol, not yet wired to TCP transport
 pub fn decode_message<T: for<'de> Deserialize<'de>>(
     buf: &[u8],
 ) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
@@ -137,9 +140,7 @@ mod tests {
         let encoded = encode_message(&msg).unwrap();
         let decoded: AgentMessage = decode_message(&encoded).unwrap();
         match decoded {
-            AgentMessage::Heartbeat {
-                agent_id, load, ..
-            } => {
+            AgentMessage::Heartbeat { agent_id, load, .. } => {
                 assert_eq!(agent_id, "node-1");
                 assert!((load.cpu_pct - 42.5).abs() < f64::EPSILON);
                 assert_eq!(load.mem_used_mb, 2048);

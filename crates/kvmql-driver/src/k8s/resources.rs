@@ -42,8 +42,10 @@ impl KubernetesResourceProvisioner {
 
     fn cli(&self) -> Result<&KubectlCli, ProvisionError> {
         self.cli.as_ref().ok_or_else(|| {
-            ProvisionError::from("kubectl CLI not found. Install from https://kubernetes.io/docs/tasks/tools/ \
-             and ensure your kubeconfig is configured.")
+            ProvisionError::from(
+                "kubectl CLI not found. Install from https://kubernetes.io/docs/tasks/tools/ \
+             and ensure your kubeconfig is configured.",
+            )
         })
     }
 
@@ -279,10 +281,7 @@ impl KubernetesResourceProvisioner {
         let name = param_str(params, "id")?;
         let namespace = param_str_or(params, "namespace", "default");
         let image = param_str(params, "image")?;
-        let replicas = params
-            .get("replicas")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(1);
+        let replicas = params.get("replicas").and_then(|v| v.as_i64()).unwrap_or(1);
         let port = params.get("port").and_then(|v| v.as_i64());
         let container_name = param_str_or(params, "container_name", &name);
 
@@ -306,9 +305,7 @@ impl KubernetesResourceProvisioner {
         yaml.push_str(&format!("      - name: {container_name}\n"));
         yaml.push_str(&format!("        image: {image}\n"));
         if let Some(p) = port {
-            yaml.push_str(&format!(
-                "        ports:\n        - containerPort: {p}\n"
-            ));
+            yaml.push_str(&format!("        ports:\n        - containerPort: {p}\n"));
         }
         // env vars from params.env (object)
         if let Some(env) = params.get("env").and_then(|v| v.as_object()) {
@@ -328,10 +325,7 @@ impl KubernetesResourceProvisioner {
         let namespace = param_str_or(params, "namespace", "default");
         let selector_app = param_str_or(params, "selector", &name);
         let svc_type = param_str_or(params, "type", "ClusterIP");
-        let port = params
-            .get("port")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(80);
+        let port = params.get("port").and_then(|v| v.as_i64()).unwrap_or(80);
         let target_port = params
             .get("target_port")
             .and_then(|v| v.as_i64())
@@ -345,9 +339,7 @@ impl KubernetesResourceProvisioner {
         ));
         yaml.push_str("spec:\n");
         yaml.push_str(&format!("  type: {svc_type}\n"));
-        yaml.push_str(&format!(
-            "  selector:\n    app: {selector_app}\n"
-        ));
+        yaml.push_str(&format!("  selector:\n    app: {selector_app}\n"));
         yaml.push_str("  ports:\n");
         yaml.push_str(&format!(
             "  - port: {port}\n    targetPort: {target_port}\n    protocol: TCP\n"
@@ -360,10 +352,7 @@ impl KubernetesResourceProvisioner {
         let namespace = param_str_or(params, "namespace", "default");
         let host = param_str(params, "host")?;
         let service = param_str(params, "service")?;
-        let port = params
-            .get("port")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(80);
+        let port = params.get("port").and_then(|v| v.as_i64()).unwrap_or(80);
         let path = param_str_or(params, "path", "/");
         let tls_secret = params.get("tls_secret").and_then(|v| v.as_str());
         let ingress_class = params.get("ingress_class").and_then(|v| v.as_str());
@@ -385,12 +374,8 @@ impl KubernetesResourceProvisioner {
             ));
         }
         yaml.push_str("  rules:\n");
-        yaml.push_str(&format!(
-            "  - host: {host}\n    http:\n      paths:\n"
-        ));
-        yaml.push_str(&format!(
-            "      - path: {path}\n        pathType: Prefix\n"
-        ));
+        yaml.push_str(&format!("  - host: {host}\n    http:\n      paths:\n"));
+        yaml.push_str(&format!("      - path: {path}\n        pathType: Prefix\n"));
         yaml.push_str(&format!(
             "        backend:\n          service:\n            name: {service}\n            port:\n              number: {port}\n"
         ));

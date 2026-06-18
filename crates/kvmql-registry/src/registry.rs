@@ -386,7 +386,9 @@ impl Registry {
     }
 
     pub fn delete_provider(&self, id: &str) -> Result<(), RegistryError> {
-        let changed = self.conn.execute("DELETE FROM providers WHERE id = ?1", params![id])?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM providers WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(RegistryError::NotFound {
                 entity: "provider".into(),
@@ -400,7 +402,6 @@ impl Registry {
     // MicroVM CRUD
     // -----------------------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_microvm(
         &self,
         id: &str,
@@ -516,7 +517,9 @@ impl Registry {
     }
 
     pub fn delete_microvm(&self, id: &str) -> Result<(), RegistryError> {
-        let changed = self.conn.execute("DELETE FROM microvms WHERE id = ?1", params![id])?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM microvms WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(RegistryError::NotFound {
                 entity: "microvm".into(),
@@ -530,7 +533,6 @@ impl Registry {
     // Volume CRUD
     // -----------------------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_volume(
         &self,
         id: &str,
@@ -630,7 +632,12 @@ impl Registry {
     /// Update a single field on a volume row.
     ///
     /// Supported fields: `labels`, `iops`, `encrypted`.
-    pub fn update_volume_field(&self, id: &str, field: &str, value: &str) -> Result<(), RegistryError> {
+    pub fn update_volume_field(
+        &self,
+        id: &str,
+        field: &str,
+        value: &str,
+    ) -> Result<(), RegistryError> {
         let sql = match field {
             "labels" => "UPDATE volumes SET labels = ?1 WHERE id = ?2",
             "iops" => "UPDATE volumes SET iops = ?1 WHERE id = ?2",
@@ -685,7 +692,9 @@ impl Registry {
     }
 
     pub fn delete_volume(&self, id: &str) -> Result<(), RegistryError> {
-        let changed = self.conn.execute("DELETE FROM volumes WHERE id = ?1", params![id])?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM volumes WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(RegistryError::NotFound {
                 entity: "volume".into(),
@@ -699,7 +708,6 @@ impl Registry {
     // Image CRUD
     // -----------------------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_image(
         &self,
         id: &str,
@@ -720,24 +728,43 @@ impl Registry {
         status: &str,
         labels: Option<&str>,
     ) -> Result<(), RegistryError> {
-        self.conn.execute(
-            "INSERT INTO images (id, name, os, distro, version, arch, type, provider_id,
+        self.conn
+            .execute(
+                "INSERT INTO images (id, name, os, distro, version, arch, type, provider_id,
                                  kernel_path, rootfs_path, disk_path, cloud_ref, source,
                                  checksum_sha256, size_mb, status, labels)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-            params![
-                id, name, os, distro, version, arch, image_type, provider_id,
-                kernel_path, rootfs_path, disk_path, cloud_ref, source,
-                checksum_sha256, size_mb, status, labels,
-            ],
-        ).map_err(|e| match e {
-            rusqlite::Error::SqliteFailure(ref sql_err, _)
-                if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                RegistryError::AlreadyExists { entity: "image".into(), id: id.into() }
-            }
-            other => RegistryError::Database(other),
-        })?;
+                params![
+                    id,
+                    name,
+                    os,
+                    distro,
+                    version,
+                    arch,
+                    image_type,
+                    provider_id,
+                    kernel_path,
+                    rootfs_path,
+                    disk_path,
+                    cloud_ref,
+                    source,
+                    checksum_sha256,
+                    size_mb,
+                    status,
+                    labels,
+                ],
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(ref sql_err, _)
+                    if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    RegistryError::AlreadyExists {
+                        entity: "image".into(),
+                        id: id.into(),
+                    }
+                }
+                other => RegistryError::Database(other),
+            })?;
         Ok(())
     }
 
@@ -845,7 +872,9 @@ impl Registry {
     }
 
     pub fn delete_image(&self, id: &str) -> Result<(), RegistryError> {
-        let changed = self.conn.execute("DELETE FROM images WHERE id = ?1", params![id])?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM images WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(RegistryError::NotFound {
                 entity: "image".into(),
@@ -912,7 +941,6 @@ impl Registry {
     // Query history
     // -----------------------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_query_history(
         &self,
         principal: Option<&str>,
@@ -939,7 +967,10 @@ impl Registry {
         Ok(())
     }
 
-    pub fn list_query_history(&self, limit: Option<i64>) -> Result<Vec<QueryHistoryRow>, RegistryError> {
+    pub fn list_query_history(
+        &self,
+        limit: Option<i64>,
+    ) -> Result<Vec<QueryHistoryRow>, RegistryError> {
         let sql = match limit {
             Some(n) => format!(
                 "SELECT id, executed_at, principal, statement, normalized_stmt, verb, targets,
@@ -948,7 +979,8 @@ impl Registry {
             ),
             None => "SELECT id, executed_at, principal, statement, normalized_stmt, verb, targets,
                             duration_ms, status, notifications, rows_affected, result_hash
-                     FROM query_history ORDER BY executed_at DESC".to_string(),
+                     FROM query_history ORDER BY executed_at DESC"
+                .to_string(),
         };
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], |row| {
@@ -1013,7 +1045,14 @@ impl Registry {
         self.conn.execute(
             "INSERT INTO metrics (id, microvm_id, cpu_pct, mem_used_mb, net_rx_kbps, net_tx_kbps)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, microvm_id, cpu_pct, mem_used_mb, net_rx_kbps, net_tx_kbps],
+            params![
+                id,
+                microvm_id,
+                cpu_pct,
+                mem_used_mb,
+                net_rx_kbps,
+                net_tx_kbps
+            ],
         )?;
         Ok(())
     }
@@ -1023,17 +1062,22 @@ impl Registry {
     // -----------------------------------------------------------------------
 
     pub fn insert_cluster(&self, id: &str, name: &str) -> Result<(), RegistryError> {
-        self.conn.execute(
-            "INSERT INTO clusters (id, name) VALUES (?1, ?2)",
-            params![id, name],
-        ).map_err(|e| match e {
-            rusqlite::Error::SqliteFailure(ref sql_err, _)
-                if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                RegistryError::AlreadyExists { entity: "cluster".into(), id: id.into() }
-            }
-            other => RegistryError::Database(other),
-        })?;
+        self.conn
+            .execute(
+                "INSERT INTO clusters (id, name) VALUES (?1, ?2)",
+                params![id, name],
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(ref sql_err, _)
+                    if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    RegistryError::AlreadyExists {
+                        entity: "cluster".into(),
+                        id: id.into(),
+                    }
+                }
+                other => RegistryError::Database(other),
+            })?;
         Ok(())
     }
 
@@ -1042,19 +1086,21 @@ impl Registry {
         cluster_id: &str,
         provider_id: &str,
     ) -> Result<(), RegistryError> {
-        self.conn.execute(
-            "INSERT INTO cluster_members (cluster_id, provider_id) VALUES (?1, ?2)",
-            params![cluster_id, provider_id],
-        ).map_err(|e| match e {
-            rusqlite::Error::SqliteFailure(ref sql_err, _)
-                if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                RegistryError::ConstraintViolation(format!(
-                    "cannot add provider '{provider_id}' to cluster '{cluster_id}': {e}"
-                ))
-            }
-            other => RegistryError::Database(other),
-        })?;
+        self.conn
+            .execute(
+                "INSERT INTO cluster_members (cluster_id, provider_id) VALUES (?1, ?2)",
+                params![cluster_id, provider_id],
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(ref sql_err, _)
+                    if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    RegistryError::ConstraintViolation(format!(
+                        "cannot add provider '{provider_id}' to cluster '{cluster_id}': {e}"
+                    ))
+                }
+                other => RegistryError::Database(other),
+            })?;
         Ok(())
     }
 
@@ -1077,7 +1123,9 @@ impl Registry {
     }
 
     pub fn delete_cluster(&self, id: &str) -> Result<(), RegistryError> {
-        let changed = self.conn.execute("DELETE FROM clusters WHERE id = ?1", params![id])?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM clusters WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(RegistryError::NotFound {
                 entity: "cluster".into(),
@@ -1098,17 +1146,22 @@ impl Registry {
         auth_ref: &str,
         enabled: bool,
     ) -> Result<(), RegistryError> {
-        self.conn.execute(
-            "INSERT INTO principals (id, type, auth_ref, enabled) VALUES (?1, ?2, ?3, ?4)",
-            params![id, principal_type, auth_ref, enabled as i64],
-        ).map_err(|e| match e {
-            rusqlite::Error::SqliteFailure(ref sql_err, _)
-                if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                RegistryError::AlreadyExists { entity: "principal".into(), id: id.into() }
-            }
-            other => RegistryError::Database(other),
-        })?;
+        self.conn
+            .execute(
+                "INSERT INTO principals (id, type, auth_ref, enabled) VALUES (?1, ?2, ?3, ?4)",
+                params![id, principal_type, auth_ref, enabled as i64],
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(ref sql_err, _)
+                    if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    RegistryError::AlreadyExists {
+                        entity: "principal".into(),
+                        id: id.into(),
+                    }
+                }
+                other => RegistryError::Database(other),
+            })?;
         Ok(())
     }
 
@@ -1138,7 +1191,9 @@ impl Registry {
     }
 
     pub fn delete_grant(&self, id: &str) -> Result<(), RegistryError> {
-        let changed = self.conn.execute("DELETE FROM grants WHERE id = ?1", params![id])?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM grants WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(RegistryError::NotFound {
                 entity: "grant".into(),
@@ -1242,9 +1297,9 @@ impl Registry {
     }
 
     pub fn list_clusters(&self) -> Result<Vec<ClusterRow>, RegistryError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, created_at FROM clusters ORDER BY created_at",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, created_at FROM clusters ORDER BY created_at")?;
         let rows = stmt.query_map([], |row| {
             Ok(ClusterRow {
                 id: row.get(0)?,
@@ -1351,7 +1406,6 @@ impl Registry {
     // Resource CRUD
     // -----------------------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_resource(
         &self,
         id: &str,
@@ -1431,7 +1485,10 @@ impl Registry {
         Ok(result)
     }
 
-    pub fn list_resources_by_type(&self, resource_type: &str) -> Result<Vec<ResourceRow>, RegistryError> {
+    pub fn list_resources_by_type(
+        &self,
+        resource_type: &str,
+    ) -> Result<Vec<ResourceRow>, RegistryError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, resource_type, provider_id, name, status, config, outputs, created_at, updated_at, labels
              FROM resources WHERE resource_type = ?1 ORDER BY created_at",
@@ -1500,7 +1557,9 @@ impl Registry {
     }
 
     pub fn delete_resource(&self, id: &str) -> Result<(), RegistryError> {
-        let changed = self.conn.execute("DELETE FROM resources WHERE id = ?1", params![id])?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM resources WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(RegistryError::NotFound {
                 entity: "resource".into(),
@@ -1553,7 +1612,10 @@ impl Registry {
             .map_err(RegistryError::Database)
     }
 
-    pub fn get_snapshot_by_tag(&self, tag: &str) -> Result<Option<StateSnapshotRow>, RegistryError> {
+    pub fn get_snapshot_by_tag(
+        &self,
+        tag: &str,
+    ) -> Result<Option<StateSnapshotRow>, RegistryError> {
         self.conn
             .query_row(
                 "SELECT id, tag, statement, target_type, target_id, previous_state, created_at
@@ -1602,7 +1664,10 @@ impl Registry {
             .map_err(RegistryError::Database)
     }
 
-    pub fn list_snapshots(&self, limit: Option<i64>) -> Result<Vec<StateSnapshotRow>, RegistryError> {
+    pub fn list_snapshots(
+        &self,
+        limit: Option<i64>,
+    ) -> Result<Vec<StateSnapshotRow>, RegistryError> {
         let limit_val = limit.unwrap_or(100);
         let mut stmt = self.conn.prepare(
             "SELECT id, tag, statement, target_type, target_id, previous_state, created_at
@@ -1628,7 +1693,6 @@ impl Registry {
     // Plan CRUD
     // -----------------------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_plan(
         &self,
         id: &str,
@@ -1638,18 +1702,23 @@ impl Registry {
         checksum: &str,
         environment: Option<&str>,
     ) -> Result<(), RegistryError> {
-        self.conn.execute(
-            "INSERT INTO plans (id, name, source, plan_output, checksum, environment)
+        self.conn
+            .execute(
+                "INSERT INTO plans (id, name, source, plan_output, checksum, environment)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, name, source, plan_output, checksum, environment],
-        ).map_err(|e| match e {
-            rusqlite::Error::SqliteFailure(ref sql_err, _)
-                if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                RegistryError::AlreadyExists { entity: "plan".into(), id: id.into() }
-            }
-            other => RegistryError::Database(other),
-        })?;
+                params![id, name, source, plan_output, checksum, environment],
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(ref sql_err, _)
+                    if sql_err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    RegistryError::AlreadyExists {
+                        entity: "plan".into(),
+                        id: id.into(),
+                    }
+                }
+                other => RegistryError::Database(other),
+            })?;
         Ok(())
     }
 
@@ -1793,7 +1862,9 @@ impl Registry {
     }
 
     pub fn delete_plan(&self, id: &str) -> Result<(), RegistryError> {
-        let changed = self.conn.execute("DELETE FROM plans WHERE id = ?1", params![id])?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM plans WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(RegistryError::NotFound {
                 entity: "plan".into(),
@@ -1807,7 +1878,6 @@ impl Registry {
     // Applied Files (migration tracking)
     // -----------------------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_applied_file(
         &self,
         id: &str,
@@ -1831,7 +1901,10 @@ impl Registry {
         Ok(())
     }
 
-    pub fn get_applied_file_by_hash(&self, file_hash: &str) -> Result<Option<AppliedFileRow>, RegistryError> {
+    pub fn get_applied_file_by_hash(
+        &self,
+        file_hash: &str,
+    ) -> Result<Option<AppliedFileRow>, RegistryError> {
         let row = self.conn
             .query_row(
                 "SELECT id, file_path, file_hash, statements_count, applied_at, applied_by, environment, status
@@ -1943,8 +2016,19 @@ mod tests {
 
     /// Helper: create a provider for FK satisfaction.
     fn seed_provider(reg: &Registry, id: &str) {
-        reg.insert_provider(id, "kvm", "firecracker", "healthy", true, Some("h1"), None, "auth-1", None, None)
-            .unwrap();
+        reg.insert_provider(
+            id,
+            "kvm",
+            "firecracker",
+            "healthy",
+            true,
+            Some("h1"),
+            None,
+            "auth-1",
+            None,
+            None,
+        )
+        .unwrap();
     }
 
     // -- 1. Fresh init creates all tables -----------------------------------
@@ -2036,8 +2120,19 @@ mod tests {
         let reg = Registry::open_in_memory().unwrap();
         seed_provider(&reg, "prov-1");
 
-        reg.insert_microvm("vm-1", "prov-1", "tenant-a", "running", None, Some(2), Some(512), Some("host1"), None, None)
-            .unwrap();
+        reg.insert_microvm(
+            "vm-1",
+            "prov-1",
+            "tenant-a",
+            "running",
+            None,
+            Some(2),
+            Some(512),
+            Some("host1"),
+            None,
+            None,
+        )
+        .unwrap();
 
         let vm = reg.get_microvm("vm-1").unwrap();
         assert_eq!(vm.id, "vm-1");
@@ -2048,8 +2143,19 @@ mod tests {
         assert_eq!(vm.memory_mb, Some(512));
 
         // List
-        reg.insert_microvm("vm-2", "prov-1", "tenant-b", "creating", None, Some(4), Some(1024), None, None, None)
-            .unwrap();
+        reg.insert_microvm(
+            "vm-2",
+            "prov-1",
+            "tenant-b",
+            "creating",
+            None,
+            Some(4),
+            Some(1024),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(reg.list_microvms().unwrap().len(), 2);
 
         // Update status
@@ -2069,8 +2175,17 @@ mod tests {
         let reg = Registry::open_in_memory().unwrap();
         seed_provider(&reg, "prov-1");
 
-        reg.insert_volume("vol-1", "prov-1", "ssd", 100, "available", Some(3000), false, None)
-            .unwrap();
+        reg.insert_volume(
+            "vol-1",
+            "prov-1",
+            "ssd",
+            100,
+            "available",
+            Some(3000),
+            false,
+            None,
+        )
+        .unwrap();
 
         let v = reg.get_volume("vol-1").unwrap();
         assert_eq!(v.id, "vol-1");
@@ -2122,9 +2237,23 @@ mod tests {
         let reg = Registry::open_in_memory().unwrap();
 
         reg.insert_image(
-            "img-1", "ubuntu-22", "linux", "ubuntu", "22.04", "x86_64",
-            "kernel+rootfs", None, Some("/boot/vmlinux"), Some("/root.ext4"),
-            None, None, "local", Some("abc123"), Some(256), "available", None,
+            "img-1",
+            "ubuntu-22",
+            "linux",
+            "ubuntu",
+            "22.04",
+            "x86_64",
+            "kernel+rootfs",
+            None,
+            Some("/boot/vmlinux"),
+            Some("/root.ext4"),
+            None,
+            None,
+            "local",
+            Some("abc123"),
+            Some(256),
+            "available",
+            None,
         )
         .unwrap();
 
@@ -2137,9 +2266,23 @@ mod tests {
 
         // List
         reg.insert_image(
-            "img-2", "alpine", "linux", "alpine", "3.18", "aarch64",
-            "disk", None, None, None, Some("/disk.qcow2"), None,
-            "registry", None, Some(64), "importing", None,
+            "img-2",
+            "alpine",
+            "linux",
+            "alpine",
+            "3.18",
+            "aarch64",
+            "disk",
+            None,
+            None,
+            None,
+            Some("/disk.qcow2"),
+            None,
+            "registry",
+            None,
+            Some(64),
+            "importing",
+            None,
         )
         .unwrap();
         assert_eq!(reg.list_images().unwrap().len(), 2);
@@ -2160,10 +2303,26 @@ mod tests {
     fn audit_log_append_and_list() {
         let reg = Registry::open_in_memory().unwrap();
 
-        reg.insert_audit_log(Some("admin"), "CREATE", Some("microvm"), Some("vm-1"), "permitted", None, None)
-            .unwrap();
-        reg.insert_audit_log(Some("admin"), "DELETE", Some("microvm"), Some("vm-1"), "denied", Some("no permission"), None)
-            .unwrap();
+        reg.insert_audit_log(
+            Some("admin"),
+            "CREATE",
+            Some("microvm"),
+            Some("vm-1"),
+            "permitted",
+            None,
+            None,
+        )
+        .unwrap();
+        reg.insert_audit_log(
+            Some("admin"),
+            "DELETE",
+            Some("microvm"),
+            Some("vm-1"),
+            "denied",
+            Some("no permission"),
+            None,
+        )
+        .unwrap();
         reg.insert_audit_log(None, "SELECT", None, None, "permitted", None, None)
             .unwrap();
 
@@ -2191,8 +2350,16 @@ mod tests {
             let reg = Registry::open(db_str).unwrap();
             seed_provider(&reg, "prov-persist");
             reg.insert_microvm(
-                "vm-persist", "prov-persist", "t1", "running",
-                None, Some(1), Some(256), None, None, None,
+                "vm-persist",
+                "prov-persist",
+                "t1",
+                "running",
+                None,
+                Some(1),
+                Some(256),
+                None,
+                None,
+                None,
             )
             .unwrap();
         }
@@ -2237,9 +2404,18 @@ mod tests {
     fn principal_and_grant_crud() {
         let reg = Registry::open_in_memory().unwrap();
 
-        reg.insert_principal("usr-1", "user", "oidc:alice", true).unwrap();
-        reg.insert_grant("grant-1", "usr-1", r#"["SELECT","CREATE"]"#, "global", None, None, Some("root"))
+        reg.insert_principal("usr-1", "user", "oidc:alice", true)
             .unwrap();
+        reg.insert_grant(
+            "grant-1",
+            "usr-1",
+            r#"["SELECT","CREATE"]"#,
+            "global",
+            None,
+            None,
+            Some("root"),
+        )
+        .unwrap();
 
         let grants = reg.get_grants_for_principal("usr-1").unwrap();
         assert_eq!(grants.len(), 1);
@@ -2256,8 +2432,16 @@ mod tests {
     fn query_history_insert() {
         let reg = Registry::open_in_memory().unwrap();
         reg.insert_query_history(
-            Some("admin"), "SELECT * FROM microvms", Some("SELECT * FROM microvms"),
-            "SELECT", Some(r#"["microvms"]"#), Some(5), "ok", None, Some(10), None,
+            Some("admin"),
+            "SELECT * FROM microvms",
+            Some("SELECT * FROM microvms"),
+            "SELECT",
+            Some(r#"["microvms"]"#),
+            Some(5),
+            "ok",
+            None,
+            Some(10),
+            None,
         )
         .unwrap();
 
@@ -2276,7 +2460,18 @@ mod tests {
         let reg = Registry::open_in_memory().unwrap();
         seed_provider(&reg, "prov-dup");
         let err = reg
-            .insert_provider("prov-dup", "kvm", "firecracker", "healthy", true, None, None, "auth", None, None)
+            .insert_provider(
+                "prov-dup",
+                "kvm",
+                "firecracker",
+                "healthy",
+                true,
+                None,
+                None,
+                "auth",
+                None,
+                None,
+            )
             .unwrap_err();
         assert!(matches!(err, RegistryError::AlreadyExists { .. }));
     }
@@ -2288,8 +2483,13 @@ mod tests {
         let reg = Registry::open_in_memory().unwrap();
 
         reg.insert_resource(
-            "db-1", "postgres", "azure.eastus", Some("acme-db"),
-            "creating", Some(r#"{"version":"16","sku":"Standard_B1ms"}"#), None,
+            "db-1",
+            "postgres",
+            "azure.eastus",
+            Some("acme-db"),
+            "creating",
+            Some(r#"{"version":"16","sku":"Standard_B1ms"}"#),
+            None,
         )
         .unwrap();
 
@@ -2304,8 +2504,13 @@ mod tests {
 
         // List all
         reg.insert_resource(
-            "cache-1", "redis", "azure.eastus", None,
-            "creating", Some(r#"{"sku":"Standard"}"#), None,
+            "cache-1",
+            "redis",
+            "azure.eastus",
+            None,
+            "creating",
+            Some(r#"{"sku":"Standard"}"#),
+            None,
         )
         .unwrap();
         let all = reg.list_resources().unwrap();
@@ -2327,13 +2532,15 @@ mod tests {
         assert!(r2.updated_at.is_some());
 
         // Update outputs
-        reg.update_resource_outputs("db-1", r#"{"connection_string":"host=..."}"#).unwrap();
+        reg.update_resource_outputs("db-1", r#"{"connection_string":"host=..."}"#)
+            .unwrap();
         let r3 = reg.get_resource("db-1").unwrap();
         assert!(r3.outputs.is_some());
         assert!(r3.outputs.unwrap().contains("connection_string"));
 
         // Update config
-        reg.update_resource_config("db-1", r#"{"version":"16","sku":"Standard_B2s"}"#).unwrap();
+        reg.update_resource_config("db-1", r#"{"version":"16","sku":"Standard_B2s"}"#)
+            .unwrap();
         let r4 = reg.get_resource("db-1").unwrap();
         assert!(r4.config.unwrap().contains("Standard_B2s"));
 
@@ -2560,9 +2767,12 @@ mod tests {
     #[test]
     fn test_plan_list_by_status() {
         let reg = Registry::open_in_memory().unwrap();
-        reg.insert_plan("plan-1", None, "s1", "{}", "c1", None).unwrap();
-        reg.insert_plan("plan-2", None, "s2", "{}", "c2", None).unwrap();
-        reg.insert_plan("plan-3", None, "s3", "{}", "c3", None).unwrap();
+        reg.insert_plan("plan-1", None, "s1", "{}", "c1", None)
+            .unwrap();
+        reg.insert_plan("plan-2", None, "s2", "{}", "c2", None)
+            .unwrap();
+        reg.insert_plan("plan-3", None, "s3", "{}", "c3", None)
+            .unwrap();
 
         reg.approve_plan("plan-2", None).unwrap();
 

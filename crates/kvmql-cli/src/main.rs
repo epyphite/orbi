@@ -167,7 +167,9 @@ async fn main() {
     if let Ok(providers) = ctx.registry.list_providers() {
         for p in &providers {
             let driver: Arc<dyn kvmql_driver::traits::Driver> = if cli.simulate {
-                Arc::new(kvmql_driver::simulate::SimulationDriver::new(&p.provider_type))
+                Arc::new(kvmql_driver::simulate::SimulationDriver::new(
+                    &p.provider_type,
+                ))
             } else {
                 match (p.provider_type.as_str(), p.driver.as_str()) {
                     ("kvm", "firecracker") => {
@@ -177,8 +179,12 @@ async fn main() {
                     ("aws", _) => {
                         let region = p.region.as_deref().unwrap_or("us-east-1");
                         // Try to resolve auth_ref as AWS profile name
-                        if let Ok(profile) = kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref) {
-                            Arc::new(kvmql_driver::aws::AwsEc2Driver::with_profile(region, &profile))
+                        if let Ok(profile) =
+                            kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref)
+                        {
+                            Arc::new(kvmql_driver::aws::AwsEc2Driver::with_profile(
+                                region, &profile,
+                            ))
                         } else {
                             Arc::new(kvmql_driver::aws::AwsEc2Driver::new(region))
                         }
@@ -188,7 +194,9 @@ async fn main() {
                         let sub = kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref)
                             .unwrap_or_else(|_| p.id.clone());
                         if let Some(ref rg) = p.region {
-                            Arc::new(kvmql_driver::azure::AzureVmDriver::with_resource_group(&sub, rg))
+                            Arc::new(kvmql_driver::azure::AzureVmDriver::with_resource_group(
+                                &sub, rg,
+                            ))
                         } else {
                             Arc::new(kvmql_driver::azure::AzureVmDriver::new(&sub))
                         }
@@ -227,12 +235,16 @@ async fn main() {
 
                         // Check if this exact file was already applied
                         if !force {
-                            if let Ok(Some(applied)) = ctx.registry.get_applied_file_by_hash(&file_hash) {
+                            if let Ok(Some(applied)) =
+                                ctx.registry.get_applied_file_by_hash(&file_hash)
+                            {
                                 match applied.status.as_str() {
                                     "applied" => {
                                         eprintln!(
                                             "File '{}' already applied at {} (hash: {}...)",
-                                            file, applied.applied_at, &file_hash[..12]
+                                            file,
+                                            applied.applied_at,
+                                            &file_hash[..12]
                                         );
                                         eprintln!("Use --force to re-apply.");
                                         return;
@@ -276,7 +288,8 @@ async fn main() {
                             cli.env.as_deref(),
                         );
                         if status != "applied" {
-                            if let Ok(Some(row)) = ctx.registry.get_applied_file_by_hash(&file_hash) {
+                            if let Ok(Some(row)) = ctx.registry.get_applied_file_by_hash(&file_hash)
+                            {
                                 let _ = ctx.registry.update_applied_file_status(&row.id, status);
                             }
                         }
@@ -312,7 +325,11 @@ async fn main() {
                     }
                 }
             }
-            Commands::Plan { source, output, name } => {
+            Commands::Plan {
+                source,
+                output,
+                name,
+            } => {
                 // Read source (file or inline)
                 let dsl = if std::path::Path::new(source).exists() {
                     std::fs::read_to_string(source).expect("failed to read file")
@@ -330,21 +347,23 @@ async fn main() {
                 let plan_json = serde_json::to_string_pretty(&result).unwrap();
 
                 // Store in registry
-                ctx.registry.insert_plan(
-                    &plan_id,
-                    name.as_deref(),
-                    &dsl,
-                    &plan_json,
-                    &checksum,
-                    cli.env.as_deref(),
-                ).expect("failed to store plan");
+                ctx.registry
+                    .insert_plan(
+                        &plan_id,
+                        name.as_deref(),
+                        &dsl,
+                        &plan_json,
+                        &checksum,
+                        cli.env.as_deref(),
+                    )
+                    .expect("failed to store plan");
 
                 println!("Plan {} created (status: pending)", plan_id);
                 println!();
                 print_result(&result, format, false, false);
 
                 // Also write to file if requested
-                if let Some(path) = output {
+                if let Some(ref path) = output {
                     let file_plan = serde_json::json!({
                         "plan_id": plan_id,
                         "version": "0.2.0",
@@ -353,8 +372,8 @@ async fn main() {
                         "checksum": checksum,
                         "plan": result,
                     });
-                    std::fs::write(&path, serde_json::to_string_pretty(&file_plan).unwrap())
-                        .expect("failed to write plan file");
+                    let plan_json = serde_json::to_string_pretty(&file_plan).unwrap();
+                    std::fs::write(path, plan_json).expect("failed to write plan file");
                     println!("Plan also written to {path}");
                 }
             }
@@ -362,20 +381,20 @@ async fn main() {
                 // Check if target is a file path or a plan ID
                 if std::path::Path::new(target).exists() {
                     // File-based apply (existing behavior)
-                    let plan_json = std::fs::read_to_string(target).expect("failed to read plan file");
+                    let plan_json =
+                        std::fs::read_to_string(target).expect("failed to read plan file");
                     let plan: serde_json::Value =
                         serde_json::from_str(&plan_json).expect("invalid plan file");
 
-                    let source = plan["source"]
-                        .as_str()
-                        .expect("plan missing source");
-                    let expected_checksum = plan["checksum"]
-                        .as_str()
-                        .expect("plan missing checksum");
+                    let source = plan["source"].as_str().expect("plan missing source");
+                    let expected_checksum =
+                        plan["checksum"].as_str().expect("plan missing checksum");
                     let actual_checksum = sha256_hex(source);
 
                     if actual_checksum != expected_checksum {
-                        eprintln!("Plan file has been modified since generation. Refusing to apply.");
+                        eprintln!(
+                            "Plan file has been modified since generation. Refusing to apply."
+                        );
                         eprintln!("Expected checksum: {expected_checksum}");
                         eprintln!("Actual checksum:   {actual_checksum}");
                         std::process::exit(1);
@@ -390,11 +409,10 @@ async fn main() {
                     }
                 } else {
                     // Registry-based apply
-                    let plan = ctx.registry.get_plan(target)
-                        .unwrap_or_else(|_| {
-                            eprintln!("Plan '{}' not found. List plans: orbi plans", target);
-                            std::process::exit(1);
-                        });
+                    let plan = ctx.registry.get_plan(target).unwrap_or_else(|_| {
+                        eprintln!("Plan '{}' not found. List plans: orbi plans", target);
+                        std::process::exit(1);
+                    });
 
                     if plan.status == "pending" {
                         eprintln!("Plan '{}' has not been approved yet.", target);
@@ -408,7 +426,10 @@ async fn main() {
                     }
 
                     if plan.status != "approved" {
-                        eprintln!("Plan '{}' cannot be applied (status: {}).", target, plan.status);
+                        eprintln!(
+                            "Plan '{}' cannot be applied (status: {}).",
+                            target, plan.status
+                        );
                         std::process::exit(1);
                     }
 
@@ -417,12 +438,20 @@ async fn main() {
                     let result = executor.execute(&plan.source).await;
 
                     if result.status == kvmql_engine::response::ResultStatus::Error {
-                        ctx.registry.update_plan_status(target, "failed", None,
-                            Some(&format!("{:?}", result.notifications))).ok();
+                        ctx.registry
+                            .update_plan_status(
+                                target,
+                                "failed",
+                                None,
+                                Some(&format!("{:?}", result.notifications)),
+                            )
+                            .ok();
                         print_result(&result, format, false, false);
                         std::process::exit(1);
                     } else {
-                        ctx.registry.update_plan_status(target, "applied", None, None).ok();
+                        ctx.registry
+                            .update_plan_status(target, "applied", None, None)
+                            .ok();
                         print_result(&result, format, false, false);
                         println!("Plan {} applied successfully.", target);
                     }
@@ -443,13 +472,16 @@ async fn main() {
                 println!("Plan {} approved. Apply it: orbi apply {}", id, id);
             }
             Commands::Plans { status } => {
-                let plans = ctx.registry.list_plans(status.as_deref())
+                let plans = ctx
+                    .registry
+                    .list_plans(status.as_deref())
                     .expect("failed to list plans");
                 if plans.is_empty() {
                     println!("No plans found.");
                 } else {
                     for p in &plans {
-                        println!("{} | {} | {} | {}",
+                        println!(
+                            "{} | {} | {} | {}",
                             p.id,
                             p.status,
                             p.name.as_deref().unwrap_or("-"),
@@ -485,7 +517,12 @@ async fn main() {
                                     let env_name = name.trim_end_matches(".db");
                                     let meta = entry.metadata().ok();
                                     let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                                    println!("  {:<8} {} ({} KB)", env_name, entry.path().display(), size / 1024);
+                                    println!(
+                                        "  {:<8} {} ({} KB)",
+                                        env_name,
+                                        entry.path().display(),
+                                        size / 1024
+                                    );
                                 }
                             }
                         }
@@ -528,8 +565,9 @@ async fn main() {
                         println!("{}", serde_json::to_string_pretty(&export).unwrap());
                     }
                     EnvAction::Import { file, name } => {
-                        let json = std::fs::read_to_string(&file).expect("failed to read file");
-                        let data: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+                        let json = std::fs::read_to_string(file).expect("failed to read file");
+                        let data: serde_json::Value =
+                            serde_json::from_str(&json).expect("invalid JSON");
                         let path = format!("{envs_dir}/{name}.db");
                         let _ = std::fs::create_dir_all(&envs_dir);
                         let reg = Registry::open(&path).expect("failed to create environment");
@@ -541,11 +579,13 @@ async fn main() {
                                     p["id"].as_str().unwrap_or(""),
                                     p["type"].as_str().unwrap_or("kvm"),
                                     p["driver"].as_str().unwrap_or("mock"),
-                                    "unknown", true,
+                                    "unknown",
+                                    true,
                                     p["host"].as_str(),
                                     p["region"].as_str(),
                                     p["auth_ref"].as_str().unwrap_or("none"),
-                                    None, None,
+                                    None,
+                                    None,
                                 );
                             }
                         }
