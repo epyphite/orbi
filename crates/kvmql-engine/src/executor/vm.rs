@@ -184,10 +184,7 @@ impl<'a> Executor<'a> {
     // DESTROY MICROVM / VOLUME
     // =======================================================================
 
-    pub(super) async fn exec_destroy(
-        &self,
-        s: &DestroyStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_destroy(&self, s: &DestroyStmt) -> Result<StmtOutcome, EngineError> {
         match s.target {
             DestroyTarget::Microvm => {
                 // Look up VM in registry to find its provider
@@ -239,10 +236,7 @@ impl<'a> Executor<'a> {
     // PAUSE / RESUME
     // =======================================================================
 
-    pub(super) async fn exec_pause(
-        &self,
-        s: &PauseStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_pause(&self, s: &PauseStmt) -> Result<StmtOutcome, EngineError> {
         let row = self
             .ctx
             .registry
@@ -264,10 +258,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_empty())
     }
 
-    pub(super) async fn exec_resume(
-        &self,
-        s: &ResumeStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_resume(&self, s: &ResumeStmt) -> Result<StmtOutcome, EngineError> {
         let row = self
             .ctx
             .registry
@@ -293,10 +284,7 @@ impl<'a> Executor<'a> {
     // SNAPSHOT / RESTORE
     // =======================================================================
 
-    pub(super) async fn exec_snapshot(
-        &self,
-        s: &SnapshotStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_snapshot(&self, s: &SnapshotStmt) -> Result<StmtOutcome, EngineError> {
         let row = self
             .ctx
             .registry
@@ -315,10 +303,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_val(val))
     }
 
-    pub(super) async fn exec_restore(
-        &self,
-        s: &RestoreStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_restore(&self, s: &RestoreStmt) -> Result<StmtOutcome, EngineError> {
         // Find any driver (use first available or the one that holds a snapshot)
         let (provider_id, driver) = self.any_driver()?;
         let vm = driver

@@ -1347,10 +1347,7 @@ impl<'a> Executor<'a> {
     // ROLLBACK
     // =======================================================================
 
-    pub(super) fn exec_rollback(
-        &self,
-        s: &RollbackStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) fn exec_rollback(&self, s: &RollbackStmt) -> Result<StmtOutcome, EngineError> {
         let snapshot = match &s.target {
             RollbackTarget::Last => self
                 .ctx

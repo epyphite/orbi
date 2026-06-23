@@ -196,10 +196,7 @@ impl<'a> Executor<'a> {
     // CLUSTER management
     // =======================================================================
 
-    pub(super) fn exec_add_cluster(
-        &self,
-        s: &AddClusterStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) fn exec_add_cluster(&self, s: &AddClusterStmt) -> Result<StmtOutcome, EngineError> {
         let id = uuid::Uuid::new_v4().to_string();
         self.ctx
             .registry

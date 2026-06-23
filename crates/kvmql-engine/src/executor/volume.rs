@@ -87,10 +87,7 @@ impl<'a> Executor<'a> {
     // ATTACH / DETACH VOLUME
     // =======================================================================
 
-    pub(super) async fn exec_attach(
-        &self,
-        s: &AttachStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_attach(&self, s: &AttachStmt) -> Result<StmtOutcome, EngineError> {
         // Look up the VM to find its provider
         let vm_row = self
             .ctx
@@ -117,10 +114,7 @@ impl<'a> Executor<'a> {
         Ok(StmtOutcome::ok_empty())
     }
 
-    pub(super) async fn exec_detach(
-        &self,
-        s: &DetachStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_detach(&self, s: &DetachStmt) -> Result<StmtOutcome, EngineError> {
         let vm_row = self
             .ctx
             .registry
@@ -146,10 +140,7 @@ impl<'a> Executor<'a> {
     // RESIZE VOLUME
     // =======================================================================
 
-    pub(super) async fn exec_resize(
-        &self,
-        s: &ResizeStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_resize(&self, s: &ResizeStmt) -> Result<StmtOutcome, EngineError> {
         let vol_row = self
             .ctx
             .registry

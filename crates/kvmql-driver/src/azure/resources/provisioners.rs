@@ -7,7 +7,10 @@ use super::AzureResourceProvisioner;
 // ── Per-resource create implementations ──────────────────────────
 
 impl AzureResourceProvisioner {
-    pub(crate) fn create_postgres(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_postgres(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_postgres_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -60,7 +63,10 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn create_storage_account(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_storage_account(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_storage_account_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -97,7 +103,10 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn create_container_registry(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_container_registry(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_container_registry_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -112,7 +121,10 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn create_dns_zone(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_dns_zone(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_dns_zone_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -127,7 +139,10 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn create_container_app(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_container_app(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_container_app_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -145,7 +160,10 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn create_container_job(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_container_job(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_container_job_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -156,7 +174,10 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn create_load_balancer(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_load_balancer(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_load_balancer_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -188,7 +209,10 @@ impl AzureResourceProvisioner {
 
     // ── NSG Rule (sub-resource of NSG) ─────────────────────────────────
 
-    pub(crate) fn create_nsg_rule(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_nsg_rule(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_nsg_rule_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -207,7 +231,10 @@ impl AzureResourceProvisioner {
 
     // ── VNet Peering ───────────────────────────────────────────────────
 
-    pub(crate) fn create_vnet_peering(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_vnet_peering(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_vnet_peering_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -217,7 +244,11 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn delete_vnet_peering(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
+    pub(crate) fn delete_vnet_peering(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<(), ProvisionError> {
         let args = self.build_vnet_peering_delete_args(id, params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_az(&refs)?;
@@ -226,7 +257,10 @@ impl AzureResourceProvisioner {
 
     // ── PostgreSQL Database ─────────────────────────────────────────
 
-    pub(crate) fn create_pg_database(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_pg_database(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_pg_database_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -236,7 +270,11 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn delete_pg_database(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
+    pub(crate) fn delete_pg_database(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<(), ProvisionError> {
         let server = param_str(params, "server")?;
         let mut args: Vec<String> = vec![
             "postgres".into(),
@@ -260,7 +298,10 @@ impl AzureResourceProvisioner {
 
     // ── Private DNS VNet Link ───────────────────────────────────────
 
-    pub(crate) fn create_dns_vnet_link(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+    pub(crate) fn create_dns_vnet_link(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_dns_vnet_link_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_az(&refs)?;
@@ -270,7 +311,11 @@ impl AzureResourceProvisioner {
         })
     }
 
-    pub(crate) fn delete_dns_vnet_link(&self, id: &str, params: &Value) -> Result<(), ProvisionError> {
+    pub(crate) fn delete_dns_vnet_link(
+        &self,
+        id: &str,
+        params: &Value,
+    ) -> Result<(), ProvisionError> {
         let zone = param_str(params, "zone_name")?;
         let mut args: Vec<String> = vec![
             "network".into(),

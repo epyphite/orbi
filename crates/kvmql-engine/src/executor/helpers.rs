@@ -13,10 +13,7 @@ use super::Executor;
 // ---------------------------------------------------------------------------
 
 impl<'a> Executor<'a> {
-    pub(super) fn resolve_provider(
-        &self,
-        on: &Option<TargetSpec>,
-    ) -> Result<String, EngineError> {
+    pub(super) fn resolve_provider(&self, on: &Option<TargetSpec>) -> Result<String, EngineError> {
         if let Some(spec) = on {
             match &spec.target {
                 TargetKind::Provider(id) => return Ok(id.clone()),
@@ -366,9 +363,7 @@ fn eval_comparison(cmp: &Comparison, row: &serde_json::Value) -> bool {
                 false
             }
         }
-        ComparisonOp::In | ComparisonOp::NotIn => {
-            cmp.op == ComparisonOp::NotIn
-        }
+        ComparisonOp::In | ComparisonOp::NotIn => cmp.op == ComparisonOp::NotIn,
     }
 }
 
@@ -871,11 +866,7 @@ pub(super) fn simulate_outputs(
 // Envelope constructors
 // ---------------------------------------------------------------------------
 
-pub(super) fn error_envelope(
-    request_id: String,
-    message: &str,
-    start: Instant,
-) -> ResultEnvelope {
+pub(super) fn error_envelope(request_id: String, message: &str, start: Instant) -> ResultEnvelope {
     ResultEnvelope {
         request_id,
         status: ResultStatus::Error,

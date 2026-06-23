@@ -14,10 +14,7 @@ impl<'a> Executor<'a> {
     // SELECT
     // =======================================================================
 
-    pub(super) async fn exec_select(
-        &self,
-        s: &SelectStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_select(&self, s: &SelectStmt) -> Result<StmtOutcome, EngineError> {
         // Table-valued function sources (dns_lookup, tcp_probe, ...) live in
         // a separate code path — no registry involvement.
         let noun = match &s.from {
@@ -636,10 +633,7 @@ impl<'a> Executor<'a> {
     // WATCH
     // =======================================================================
 
-    pub(super) async fn exec_watch(
-        &self,
-        s: &WatchStmt,
-    ) -> Result<StmtOutcome, EngineError> {
+    pub(super) async fn exec_watch(&self, s: &WatchStmt) -> Result<StmtOutcome, EngineError> {
         let select = SelectStmt {
             fields: s.metrics.clone(),
             from: SelectSource::Noun(s.from.clone()),
@@ -734,16 +728,15 @@ impl<'a> Executor<'a> {
 
         let provider_ids: Vec<String> = match fc.args.first() {
             Some(Expr::StringLit(pid)) => vec![pid.clone()],
-            None | Some(_) => {
-                self.ctx
-                    .registry
-                    .list_providers()
-                    .map_err(|e| format!("list providers: {e}"))?
-                    .into_iter()
-                    .filter(|r| r.provider_type == "ssh")
-                    .map(|r| r.id)
-                    .collect()
-            }
+            None | Some(_) => self
+                .ctx
+                .registry
+                .list_providers()
+                .map_err(|e| format!("list providers: {e}"))?
+                .into_iter()
+                .filter(|r| r.provider_type == "ssh")
+                .map(|r| r.id)
+                .collect(),
         };
 
         if self.ctx.simulate {
@@ -1028,9 +1021,7 @@ impl<'a> Executor<'a> {
                     Ok(eval_binary_op(&l, op, &r))
                 }
                 Expr::Grouped(inner) => self.eval_expr_value(inner).await,
-                Expr::Identifier(name) => {
-                    Ok(serde_json::Value::String(name.clone()))
-                }
+                Expr::Identifier(name) => Ok(serde_json::Value::String(name.clone())),
                 Expr::FunctionCall(_) | Expr::Duration(_) => Err(format!(
                     "expression not supported in ASSERT context: {:?}",
                     expr

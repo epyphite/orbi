@@ -14,6 +14,7 @@ pub mod simulate;
 pub mod ssh;
 pub mod traits;
 pub mod types;
+pub mod vmware;
 
 #[cfg(test)]
 mod cloud_driver_tests {
