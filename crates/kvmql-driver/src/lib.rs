@@ -4,6 +4,7 @@ pub mod aws;
 pub mod azure;
 pub mod capability;
 pub mod cloudflare;
+pub mod docker;
 pub mod firecracker;
 pub mod gcp;
 pub mod github;
