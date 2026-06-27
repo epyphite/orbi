@@ -47,6 +47,9 @@ impl AwsResourceProvisioner {
             "eks_addon" => self.create_eks_addon(params),
             "s3_bucket" => self.create_s3_bucket(params),
             "kms_key" => self.create_kms_key(params),
+            "elasticache_redis" => self.create_elasticache_redis(params),
+            "elasticache_replication_group" => self.create_elasticache_replication_group(params),
+            "msk_cluster" => self.create_msk_cluster(params),
             other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
@@ -91,6 +94,27 @@ impl AwsResourceProvisioner {
             }
             "s3_bucket" => {
                 self.run_aws(&["s3api", "delete-bucket", "--bucket", id])?;
+                Ok(())
+            }
+            "elasticache_redis" => {
+                self.run_aws(&[
+                    "elasticache", "delete-cache-cluster",
+                    "--cache-cluster-id", id,
+                ])?;
+                Ok(())
+            }
+            "elasticache_replication_group" => {
+                self.run_aws(&[
+                    "elasticache", "delete-replication-group",
+                    "--replication-group-id", id,
+                ])?;
+                Ok(())
+            }
+            "msk_cluster" => {
+                self.run_aws(&[
+                    "kafka", "delete-cluster",
+                    "--cluster-arn", id,
+                ])?;
                 Ok(())
             }
             "kms_key" => {
@@ -179,6 +203,11 @@ impl AwsResourceProvisioner {
             "eks_addon" => self.build_eks_addon_args(params)?,
             "s3_bucket" => self.build_s3_bucket_args(params)?,
             "kms_key" => self.build_kms_key_args(params)?,
+            "elasticache_redis" => self.build_elasticache_redis_args(params)?,
+            "elasticache_replication_group" => {
+                self.build_elasticache_replication_group_args(params)?
+            }
+            "msk_cluster" => self.build_msk_cluster_args(params)?,
             other => return Err(format!("unsupported AWS resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
@@ -221,6 +250,19 @@ impl AwsResourceProvisioner {
                 );
             }
             "s3_bucket" => vec!["s3api", "delete-bucket", "--bucket", id],
+            "elasticache_redis" => vec![
+                "elasticache",
+                "delete-cache-cluster",
+                "--cache-cluster-id",
+                id,
+            ],
+            "elasticache_replication_group" => vec![
+                "elasticache",
+                "delete-replication-group",
+                "--replication-group-id",
+                id,
+            ],
+            "msk_cluster" => vec!["kafka", "delete-cluster", "--cluster-arn", id],
             "kms_key" => vec![
                 "kms",
                 "schedule-key-deletion",
@@ -316,6 +358,8 @@ impl AwsResourceProvisioner {
             ("lambda", Self::discover_lambda),
             ("elb", Self::discover_elbs),
             ("eks_cluster", Self::discover_eks_clusters),
+            ("elasticache_redis", Self::discover_elasticache),
+            ("msk_cluster", Self::discover_msk_clusters),
         ];
 
         for (_, collector) in collectors {
@@ -764,6 +808,116 @@ impl AwsResourceProvisioner {
         results
     }
 
+    fn discover_elasticache(&self) -> Vec<Value> {
+        let output = match self.discover_run(
+            "elasticache_redis",
+            &[
+                "elasticache",
+                "describe-cache-clusters",
+                "--show-cache-node-info",
+            ],
+        ) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_elasticache_clusters(&output)
+    }
+
+    fn parse_elasticache_clusters(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let clusters = match output.get("CacheClusters").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for cluster in clusters {
+            let id = cluster
+                .get("CacheClusterId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let engine = cluster
+                .get("Engine")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let resource_type = if cluster.get("ReplicationGroupId").is_some() {
+                "elasticache_replication_group"
+            } else {
+                "elasticache_redis"
+            };
+
+            let config = serde_json::json!({
+                "engine": cluster.get("Engine"),
+                "engine_version": cluster.get("EngineVersion"),
+                "cache_node_type": cluster.get("CacheNodeType"),
+                "num_cache_nodes": cluster.get("NumCacheNodes"),
+                "replication_group_id": cluster.get("ReplicationGroupId"),
+            });
+            let outputs = serde_json::json!({
+                "cache_cluster_id": &id,
+                "status": cluster.get("CacheClusterStatus"),
+                "engine": engine,
+                "configuration_endpoint": cluster.get("ConfigurationEndpoint"),
+            });
+
+            results.push(serde_json::json!({
+                "id": id,
+                "resource_type": resource_type,
+                "name": id,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_msk_clusters(&self) -> Vec<Value> {
+        let output = match self.discover_run("msk_cluster", &["kafka", "list-clusters-v2"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_msk_clusters(&output)
+    }
+
+    fn parse_msk_clusters(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let clusters = match output.get("ClusterInfoList").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for cluster in clusters {
+            let arn = cluster
+                .get("ClusterArn")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = cluster
+                .get("ClusterName")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&arn)
+                .to_string();
+
+            let config = serde_json::json!({
+                "cluster_name": cluster.get("ClusterName"),
+                "cluster_type": cluster.get("ClusterType"),
+            });
+            let outputs = serde_json::json!({
+                "cluster_arn": &arn,
+                "state": cluster.get("State"),
+            });
+
+            results.push(serde_json::json!({
+                "id": arn,
+                "resource_type": "msk_cluster",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
     // ── Per-resource create implementations ──────────────────────────
 
     /// Create an RDS PostgreSQL instance.
@@ -985,6 +1139,62 @@ impl AwsResourceProvisioner {
 
         Ok(ProvisionResult {
             status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_elasticache_redis(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_elasticache_redis_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let cc = result.get("CacheCluster");
+        let outputs = serde_json::json!({
+            "cache_cluster_id": cc.and_then(|c| c.get("CacheClusterId")),
+            "status": cc.and_then(|c| c.get("CacheClusterStatus")),
+            "engine": cc.and_then(|c| c.get("Engine")),
+            "configuration_endpoint": cc.and_then(|c| c.get("ConfigurationEndpoint")),
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_elasticache_replication_group(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_elasticache_replication_group_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let rg = result.get("ReplicationGroup");
+        let outputs = serde_json::json!({
+            "replication_group_id": rg.and_then(|r| r.get("ReplicationGroupId")),
+            "status": rg.and_then(|r| r.get("Status")),
+            "description": rg.and_then(|r| r.get("Description")),
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_msk_cluster(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_msk_cluster_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let outputs = serde_json::json!({
+            "cluster_arn": result.get("ClusterArn"),
+            "state": result.get("State"),
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
             outputs: Some(outputs),
         })
     }
@@ -1229,6 +1439,101 @@ impl AwsResourceProvisioner {
         if let Some(desc) = params.get("description").and_then(|v| v.as_str()) {
             args.push("--description".into());
             args.push(desc.into());
+        }
+        Ok(args)
+    }
+
+    fn build_elasticache_redis_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let node_type = param_str_or(params, "node_type", "cache.t3.micro");
+        let num_nodes = param_str_or(params, "num_nodes", "1");
+
+        let mut args = vec![
+            "elasticache".into(),
+            "create-cache-cluster".into(),
+            "--cache-cluster-id".into(),
+            id,
+            "--engine".into(),
+            "redis".into(),
+            "--cache-node-type".into(),
+            node_type,
+            "--num-cache-nodes".into(),
+            num_nodes,
+        ];
+        if let Some(version) = params.get("version").and_then(|v| v.as_str()) {
+            args.push("--engine-version".into());
+            args.push(version.into());
+        }
+        Ok(args)
+    }
+
+    fn build_elasticache_replication_group_args(
+        &self,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let description = param_str_or(params, "description", "Orbi managed");
+        let node_type = param_str_or(params, "node_type", "cache.t3.micro");
+        let num_shards = param_str_or(params, "num_shards", "1");
+        let replicas = param_str_or(params, "replicas", "1");
+
+        let mut args = vec![
+            "elasticache".into(),
+            "create-replication-group".into(),
+            "--replication-group-id".into(),
+            id,
+            "--replication-group-description".into(),
+            description,
+            "--cache-node-type".into(),
+            node_type,
+            "--num-node-groups".into(),
+            num_shards,
+            "--replicas-per-node-group".into(),
+            replicas,
+        ];
+        if let Some(version) = params.get("version").and_then(|v| v.as_str()) {
+            args.push("--engine-version".into());
+            args.push(version.into());
+        }
+        Ok(args)
+    }
+
+    fn build_msk_cluster_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let version = param_str_or(params, "version", "3.6.0");
+        let broker_count = param_str_or(params, "broker_count", "3");
+        let subnets = param_str(params, "subnets")?;
+        let instance_type = param_str_or(params, "instance_type", "kafka.m5.large");
+        let security_groups = param_str(params, "security_groups")?;
+
+        // Parse comma-separated values into JSON arrays
+        let subnet_list: Vec<String> = subnets.split(',').map(|s| s.trim().to_string()).collect();
+        let sg_list: Vec<String> = security_groups
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+
+        let broker_info = serde_json::json!({
+            "ClientSubnets": subnet_list,
+            "InstanceType": instance_type,
+            "SecurityGroups": sg_list,
+        });
+
+        let mut args = vec![
+            "kafka".into(),
+            "create-cluster".into(),
+            "--cluster-name".into(),
+            id,
+            "--kafka-version".into(),
+            version,
+            "--number-of-broker-nodes".into(),
+            broker_count,
+            "--broker-node-group-info".into(),
+            broker_info.to_string(),
+        ];
+        if let Some(monitoring) = params.get("monitoring").and_then(|v| v.as_str()) {
+            args.push("--enhanced-monitoring".into());
+            args.push(monitoring.into());
         }
         Ok(args)
     }
@@ -1983,5 +2288,297 @@ mod tests {
         assert!(args.contains(&"key-123".to_string()));
         assert!(args.contains(&"--pending-window-in-days".to_string()));
         assert!(args.contains(&"7".to_string()));
+    }
+
+    // ── ElastiCache / MSK build-args tests ────────────────────────────
+
+    #[test]
+    fn test_elasticache_redis_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-redis",
+            "node_type": "cache.r6g.large",
+            "num_nodes": "2",
+            "version": "7.0"
+        });
+        let args = p.build_create_args("elasticache_redis", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"elasticache".to_string()));
+        assert!(args.contains(&"create-cache-cluster".to_string()));
+        assert!(args.contains(&"--cache-cluster-id".to_string()));
+        assert!(args.contains(&"my-redis".to_string()));
+        assert!(args.contains(&"--engine".to_string()));
+        assert!(args.contains(&"redis".to_string()));
+        assert!(args.contains(&"--cache-node-type".to_string()));
+        assert!(args.contains(&"cache.r6g.large".to_string()));
+        assert!(args.contains(&"--num-cache-nodes".to_string()));
+        assert!(args.contains(&"2".to_string()));
+        assert!(args.contains(&"--engine-version".to_string()));
+        assert!(args.contains(&"7.0".to_string()));
+        assert!(args.contains(&"--region".to_string()));
+        assert!(args.contains(&"us-east-1".to_string()));
+    }
+
+    #[test]
+    fn test_elasticache_redis_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-redis"
+        });
+        let args = p.build_create_args("elasticache_redis", &params).unwrap();
+
+        assert!(args.contains(&"create-cache-cluster".to_string()));
+        assert!(args.contains(&"default-redis".to_string()));
+        assert!(args.contains(&"cache.t3.micro".to_string()));
+        assert!(args.contains(&"1".to_string()));
+        // No version param, so --engine-version should not appear
+        assert!(!args.contains(&"--engine-version".to_string()));
+    }
+
+    #[test]
+    fn test_elasticache_replication_group_build_args() {
+        let p = AwsResourceProvisioner::new(Some("eu-west-1"), None);
+        let params = serde_json::json!({
+            "id": "my-repl-group",
+            "description": "Production Redis cluster",
+            "node_type": "cache.r6g.xlarge",
+            "num_shards": "3",
+            "replicas": "2",
+            "version": "7.0"
+        });
+        let args = p
+            .build_create_args("elasticache_replication_group", &params)
+            .unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"elasticache".to_string()));
+        assert!(args.contains(&"create-replication-group".to_string()));
+        assert!(args.contains(&"--replication-group-id".to_string()));
+        assert!(args.contains(&"my-repl-group".to_string()));
+        assert!(args.contains(&"--replication-group-description".to_string()));
+        assert!(args.contains(&"Production Redis cluster".to_string()));
+        assert!(args.contains(&"--cache-node-type".to_string()));
+        assert!(args.contains(&"cache.r6g.xlarge".to_string()));
+        assert!(args.contains(&"--num-node-groups".to_string()));
+        assert!(args.contains(&"3".to_string()));
+        assert!(args.contains(&"--replicas-per-node-group".to_string()));
+        assert!(args.contains(&"2".to_string()));
+        assert!(args.contains(&"--engine-version".to_string()));
+        assert!(args.contains(&"7.0".to_string()));
+    }
+
+    #[test]
+    fn test_elasticache_replication_group_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-repl"
+        });
+        let args = p
+            .build_create_args("elasticache_replication_group", &params)
+            .unwrap();
+
+        assert!(args.contains(&"create-replication-group".to_string()));
+        assert!(args.contains(&"default-repl".to_string()));
+        assert!(args.contains(&"Orbi managed".to_string()));
+        assert!(args.contains(&"cache.t3.micro".to_string()));
+        assert!(args.contains(&"--num-node-groups".to_string()));
+        assert!(args.contains(&"--replicas-per-node-group".to_string()));
+        assert!(!args.contains(&"--engine-version".to_string()));
+    }
+
+    #[test]
+    fn test_msk_cluster_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-kafka",
+            "version": "3.5.1",
+            "broker_count": "6",
+            "subnets": "subnet-aaa,subnet-bbb,subnet-ccc",
+            "instance_type": "kafka.m5.2xlarge",
+            "security_groups": "sg-111,sg-222",
+            "monitoring": "PER_TOPIC_PER_BROKER"
+        });
+        let args = p.build_create_args("msk_cluster", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"kafka".to_string()));
+        assert!(args.contains(&"create-cluster".to_string()));
+        assert!(args.contains(&"--cluster-name".to_string()));
+        assert!(args.contains(&"my-kafka".to_string()));
+        assert!(args.contains(&"--kafka-version".to_string()));
+        assert!(args.contains(&"3.5.1".to_string()));
+        assert!(args.contains(&"--number-of-broker-nodes".to_string()));
+        assert!(args.contains(&"6".to_string()));
+        assert!(args.contains(&"--broker-node-group-info".to_string()));
+        assert!(args.contains(&"--enhanced-monitoring".to_string()));
+        assert!(args.contains(&"PER_TOPIC_PER_BROKER".to_string()));
+
+        // Verify broker-node-group-info contains the expected JSON fields
+        let broker_info_arg = args
+            .iter()
+            .find(|a| a.contains("ClientSubnets"))
+            .expect("broker-node-group-info JSON not found");
+        let broker_info: Value = serde_json::from_str(broker_info_arg).unwrap();
+        assert_eq!(
+            broker_info["ClientSubnets"],
+            serde_json::json!(["subnet-aaa", "subnet-bbb", "subnet-ccc"])
+        );
+        assert_eq!(broker_info["InstanceType"], "kafka.m5.2xlarge");
+        assert_eq!(
+            broker_info["SecurityGroups"],
+            serde_json::json!(["sg-111", "sg-222"])
+        );
+    }
+
+    #[test]
+    fn test_msk_cluster_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-kafka",
+            "subnets": "subnet-aaa",
+            "security_groups": "sg-111"
+        });
+        let args = p.build_create_args("msk_cluster", &params).unwrap();
+
+        assert!(args.contains(&"create-cluster".to_string()));
+        assert!(args.contains(&"default-kafka".to_string()));
+        assert!(args.contains(&"3.6.0".to_string()));
+        assert!(args.contains(&"3".to_string()));
+        // No monitoring param, so --enhanced-monitoring should not appear
+        assert!(!args.contains(&"--enhanced-monitoring".to_string()));
+
+        let broker_info_arg = args
+            .iter()
+            .find(|a| a.contains("ClientSubnets"))
+            .expect("broker-node-group-info JSON not found");
+        let broker_info: Value = serde_json::from_str(broker_info_arg).unwrap();
+        assert_eq!(broker_info["InstanceType"], "kafka.m5.large");
+    }
+
+    #[test]
+    fn test_delete_elasticache() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let args = p
+            .build_delete_args("elasticache_redis", "my-redis")
+            .unwrap();
+        assert!(args.contains(&"elasticache".to_string()));
+        assert!(args.contains(&"delete-cache-cluster".to_string()));
+        assert!(args.contains(&"--cache-cluster-id".to_string()));
+        assert!(args.contains(&"my-redis".to_string()));
+
+        let args = p
+            .build_delete_args("elasticache_replication_group", "my-repl")
+            .unwrap();
+        assert!(args.contains(&"elasticache".to_string()));
+        assert!(args.contains(&"delete-replication-group".to_string()));
+        assert!(args.contains(&"--replication-group-id".to_string()));
+        assert!(args.contains(&"my-repl".to_string()));
+    }
+
+    #[test]
+    fn test_delete_msk() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args(
+                "msk_cluster",
+                "arn:aws:kafka:us-east-1:123:cluster/my-kafka/abc",
+            )
+            .unwrap();
+        assert!(args.contains(&"kafka".to_string()));
+        assert!(args.contains(&"delete-cluster".to_string()));
+        assert!(args.contains(&"--cluster-arn".to_string()));
+        assert!(args.contains(&"arn:aws:kafka:us-east-1:123:cluster/my-kafka/abc".to_string()));
+    }
+
+    // ── ElastiCache / MSK discovery parsing tests ─────────────────────
+
+    #[test]
+    fn test_parse_elasticache_clusters() {
+        let json = serde_json::json!({
+            "CacheClusters": [{
+                "CacheClusterId": "prod-redis",
+                "Engine": "redis",
+                "EngineVersion": "7.0.7",
+                "CacheNodeType": "cache.r6g.large",
+                "CacheClusterStatus": "available",
+                "NumCacheNodes": 1,
+                "ConfigurationEndpoint": {
+                    "Address": "prod-redis.abc.cfg.use1.cache.amazonaws.com",
+                    "Port": 6379
+                }
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_elasticache_clusters(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "prod-redis");
+        assert_eq!(r["resource_type"], "elasticache_redis");
+        assert_eq!(r["name"], "prod-redis");
+        assert_eq!(r["config"]["engine"], "redis");
+        assert_eq!(r["config"]["engine_version"], "7.0.7");
+        assert_eq!(r["config"]["cache_node_type"], "cache.r6g.large");
+        assert_eq!(r["outputs"]["status"], "available");
+    }
+
+    #[test]
+    fn test_parse_elasticache_replication_group() {
+        let json = serde_json::json!({
+            "CacheClusters": [{
+                "CacheClusterId": "repl-001",
+                "Engine": "redis",
+                "EngineVersion": "7.0.7",
+                "CacheNodeType": "cache.r6g.large",
+                "CacheClusterStatus": "available",
+                "NumCacheNodes": 1,
+                "ReplicationGroupId": "my-repl-group"
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_elasticache_clusters(&json);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["resource_type"], "elasticache_replication_group");
+        assert_eq!(
+            results[0]["config"]["replication_group_id"],
+            "my-repl-group"
+        );
+    }
+
+    #[test]
+    fn test_parse_msk_clusters() {
+        let json = serde_json::json!({
+            "ClusterInfoList": [{
+                "ClusterArn": "arn:aws:kafka:us-east-1:123:cluster/prod-kafka/abc-123",
+                "ClusterName": "prod-kafka",
+                "ClusterType": "PROVISIONED",
+                "State": "ACTIVE"
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_msk_clusters(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(
+            r["id"],
+            "arn:aws:kafka:us-east-1:123:cluster/prod-kafka/abc-123"
+        );
+        assert_eq!(r["resource_type"], "msk_cluster");
+        assert_eq!(r["name"], "prod-kafka");
+        assert_eq!(r["config"]["cluster_name"], "prod-kafka");
+        assert_eq!(r["config"]["cluster_type"], "PROVISIONED");
+        assert_eq!(r["outputs"]["state"], "ACTIVE");
+    }
+
+    #[test]
+    fn test_parse_elasticache_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_elasticache_clusters(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_msk_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_msk_clusters(&json).is_empty());
     }
 }
