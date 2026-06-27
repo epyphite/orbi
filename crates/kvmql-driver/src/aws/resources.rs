@@ -42,6 +42,11 @@ impl AwsResourceProvisioner {
             "aws_subnet" => self.create_aws_subnet(params),
             "security_group" => self.create_security_group(params),
             "sg_rule" => self.create_sg_rule(params),
+            "eks_cluster" => self.create_eks_cluster(params),
+            "eks_nodegroup" => self.create_eks_nodegroup(params),
+            "eks_addon" => self.create_eks_addon(params),
+            "s3_bucket" => self.create_s3_bucket(params),
+            "kms_key" => self.create_kms_key(params),
             other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
@@ -71,6 +76,30 @@ impl AwsResourceProvisioner {
             }
             "sg_rule" => {
                 Err("sg_rule deletion requires params (group_id, protocol, port, cidr); use delete_with_params()".into())
+            }
+            "eks_cluster" => {
+                self.run_aws(&["eks", "delete-cluster", "--name", id])?;
+                Ok(())
+            }
+            "eks_nodegroup" => {
+                // eks_nodegroup deletion requires cluster name; use delete_with_params()
+                Err("eks_nodegroup deletion requires params (cluster); use delete_with_params()".into())
+            }
+            "eks_addon" => {
+                // eks_addon deletion requires cluster name; use delete_with_params()
+                Err("eks_addon deletion requires params (cluster); use delete_with_params()".into())
+            }
+            "s3_bucket" => {
+                self.run_aws(&["s3api", "delete-bucket", "--bucket", id])?;
+                Ok(())
+            }
+            "kms_key" => {
+                self.run_aws(&[
+                    "kms", "schedule-key-deletion",
+                    "--key-id", id,
+                    "--pending-window-in-days", "7",
+                ])?;
+                Ok(())
             }
             other => Err(format!("unsupported AWS resource type for delete: {other}").into()),
         }
@@ -103,6 +132,30 @@ impl AwsResourceProvisioner {
                 ])?;
                 Ok(())
             }
+            "eks_nodegroup" => {
+                let cluster = param_str(params, "cluster")?;
+                self.run_aws(&[
+                    "eks",
+                    "delete-nodegroup",
+                    "--cluster-name",
+                    &cluster,
+                    "--nodegroup-name",
+                    _id,
+                ])?;
+                Ok(())
+            }
+            "eks_addon" => {
+                let cluster = param_str(params, "cluster")?;
+                self.run_aws(&[
+                    "eks",
+                    "delete-addon",
+                    "--cluster-name",
+                    &cluster,
+                    "--addon-name",
+                    _id,
+                ])?;
+                Ok(())
+            }
             other => self.delete(other, _id),
         }
     }
@@ -121,6 +174,11 @@ impl AwsResourceProvisioner {
             "aws_subnet" => self.build_aws_subnet_args(params)?,
             "security_group" => self.build_security_group_args(params)?,
             "sg_rule" => self.build_sg_rule_args(params)?,
+            "eks_cluster" => self.build_eks_cluster_args(params)?,
+            "eks_nodegroup" => self.build_eks_nodegroup_args(params)?,
+            "eks_addon" => self.build_eks_addon_args(params)?,
+            "s3_bucket" => self.build_s3_bucket_args(params)?,
+            "kms_key" => self.build_kms_key_args(params)?,
             other => return Err(format!("unsupported AWS resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
@@ -148,6 +206,29 @@ impl AwsResourceProvisioner {
                     "sg_rule deletion requires params; use build_delete_args_with_params()".into(),
                 );
             }
+            "eks_cluster" => vec!["eks", "delete-cluster", "--name", id],
+            "eks_nodegroup" => {
+                // eks_nodegroup deletion requires cluster param from registry
+                return Err(
+                    "eks_nodegroup deletion requires params (cluster); use delete_with_params()"
+                        .into(),
+                );
+            }
+            "eks_addon" => {
+                // eks_addon deletion requires cluster param from registry
+                return Err(
+                    "eks_addon deletion requires params (cluster); use delete_with_params()".into(),
+                );
+            }
+            "s3_bucket" => vec!["s3api", "delete-bucket", "--bucket", id],
+            "kms_key" => vec![
+                "kms",
+                "schedule-key-deletion",
+                "--key-id",
+                id,
+                "--pending-window-in-days",
+                "7",
+            ],
             other => {
                 return Err(format!("unsupported AWS resource type for delete: {other}").into())
             }
@@ -234,6 +315,7 @@ impl AwsResourceProvisioner {
             ("s3_bucket", Self::discover_s3_buckets),
             ("lambda", Self::discover_lambda),
             ("elb", Self::discover_elbs),
+            ("eks_cluster", Self::discover_eks_clusters),
         ];
 
         for (_, collector) in collectors {
@@ -630,6 +712,58 @@ impl AwsResourceProvisioner {
         results
     }
 
+    fn discover_eks_clusters(&self) -> Vec<Value> {
+        let output = match self.discover_run("eks_cluster", &["eks", "list-clusters"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+
+        let mut results = Vec::new();
+        let clusters = match output.get("clusters").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+
+        for cluster_name in clusters {
+            let name = match cluster_name.as_str() {
+                Some(n) => n,
+                None => continue,
+            };
+            // Describe each cluster to get full details
+            let detail = match self.run_aws(&["eks", "describe-cluster", "--name", name]) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let cluster = match detail.get("cluster") {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let config = serde_json::json!({
+                "version": cluster.get("version"),
+                "role_arn": cluster.get("roleArn"),
+                "platform_version": cluster.get("platformVersion"),
+                "vpc_config": cluster.get("resourcesVpcConfig"),
+            });
+            let outputs = serde_json::json!({
+                "endpoint": cluster.get("endpoint"),
+                "status": cluster.get("status"),
+                "certificate_authority": cluster
+                    .get("certificateAuthority")
+                    .and_then(|ca| ca.get("data")),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "eks_cluster",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
     // ── Per-resource create implementations ──────────────────────────
 
     /// Create an RDS PostgreSQL instance.
@@ -729,6 +863,129 @@ impl AwsResourceProvisioner {
         Ok(ProvisionResult {
             status: "created".into(),
             outputs: Some(result),
+        })
+    }
+
+    fn create_eks_cluster(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_eks_cluster_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let cluster = result.get("cluster");
+        let outputs = serde_json::json!({
+            "name": cluster.and_then(|c| c.get("name")),
+            "endpoint": cluster.and_then(|c| c.get("endpoint")),
+            "status": cluster.and_then(|c| c.get("status")),
+            "certificate_authority": cluster
+                .and_then(|c| c.get("certificateAuthority"))
+                .and_then(|ca| ca.get("data")),
+            "note": "EKS cluster creates are asynchronous. Cluster will be in 'CREATING' state.",
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_eks_nodegroup(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_eks_nodegroup_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let ng = result.get("nodegroup");
+        let outputs = serde_json::json!({
+            "name": ng.and_then(|n| n.get("nodegroupName")),
+            "status": ng.and_then(|n| n.get("status")),
+            "scaling_config": ng.and_then(|n| n.get("scalingConfig")),
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_eks_addon(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_eks_addon_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(result),
+        })
+    }
+
+    fn create_s3_bucket(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_s3_bucket_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let id = param_str(params, "id")?;
+
+        // Apply versioning configuration if requested
+        if let Some(versioning) = params.get("versioning").and_then(|v| v.as_str()) {
+            let status = if versioning.eq_ignore_ascii_case("enabled") {
+                "Enabled"
+            } else {
+                "Suspended"
+            };
+            let _ = self.run_aws(&[
+                "s3api",
+                "put-bucket-versioning",
+                "--bucket",
+                &id,
+                "--versioning-configuration",
+                &format!("Status={status}"),
+            ]);
+        }
+
+        let outputs = serde_json::json!({
+            "name": id,
+            "location": result.get("Location"),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_kms_key(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_kms_key_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let id = param_str(params, "id")?;
+        let key_id = result
+            .get("KeyMetadata")
+            .and_then(|k| k.get("KeyId"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Create alias for the key
+        if !key_id.is_empty() {
+            let alias_name = format!("alias/{id}");
+            let _ = self.run_aws(&[
+                "kms",
+                "create-alias",
+                "--alias-name",
+                &alias_name,
+                "--target-key-id",
+                key_id,
+            ]);
+        }
+
+        let outputs = serde_json::json!({
+            "key_id": result.get("KeyMetadata").and_then(|k| k.get("KeyId")),
+            "arn": result.get("KeyMetadata").and_then(|k| k.get("Arn")),
+            "alias": format!("alias/{id}"),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
         })
     }
 
@@ -862,6 +1119,117 @@ impl AwsResourceProvisioner {
             "--cidr".into(),
             cidr,
         ];
+        Ok(args)
+    }
+
+    fn build_eks_cluster_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let role_arn = param_str(params, "role_arn")?;
+        let subnets = param_str(params, "subnets")?;
+        let security_groups = param_str(params, "security_groups")?;
+        let version = param_str_or(params, "version", "1.30");
+
+        let vpc_config = format!("subnetIds={subnets},securityGroupIds={security_groups}");
+
+        let args = vec![
+            "eks".into(),
+            "create-cluster".into(),
+            "--name".into(),
+            id,
+            "--role-arn".into(),
+            role_arn,
+            "--resources-vpc-config".into(),
+            vpc_config,
+            "--kubernetes-version".into(),
+            version,
+        ];
+        Ok(args)
+    }
+
+    fn build_eks_nodegroup_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let cluster = param_str(params, "cluster")?;
+        let node_role = param_str(params, "node_role")?;
+        let subnets = param_str(params, "subnets")?;
+        let instance_types = param_str_or(params, "instance_types", "t3.medium");
+        let min = param_str_or(params, "min", "1");
+        let max = param_str_or(params, "max", "3");
+        let desired = param_str_or(params, "desired", "2");
+
+        let scaling_config = format!("minSize={min},maxSize={max},desiredSize={desired}");
+
+        let args = vec![
+            "eks".into(),
+            "create-nodegroup".into(),
+            "--cluster-name".into(),
+            cluster,
+            "--nodegroup-name".into(),
+            id,
+            "--node-role".into(),
+            node_role,
+            "--subnets".into(),
+            subnets,
+            "--instance-types".into(),
+            instance_types,
+            "--scaling-config".into(),
+            scaling_config,
+        ];
+        Ok(args)
+    }
+
+    fn build_eks_addon_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let cluster = param_str(params, "cluster")?;
+
+        let mut args = vec![
+            "eks".into(),
+            "create-addon".into(),
+            "--cluster-name".into(),
+            cluster,
+            "--addon-name".into(),
+            id,
+        ];
+        if let Some(version) = params.get("version").and_then(|v| v.as_str()) {
+            args.push("--addon-version".into());
+            args.push(version.into());
+        }
+        Ok(args)
+    }
+
+    fn build_s3_bucket_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+
+        let mut args = vec![
+            "s3api".into(),
+            "create-bucket".into(),
+            "--bucket".into(),
+            id,
+        ];
+
+        // Only add LocationConstraint if region is set and is not us-east-1
+        if let Some(ref region) = self.region {
+            if region != "us-east-1" {
+                args.push("--create-bucket-configuration".into());
+                args.push(format!("LocationConstraint={region}"));
+            }
+        }
+
+        Ok(args)
+    }
+
+    fn build_kms_key_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let usage = param_str_or(params, "usage", "ENCRYPT_DECRYPT");
+
+        let mut args = vec![
+            "kms".into(),
+            "create-key".into(),
+            "--key-usage".into(),
+            usage,
+        ];
+        if let Some(desc) = params.get("description").and_then(|v| v.as_str()) {
+            args.push("--description".into());
+            args.push(desc.into());
+        }
         Ok(args)
     }
 }
@@ -1359,5 +1727,261 @@ mod tests {
 
         let no_tags = serde_json::json!({ "InstanceId": "i-123" });
         assert_eq!(extract_name_from_tags(&no_tags), None);
+    }
+
+    // ── EKS build-args tests ───────────────────────────────────────
+
+    #[test]
+    fn test_eks_cluster_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-cluster",
+            "role_arn": "arn:aws:iam::123456789012:role/eks-role",
+            "subnets": "subnet-aaa,subnet-bbb",
+            "security_groups": "sg-111",
+            "version": "1.29"
+        });
+        let args = p.build_create_args("eks_cluster", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"eks".to_string()));
+        assert!(args.contains(&"create-cluster".to_string()));
+        assert!(args.contains(&"--name".to_string()));
+        assert!(args.contains(&"my-cluster".to_string()));
+        assert!(args.contains(&"--role-arn".to_string()));
+        assert!(args.contains(&"arn:aws:iam::123456789012:role/eks-role".to_string()));
+        assert!(args.contains(&"--resources-vpc-config".to_string()));
+        assert!(
+            args.contains(&"subnetIds=subnet-aaa,subnet-bbb,securityGroupIds=sg-111".to_string())
+        );
+        assert!(args.contains(&"--kubernetes-version".to_string()));
+        assert!(args.contains(&"1.29".to_string()));
+    }
+
+    #[test]
+    fn test_eks_cluster_build_args_default_version() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-ver",
+            "role_arn": "arn:aws:iam::123456789012:role/eks-role",
+            "subnets": "subnet-aaa",
+            "security_groups": "sg-111"
+        });
+        let args = p.build_create_args("eks_cluster", &params).unwrap();
+
+        assert!(args.contains(&"--kubernetes-version".to_string()));
+        assert!(args.contains(&"1.30".to_string()));
+    }
+
+    #[test]
+    fn test_eks_nodegroup_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-west-2"), None);
+        let params = serde_json::json!({
+            "id": "workers",
+            "cluster": "my-cluster",
+            "node_role": "arn:aws:iam::123456789012:role/node-role",
+            "subnets": "subnet-aaa,subnet-bbb",
+            "instance_types": "t3.large",
+            "min": "2",
+            "max": "5",
+            "desired": "3"
+        });
+        let args = p.build_create_args("eks_nodegroup", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"eks".to_string()));
+        assert!(args.contains(&"create-nodegroup".to_string()));
+        assert!(args.contains(&"--cluster-name".to_string()));
+        assert!(args.contains(&"my-cluster".to_string()));
+        assert!(args.contains(&"--nodegroup-name".to_string()));
+        assert!(args.contains(&"workers".to_string()));
+        assert!(args.contains(&"--node-role".to_string()));
+        assert!(args.contains(&"--subnets".to_string()));
+        assert!(args.contains(&"subnet-aaa,subnet-bbb".to_string()));
+        assert!(args.contains(&"--instance-types".to_string()));
+        assert!(args.contains(&"t3.large".to_string()));
+        assert!(args.contains(&"--scaling-config".to_string()));
+        assert!(args.contains(&"minSize=2,maxSize=5,desiredSize=3".to_string()));
+    }
+
+    #[test]
+    fn test_eks_nodegroup_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "ng-default",
+            "cluster": "my-cluster",
+            "node_role": "arn:aws:iam::123456789012:role/node-role",
+            "subnets": "subnet-aaa"
+        });
+        let args = p.build_create_args("eks_nodegroup", &params).unwrap();
+
+        assert!(args.contains(&"t3.medium".to_string()));
+        assert!(args.contains(&"minSize=1,maxSize=3,desiredSize=2".to_string()));
+    }
+
+    #[test]
+    fn test_eks_addon_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "vpc-cni",
+            "cluster": "my-cluster",
+            "version": "v1.15.0"
+        });
+        let args = p.build_create_args("eks_addon", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"eks".to_string()));
+        assert!(args.contains(&"create-addon".to_string()));
+        assert!(args.contains(&"--cluster-name".to_string()));
+        assert!(args.contains(&"my-cluster".to_string()));
+        assert!(args.contains(&"--addon-name".to_string()));
+        assert!(args.contains(&"vpc-cni".to_string()));
+        assert!(args.contains(&"--addon-version".to_string()));
+        assert!(args.contains(&"v1.15.0".to_string()));
+    }
+
+    #[test]
+    fn test_eks_addon_build_args_no_version() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "coredns",
+            "cluster": "my-cluster"
+        });
+        let args = p.build_create_args("eks_addon", &params).unwrap();
+
+        assert!(args.contains(&"create-addon".to_string()));
+        assert!(args.contains(&"coredns".to_string()));
+        assert!(!args.contains(&"--addon-version".to_string()));
+    }
+
+    // ── S3 / KMS build-args tests ──────────────────────────────────
+
+    #[test]
+    fn test_s3_bucket_build_args_us_east_1() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-bucket"
+        });
+        let args = p.build_create_args("s3_bucket", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"s3api".to_string()));
+        assert!(args.contains(&"create-bucket".to_string()));
+        assert!(args.contains(&"--bucket".to_string()));
+        assert!(args.contains(&"my-bucket".to_string()));
+        // us-east-1 should NOT have LocationConstraint
+        assert!(!args.iter().any(|a| a.contains("LocationConstraint")));
+    }
+
+    #[test]
+    fn test_s3_bucket_build_args_non_us_east_1() {
+        let p = AwsResourceProvisioner::new(Some("eu-west-1"), None);
+        let params = serde_json::json!({
+            "id": "eu-bucket"
+        });
+        let args = p.build_create_args("s3_bucket", &params).unwrap();
+
+        assert!(args.contains(&"s3api".to_string()));
+        assert!(args.contains(&"create-bucket".to_string()));
+        assert!(args.contains(&"--bucket".to_string()));
+        assert!(args.contains(&"eu-bucket".to_string()));
+        assert!(args.contains(&"--create-bucket-configuration".to_string()));
+        assert!(args.contains(&"LocationConstraint=eu-west-1".to_string()));
+    }
+
+    #[test]
+    fn test_s3_bucket_build_args_no_region() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "no-region-bucket"
+        });
+        let args = p.build_create_args("s3_bucket", &params).unwrap();
+
+        assert!(args.contains(&"create-bucket".to_string()));
+        assert!(args.contains(&"no-region-bucket".to_string()));
+        // No region set, so no LocationConstraint
+        assert!(!args.iter().any(|a| a.contains("LocationConstraint")));
+    }
+
+    #[test]
+    fn test_kms_key_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-key",
+            "description": "Encryption key for app data",
+            "usage": "ENCRYPT_DECRYPT"
+        });
+        let args = p.build_create_args("kms_key", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"kms".to_string()));
+        assert!(args.contains(&"create-key".to_string()));
+        assert!(args.contains(&"--key-usage".to_string()));
+        assert!(args.contains(&"ENCRYPT_DECRYPT".to_string()));
+        assert!(args.contains(&"--description".to_string()));
+        assert!(args.contains(&"Encryption key for app data".to_string()));
+    }
+
+    #[test]
+    fn test_kms_key_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-key"
+        });
+        let args = p.build_create_args("kms_key", &params).unwrap();
+
+        assert!(args.contains(&"create-key".to_string()));
+        assert!(args.contains(&"--key-usage".to_string()));
+        assert!(args.contains(&"ENCRYPT_DECRYPT".to_string()));
+        // No description param, so --description should not appear
+        assert!(!args.contains(&"--description".to_string()));
+    }
+
+    // ── Delete-args tests for new types ─────────────────────────────
+
+    #[test]
+    fn test_delete_eks_cluster() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let args = p.build_delete_args("eks_cluster", "my-cluster").unwrap();
+        assert!(args.contains(&"eks".to_string()));
+        assert!(args.contains(&"delete-cluster".to_string()));
+        assert!(args.contains(&"--name".to_string()));
+        assert!(args.contains(&"my-cluster".to_string()));
+    }
+
+    #[test]
+    fn test_delete_eks_nodegroup_requires_params() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let err = p.build_delete_args("eks_nodegroup", "ng-1").unwrap_err();
+        assert!(err.to_string().contains("cluster"));
+    }
+
+    #[test]
+    fn test_delete_eks_addon_requires_params() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let err = p.build_delete_args("eks_addon", "vpc-cni").unwrap_err();
+        assert!(err.to_string().contains("cluster"));
+    }
+
+    #[test]
+    fn test_delete_s3_bucket() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("s3_bucket", "my-bucket").unwrap();
+        assert!(args.contains(&"s3api".to_string()));
+        assert!(args.contains(&"delete-bucket".to_string()));
+        assert!(args.contains(&"--bucket".to_string()));
+        assert!(args.contains(&"my-bucket".to_string()));
+    }
+
+    #[test]
+    fn test_delete_kms_key() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("kms_key", "key-123").unwrap();
+        assert!(args.contains(&"kms".to_string()));
+        assert!(args.contains(&"schedule-key-deletion".to_string()));
+        assert!(args.contains(&"--key-id".to_string()));
+        assert!(args.contains(&"key-123".to_string()));
+        assert!(args.contains(&"--pending-window-in-days".to_string()));
+        assert!(args.contains(&"7".to_string()));
     }
 }
