@@ -50,6 +50,12 @@ impl AwsResourceProvisioner {
             "elasticache_redis" => self.create_elasticache_redis(params),
             "elasticache_replication_group" => self.create_elasticache_replication_group(params),
             "msk_cluster" => self.create_msk_cluster(params),
+            "iam_role" => self.create_iam_role(params),
+            "iam_policy" => self.create_iam_policy(params),
+            "vpc_endpoint" => self.create_vpc_endpoint(params),
+            "nat_gateway" => self.create_nat_gateway(params),
+            "acm_certificate" => self.create_acm_certificate(params),
+            "cloudwatch_alarm" => self.create_cloudwatch_alarm(params),
             other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
@@ -123,6 +129,30 @@ impl AwsResourceProvisioner {
                     "--key-id", id,
                     "--pending-window-in-days", "7",
                 ])?;
+                Ok(())
+            }
+            "iam_role" => {
+                self.run_aws(&["iam", "delete-role", "--role-name", id])?;
+                Ok(())
+            }
+            "iam_policy" => {
+                self.run_aws(&["iam", "delete-policy", "--policy-arn", id])?;
+                Ok(())
+            }
+            "vpc_endpoint" => {
+                self.run_aws(&["ec2", "delete-vpc-endpoints", "--vpc-endpoint-ids", id])?;
+                Ok(())
+            }
+            "nat_gateway" => {
+                self.run_aws(&["ec2", "delete-nat-gateway", "--nat-gateway-id", id])?;
+                Ok(())
+            }
+            "acm_certificate" => {
+                self.run_aws(&["acm", "delete-certificate", "--certificate-arn", id])?;
+                Ok(())
+            }
+            "cloudwatch_alarm" => {
+                self.run_aws(&["cloudwatch", "delete-alarms", "--alarm-names", id])?;
                 Ok(())
             }
             other => Err(format!("unsupported AWS resource type for delete: {other}").into()),
@@ -208,6 +238,12 @@ impl AwsResourceProvisioner {
                 self.build_elasticache_replication_group_args(params)?
             }
             "msk_cluster" => self.build_msk_cluster_args(params)?,
+            "iam_role" => self.build_iam_role_args(params)?,
+            "iam_policy" => self.build_iam_policy_args(params)?,
+            "vpc_endpoint" => self.build_vpc_endpoint_args(params)?,
+            "nat_gateway" => self.build_nat_gateway_args(params)?,
+            "acm_certificate" => self.build_acm_certificate_args(params)?,
+            "cloudwatch_alarm" => self.build_cloudwatch_alarm_args(params)?,
             other => return Err(format!("unsupported AWS resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
@@ -271,6 +307,12 @@ impl AwsResourceProvisioner {
                 "--pending-window-in-days",
                 "7",
             ],
+            "iam_role" => vec!["iam", "delete-role", "--role-name", id],
+            "iam_policy" => vec!["iam", "delete-policy", "--policy-arn", id],
+            "vpc_endpoint" => vec!["ec2", "delete-vpc-endpoints", "--vpc-endpoint-ids", id],
+            "nat_gateway" => vec!["ec2", "delete-nat-gateway", "--nat-gateway-id", id],
+            "acm_certificate" => vec!["acm", "delete-certificate", "--certificate-arn", id],
+            "cloudwatch_alarm" => vec!["cloudwatch", "delete-alarms", "--alarm-names", id],
             other => {
                 return Err(format!("unsupported AWS resource type for delete: {other}").into())
             }
@@ -360,6 +402,8 @@ impl AwsResourceProvisioner {
             ("eks_cluster", Self::discover_eks_clusters),
             ("elasticache_redis", Self::discover_elasticache),
             ("msk_cluster", Self::discover_msk_clusters),
+            ("iam_role", Self::discover_iam_roles),
+            ("vpc_endpoint", Self::discover_vpc_endpoints),
         ];
 
         for (_, collector) in collectors {
@@ -918,6 +962,93 @@ impl AwsResourceProvisioner {
         results
     }
 
+    fn discover_iam_roles(&self) -> Vec<Value> {
+        let output = match self.discover_run("iam_role", &["iam", "list-roles"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_iam_roles(&output)
+    }
+
+    fn parse_iam_roles(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let roles = match output.get("Roles").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for role in roles {
+            let name = role
+                .get("RoleName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let config = serde_json::json!({
+                "path": role.get("Path"),
+                "assume_role_policy_document": role.get("AssumeRolePolicyDocument"),
+            });
+            let outputs = serde_json::json!({
+                "role_name": &name,
+                "arn": role.get("Arn"),
+                "create_date": role.get("CreateDate"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "iam_role",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_vpc_endpoints(&self) -> Vec<Value> {
+        let output = match self.discover_run("vpc_endpoint", &["ec2", "describe-vpc-endpoints"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_vpc_endpoints(&output)
+    }
+
+    fn parse_vpc_endpoints(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let endpoints = match output.get("VpcEndpoints").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for ep in endpoints {
+            let id = ep
+                .get("VpcEndpointId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = extract_name_from_tags(ep).unwrap_or_else(|| id.clone());
+
+            let config = serde_json::json!({
+                "vpc_id": ep.get("VpcId"),
+                "service_name": ep.get("ServiceName"),
+                "vpc_endpoint_type": ep.get("VpcEndpointType"),
+                "tags": ep.get("Tags"),
+            });
+            let outputs = serde_json::json!({
+                "vpc_endpoint_id": &id,
+                "service_name": ep.get("ServiceName"),
+                "state": ep.get("State"),
+            });
+
+            results.push(serde_json::json!({
+                "id": id,
+                "resource_type": "vpc_endpoint",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
     // ── Per-resource create implementations ──────────────────────────
 
     /// Create an RDS PostgreSQL instance.
@@ -1195,6 +1326,109 @@ impl AwsResourceProvisioner {
 
         Ok(ProvisionResult {
             status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_iam_role(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_iam_role_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let role = result.get("Role");
+        let outputs = serde_json::json!({
+            "role_name": role.and_then(|r| r.get("RoleName")),
+            "arn": role.and_then(|r| r.get("Arn")),
+            "create_date": role.and_then(|r| r.get("CreateDate")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_iam_policy(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_iam_policy_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let policy = result.get("Policy");
+        let outputs = serde_json::json!({
+            "policy_name": policy.and_then(|p| p.get("PolicyName")),
+            "arn": policy.and_then(|p| p.get("Arn")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_vpc_endpoint(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_vpc_endpoint_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let ep = result.get("VpcEndpoint");
+        let outputs = serde_json::json!({
+            "vpc_endpoint_id": ep.and_then(|e| e.get("VpcEndpointId")),
+            "service_name": ep.and_then(|e| e.get("ServiceName")),
+            "state": ep.and_then(|e| e.get("State")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_nat_gateway(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_nat_gateway_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let ng = result.get("NatGateway");
+        let outputs = serde_json::json!({
+            "nat_gateway_id": ng.and_then(|n| n.get("NatGatewayId")),
+            "state": ng.and_then(|n| n.get("State")),
+            "subnet_id": ng.and_then(|n| n.get("SubnetId")),
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_acm_certificate(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_acm_certificate_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let outputs = serde_json::json!({
+            "certificate_arn": result.get("CertificateArn"),
+            "domain_name": params.get("id"),
+            "status": "PENDING_VALIDATION",
+        });
+
+        Ok(ProvisionResult {
+            status: "pending_validation".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_cloudwatch_alarm(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_cloudwatch_alarm_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let _result = self.run_aws(&refs)?;
+
+        let outputs = serde_json::json!({
+            "alarm_name": params.get("id"),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
             outputs: Some(outputs),
         })
     }
@@ -1535,6 +1769,137 @@ impl AwsResourceProvisioner {
             args.push("--enhanced-monitoring".into());
             args.push(monitoring.into());
         }
+        Ok(args)
+    }
+
+    fn build_iam_role_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let trust_policy = param_str(params, "trust_policy")?;
+
+        let mut args = vec![
+            "iam".into(),
+            "create-role".into(),
+            "--role-name".into(),
+            id,
+            "--assume-role-policy-document".into(),
+            trust_policy,
+        ];
+        if let Some(desc) = params.get("description").and_then(|v| v.as_str()) {
+            args.push("--description".into());
+            args.push(desc.into());
+        }
+        Ok(args)
+    }
+
+    fn build_iam_policy_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let policy_document = param_str(params, "policy_document")?;
+
+        let mut args = vec![
+            "iam".into(),
+            "create-policy".into(),
+            "--policy-name".into(),
+            id,
+            "--policy-document".into(),
+            policy_document,
+        ];
+        if let Some(desc) = params.get("description").and_then(|v| v.as_str()) {
+            args.push("--description".into());
+            args.push(desc.into());
+        }
+        Ok(args)
+    }
+
+    fn build_vpc_endpoint_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let vpc_id = param_str(params, "vpc_id")?;
+        let service_name = param_str(params, "service_name")?;
+        let ep_type = param_str_or(params, "type", "Gateway");
+
+        let mut args = vec![
+            "ec2".into(),
+            "create-vpc-endpoint".into(),
+            "--vpc-id".into(),
+            vpc_id,
+            "--service-name".into(),
+            service_name,
+            "--vpc-endpoint-type".into(),
+            ep_type,
+        ];
+        if let Some(subnets) = params.get("subnet_ids").and_then(|v| v.as_str()) {
+            args.push("--subnet-ids".into());
+            args.push(subnets.into());
+        }
+        if let Some(sgs) = params.get("security_group_ids").and_then(|v| v.as_str()) {
+            args.push("--security-group-ids".into());
+            args.push(sgs.into());
+        }
+        Ok(args)
+    }
+
+    fn build_nat_gateway_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let subnet_id = param_str(params, "subnet_id")?;
+        let allocation_id = param_str(params, "allocation_id")?;
+
+        let args = vec![
+            "ec2".into(),
+            "create-nat-gateway".into(),
+            "--subnet-id".into(),
+            subnet_id,
+            "--allocation-id".into(),
+            allocation_id,
+        ];
+        Ok(args)
+    }
+
+    fn build_acm_certificate_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let validation = param_str_or(params, "validation", "DNS");
+
+        let mut args = vec![
+            "acm".into(),
+            "request-certificate".into(),
+            "--domain-name".into(),
+            id,
+            "--validation-method".into(),
+            validation,
+        ];
+        if let Some(san) = params.get("san").and_then(|v| v.as_str()) {
+            args.push("--subject-alternative-names".into());
+            args.push(san.into());
+        }
+        Ok(args)
+    }
+
+    fn build_cloudwatch_alarm_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let metric = param_str(params, "metric")?;
+        let namespace = param_str(params, "namespace")?;
+        let threshold = param_str(params, "threshold")?;
+        let statistic = param_str_or(params, "statistic", "Average");
+        let period = param_str_or(params, "period", "300");
+        let eval_periods = param_str_or(params, "eval_periods", "1");
+        let operator = param_str_or(params, "operator", "GreaterThanThreshold");
+
+        let args = vec![
+            "cloudwatch".into(),
+            "put-metric-alarm".into(),
+            "--alarm-name".into(),
+            id,
+            "--metric-name".into(),
+            metric,
+            "--namespace".into(),
+            namespace,
+            "--statistic".into(),
+            statistic,
+            "--period".into(),
+            period,
+            "--evaluation-periods".into(),
+            eval_periods,
+            "--threshold".into(),
+            threshold,
+            "--comparison-operator".into(),
+            operator,
+        ];
         Ok(args)
     }
 }
@@ -2580,5 +2945,387 @@ mod tests {
     fn test_parse_msk_empty() {
         let json = serde_json::json!({});
         assert!(AwsResourceProvisioner::parse_msk_clusters(&json).is_empty());
+    }
+
+    // ── IAM build-args tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_iam_role_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-role",
+            "trust_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[]}",
+            "description": "Test role"
+        });
+        let args = p.build_create_args("iam_role", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"iam".to_string()));
+        assert!(args.contains(&"create-role".to_string()));
+        assert!(args.contains(&"--role-name".to_string()));
+        assert!(args.contains(&"my-role".to_string()));
+        assert!(args.contains(&"--assume-role-policy-document".to_string()));
+        assert!(args.contains(&"--description".to_string()));
+        assert!(args.contains(&"Test role".to_string()));
+    }
+
+    #[test]
+    fn test_iam_role_build_args_no_description() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "minimal-role",
+            "trust_policy": "{}"
+        });
+        let args = p.build_create_args("iam_role", &params).unwrap();
+
+        assert!(args.contains(&"create-role".to_string()));
+        assert!(args.contains(&"minimal-role".to_string()));
+        assert!(!args.contains(&"--description".to_string()));
+    }
+
+    #[test]
+    fn test_iam_policy_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-policy",
+            "policy_document": "{\"Version\":\"2012-10-17\",\"Statement\":[]}",
+            "description": "Test policy"
+        });
+        let args = p.build_create_args("iam_policy", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"iam".to_string()));
+        assert!(args.contains(&"create-policy".to_string()));
+        assert!(args.contains(&"--policy-name".to_string()));
+        assert!(args.contains(&"my-policy".to_string()));
+        assert!(args.contains(&"--policy-document".to_string()));
+        assert!(args.contains(&"--description".to_string()));
+        assert!(args.contains(&"Test policy".to_string()));
+    }
+
+    #[test]
+    fn test_iam_policy_build_args_no_description() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "minimal-policy",
+            "policy_document": "{}"
+        });
+        let args = p.build_create_args("iam_policy", &params).unwrap();
+
+        assert!(args.contains(&"create-policy".to_string()));
+        assert!(args.contains(&"minimal-policy".to_string()));
+        assert!(!args.contains(&"--description".to_string()));
+    }
+
+    #[test]
+    fn test_delete_iam_role() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("iam_role", "my-role").unwrap();
+        assert!(args.contains(&"iam".to_string()));
+        assert!(args.contains(&"delete-role".to_string()));
+        assert!(args.contains(&"--role-name".to_string()));
+        assert!(args.contains(&"my-role".to_string()));
+    }
+
+    #[test]
+    fn test_delete_iam_policy() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args("iam_policy", "arn:aws:iam::123456789012:policy/my-policy")
+            .unwrap();
+        assert!(args.contains(&"iam".to_string()));
+        assert!(args.contains(&"delete-policy".to_string()));
+        assert!(args.contains(&"--policy-arn".to_string()));
+        assert!(args.contains(&"arn:aws:iam::123456789012:policy/my-policy".to_string()));
+    }
+
+    // ── Network build-args tests ──────────────────────────────────────
+
+    #[test]
+    fn test_vpc_endpoint_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "s3-endpoint",
+            "vpc_id": "vpc-12345",
+            "service_name": "com.amazonaws.us-east-1.s3",
+            "type": "Gateway"
+        });
+        let args = p.build_create_args("vpc_endpoint", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"ec2".to_string()));
+        assert!(args.contains(&"create-vpc-endpoint".to_string()));
+        assert!(args.contains(&"--vpc-id".to_string()));
+        assert!(args.contains(&"vpc-12345".to_string()));
+        assert!(args.contains(&"--service-name".to_string()));
+        assert!(args.contains(&"com.amazonaws.us-east-1.s3".to_string()));
+        assert!(args.contains(&"--vpc-endpoint-type".to_string()));
+        assert!(args.contains(&"Gateway".to_string()));
+    }
+
+    #[test]
+    fn test_vpc_endpoint_build_args_interface() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "ssm-endpoint",
+            "vpc_id": "vpc-999",
+            "service_name": "com.amazonaws.us-east-1.ssm",
+            "type": "Interface",
+            "subnet_ids": "subnet-aaa,subnet-bbb",
+            "security_group_ids": "sg-111"
+        });
+        let args = p.build_create_args("vpc_endpoint", &params).unwrap();
+
+        assert!(args.contains(&"Interface".to_string()));
+        assert!(args.contains(&"--subnet-ids".to_string()));
+        assert!(args.contains(&"subnet-aaa,subnet-bbb".to_string()));
+        assert!(args.contains(&"--security-group-ids".to_string()));
+        assert!(args.contains(&"sg-111".to_string()));
+    }
+
+    #[test]
+    fn test_vpc_endpoint_build_args_default_type() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "ep-default",
+            "vpc_id": "vpc-111",
+            "service_name": "com.amazonaws.us-east-1.s3"
+        });
+        let args = p.build_create_args("vpc_endpoint", &params).unwrap();
+
+        assert!(args.contains(&"Gateway".to_string()));
+        assert!(!args.contains(&"--subnet-ids".to_string()));
+        assert!(!args.contains(&"--security-group-ids".to_string()));
+    }
+
+    #[test]
+    fn test_nat_gateway_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-west-2"), None);
+        let params = serde_json::json!({
+            "id": "nat-pub",
+            "subnet_id": "subnet-pub-1a",
+            "allocation_id": "eipalloc-abc123"
+        });
+        let args = p.build_create_args("nat_gateway", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"ec2".to_string()));
+        assert!(args.contains(&"create-nat-gateway".to_string()));
+        assert!(args.contains(&"--subnet-id".to_string()));
+        assert!(args.contains(&"subnet-pub-1a".to_string()));
+        assert!(args.contains(&"--allocation-id".to_string()));
+        assert!(args.contains(&"eipalloc-abc123".to_string()));
+    }
+
+    #[test]
+    fn test_delete_vpc_endpoint() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("vpc_endpoint", "vpce-12345").unwrap();
+        assert!(args.contains(&"ec2".to_string()));
+        assert!(args.contains(&"delete-vpc-endpoints".to_string()));
+        assert!(args.contains(&"--vpc-endpoint-ids".to_string()));
+        assert!(args.contains(&"vpce-12345".to_string()));
+    }
+
+    #[test]
+    fn test_delete_nat_gateway() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("nat_gateway", "nat-abc123").unwrap();
+        assert!(args.contains(&"ec2".to_string()));
+        assert!(args.contains(&"delete-nat-gateway".to_string()));
+        assert!(args.contains(&"--nat-gateway-id".to_string()));
+        assert!(args.contains(&"nat-abc123".to_string()));
+    }
+
+    // ── ACM build-args tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_acm_certificate_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "example.com",
+            "validation": "DNS",
+            "san": "*.example.com,api.example.com"
+        });
+        let args = p.build_create_args("acm_certificate", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"acm".to_string()));
+        assert!(args.contains(&"request-certificate".to_string()));
+        assert!(args.contains(&"--domain-name".to_string()));
+        assert!(args.contains(&"example.com".to_string()));
+        assert!(args.contains(&"--validation-method".to_string()));
+        assert!(args.contains(&"DNS".to_string()));
+        assert!(args.contains(&"--subject-alternative-names".to_string()));
+        assert!(args.contains(&"*.example.com,api.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_acm_certificate_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "simple.com"
+        });
+        let args = p.build_create_args("acm_certificate", &params).unwrap();
+
+        assert!(args.contains(&"request-certificate".to_string()));
+        assert!(args.contains(&"simple.com".to_string()));
+        assert!(args.contains(&"DNS".to_string()));
+        assert!(!args.contains(&"--subject-alternative-names".to_string()));
+    }
+
+    #[test]
+    fn test_delete_acm_certificate() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args(
+                "acm_certificate",
+                "arn:aws:acm:us-east-1:123:certificate/abc-123",
+            )
+            .unwrap();
+        assert!(args.contains(&"acm".to_string()));
+        assert!(args.contains(&"delete-certificate".to_string()));
+        assert!(args.contains(&"--certificate-arn".to_string()));
+        assert!(args.contains(&"arn:aws:acm:us-east-1:123:certificate/abc-123".to_string()));
+    }
+
+    // ── CloudWatch build-args tests ───────────────────────────────────
+
+    #[test]
+    fn test_cloudwatch_alarm_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "high-cpu",
+            "metric": "CPUUtilization",
+            "namespace": "AWS/EC2",
+            "statistic": "Average",
+            "period": "300",
+            "eval_periods": "2",
+            "threshold": "80",
+            "operator": "GreaterThanOrEqualToThreshold"
+        });
+        let args = p.build_create_args("cloudwatch_alarm", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"cloudwatch".to_string()));
+        assert!(args.contains(&"put-metric-alarm".to_string()));
+        assert!(args.contains(&"--alarm-name".to_string()));
+        assert!(args.contains(&"high-cpu".to_string()));
+        assert!(args.contains(&"--metric-name".to_string()));
+        assert!(args.contains(&"CPUUtilization".to_string()));
+        assert!(args.contains(&"--namespace".to_string()));
+        assert!(args.contains(&"AWS/EC2".to_string()));
+        assert!(args.contains(&"--statistic".to_string()));
+        assert!(args.contains(&"Average".to_string()));
+        assert!(args.contains(&"--period".to_string()));
+        assert!(args.contains(&"300".to_string()));
+        assert!(args.contains(&"--evaluation-periods".to_string()));
+        assert!(args.contains(&"2".to_string()));
+        assert!(args.contains(&"--threshold".to_string()));
+        assert!(args.contains(&"80".to_string()));
+        assert!(args.contains(&"--comparison-operator".to_string()));
+        assert!(args.contains(&"GreaterThanOrEqualToThreshold".to_string()));
+    }
+
+    #[test]
+    fn test_cloudwatch_alarm_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-alarm",
+            "metric": "Errors",
+            "namespace": "AWS/Lambda",
+            "threshold": "5"
+        });
+        let args = p.build_create_args("cloudwatch_alarm", &params).unwrap();
+
+        assert!(args.contains(&"put-metric-alarm".to_string()));
+        assert!(args.contains(&"default-alarm".to_string()));
+        assert!(args.contains(&"Average".to_string()));
+        assert!(args.contains(&"300".to_string()));
+        assert!(args.contains(&"1".to_string()));
+        assert!(args.contains(&"GreaterThanThreshold".to_string()));
+    }
+
+    #[test]
+    fn test_delete_cloudwatch_alarm() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("cloudwatch_alarm", "high-cpu").unwrap();
+        assert!(args.contains(&"cloudwatch".to_string()));
+        assert!(args.contains(&"delete-alarms".to_string()));
+        assert!(args.contains(&"--alarm-names".to_string()));
+        assert!(args.contains(&"high-cpu".to_string()));
+    }
+
+    // ── IAM / VPC endpoint discovery parsing tests ────────────────────
+
+    #[test]
+    fn test_parse_iam_roles() {
+        let json = serde_json::json!({
+            "Roles": [{
+                "RoleName": "eks-cluster-role",
+                "Path": "/",
+                "Arn": "arn:aws:iam::123456789012:role/eks-cluster-role",
+                "CreateDate": "2025-01-10T12:00:00Z",
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": []
+                }
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_iam_roles(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "eks-cluster-role");
+        assert_eq!(r["resource_type"], "iam_role");
+        assert_eq!(r["name"], "eks-cluster-role");
+        assert_eq!(
+            r["outputs"]["arn"],
+            "arn:aws:iam::123456789012:role/eks-cluster-role"
+        );
+        assert_eq!(r["outputs"]["create_date"], "2025-01-10T12:00:00Z");
+    }
+
+    #[test]
+    fn test_parse_iam_roles_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_iam_roles(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_vpc_endpoints() {
+        let json = serde_json::json!({
+            "VpcEndpoints": [{
+                "VpcEndpointId": "vpce-abc123",
+                "VpcId": "vpc-111",
+                "ServiceName": "com.amazonaws.us-east-1.s3",
+                "VpcEndpointType": "Gateway",
+                "State": "available",
+                "Tags": [{ "Key": "Name", "Value": "s3-gateway" }]
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_vpc_endpoints(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "vpce-abc123");
+        assert_eq!(r["resource_type"], "vpc_endpoint");
+        assert_eq!(r["name"], "s3-gateway");
+        assert_eq!(r["config"]["vpc_id"], "vpc-111");
+        assert_eq!(r["config"]["service_name"], "com.amazonaws.us-east-1.s3");
+        assert_eq!(r["outputs"]["state"], "available");
+    }
+
+    #[test]
+    fn test_parse_vpc_endpoints_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_vpc_endpoints(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_missing_top_level_key_new_types() {
+        let empty = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_iam_roles(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_vpc_endpoints(&empty).is_empty());
     }
 }
