@@ -56,6 +56,10 @@ impl AwsResourceProvisioner {
             "nat_gateway" => self.create_nat_gateway(params),
             "acm_certificate" => self.create_acm_certificate(params),
             "cloudwatch_alarm" => self.create_cloudwatch_alarm(params),
+            "ses_domain" => self.create_ses_domain(params),
+            "ses_smtp_user" => self.create_ses_smtp_user(params),
+            "backup_vault" => self.create_backup_vault(params),
+            "backup_plan" => self.create_backup_plan(params),
             other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
@@ -155,6 +159,28 @@ impl AwsResourceProvisioner {
                 self.run_aws(&["cloudwatch", "delete-alarms", "--alarm-names", id])?;
                 Ok(())
             }
+            "ses_domain" => {
+                self.run_aws(&["ses", "delete-identity", "--identity", id])?;
+                Ok(())
+            }
+            "ses_smtp_user" => {
+                self.run_aws(&["iam", "delete-user", "--user-name", id])?;
+                Ok(())
+            }
+            "backup_vault" => {
+                self.run_aws(&[
+                    "backup", "delete-backup-vault",
+                    "--backup-vault-name", id,
+                ])?;
+                Ok(())
+            }
+            "backup_plan" => {
+                self.run_aws(&[
+                    "backup", "delete-backup-plan",
+                    "--backup-plan-id", id,
+                ])?;
+                Ok(())
+            }
             other => Err(format!("unsupported AWS resource type for delete: {other}").into()),
         }
     }
@@ -244,6 +270,10 @@ impl AwsResourceProvisioner {
             "nat_gateway" => self.build_nat_gateway_args(params)?,
             "acm_certificate" => self.build_acm_certificate_args(params)?,
             "cloudwatch_alarm" => self.build_cloudwatch_alarm_args(params)?,
+            "ses_domain" => self.build_ses_domain_args(params)?,
+            "ses_smtp_user" => self.build_ses_smtp_user_args(params)?,
+            "backup_vault" => self.build_backup_vault_args(params)?,
+            "backup_plan" => self.build_backup_plan_args(params)?,
             other => return Err(format!("unsupported AWS resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
@@ -313,6 +343,10 @@ impl AwsResourceProvisioner {
             "nat_gateway" => vec!["ec2", "delete-nat-gateway", "--nat-gateway-id", id],
             "acm_certificate" => vec!["acm", "delete-certificate", "--certificate-arn", id],
             "cloudwatch_alarm" => vec!["cloudwatch", "delete-alarms", "--alarm-names", id],
+            "ses_domain" => vec!["ses", "delete-identity", "--identity", id],
+            "ses_smtp_user" => vec!["iam", "delete-user", "--user-name", id],
+            "backup_vault" => vec!["backup", "delete-backup-vault", "--backup-vault-name", id],
+            "backup_plan" => vec!["backup", "delete-backup-plan", "--backup-plan-id", id],
             other => {
                 return Err(format!("unsupported AWS resource type for delete: {other}").into())
             }
@@ -1902,6 +1936,165 @@ impl AwsResourceProvisioner {
         ];
         Ok(args)
     }
+
+    // ── SES / Backup create implementations ────────────────────────
+
+    fn create_ses_domain(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_ses_domain_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let id = param_str(params, "id")?;
+
+        let verification_token = result
+            .get("VerificationToken")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Optionally enable DKIM
+        let dkim_tokens = if param_str_or(params, "dkim", "false") == "true" {
+            let dkim_result = self.run_aws(&["ses", "verify-domain-dkim", "--domain", &id])?;
+            dkim_result.get("DkimTokens").cloned()
+        } else {
+            None
+        };
+
+        let outputs = serde_json::json!({
+            "domain": id,
+            "verification_token": verification_token,
+            "dkim_tokens": dkim_tokens,
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_ses_smtp_user(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_ses_smtp_user_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+        let id = param_str(params, "id")?;
+
+        // Step 1: Create the IAM user
+        self.run_aws(&refs)?;
+
+        // Step 2: Attach SES send policy
+        let ses_policy = r#"{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"ses:SendRawEmail","Resource":"*"}]}"#;
+        self.run_aws(&[
+            "iam",
+            "put-user-policy",
+            "--user-name",
+            &id,
+            "--policy-name",
+            "SesSendPolicy",
+            "--policy-document",
+            ses_policy,
+        ])?;
+
+        // Step 3: Create access key
+        let key_result = self.run_aws(&["iam", "create-access-key", "--user-name", &id])?;
+
+        let ak = key_result.get("AccessKey");
+        let outputs = serde_json::json!({
+            "user_name": id,
+            "access_key_id": ak.and_then(|a| a.get("AccessKeyId")),
+            "secret_access_key": ak.and_then(|a| a.get("SecretAccessKey")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_backup_vault(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_backup_vault_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let outputs = serde_json::json!({
+            "backup_vault_name": result.get("BackupVaultName"),
+            "backup_vault_arn": result.get("BackupVaultArn"),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_backup_plan(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_backup_plan_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let outputs = serde_json::json!({
+            "backup_plan_id": result.get("BackupPlanId"),
+            "backup_plan_arn": result.get("BackupPlanArn"),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    // ── SES / Backup argument builders ─────────────────────────────
+
+    fn build_ses_domain_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let args = vec![
+            "ses".into(),
+            "verify-domain-identity".into(),
+            "--domain".into(),
+            id,
+        ];
+        Ok(args)
+    }
+
+    fn build_ses_smtp_user_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let args = vec!["iam".into(), "create-user".into(), "--user-name".into(), id];
+        Ok(args)
+    }
+
+    fn build_backup_vault_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let mut args = vec![
+            "backup".into(),
+            "create-backup-vault".into(),
+            "--backup-vault-name".into(),
+            id,
+        ];
+        if let Some(key) = params.get("encryption_key").and_then(|v| v.as_str()) {
+            args.push("--encryption-key-arn".into());
+            args.push(key.into());
+        }
+        Ok(args)
+    }
+
+    fn build_backup_plan_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let vault = param_str(params, "vault")?;
+        let retention_days = param_str_or(params, "retention_days", "30");
+        let schedule = param_str_or(params, "schedule", "cron(0 5 ? * * *)");
+
+        let plan_json = format!(
+            r#"{{"BackupPlanName":"{}","Rules":[{{"RuleName":"daily","TargetBackupVaultName":"{}","ScheduleExpression":"{}","Lifecycle":{{"DeleteAfterDays":{}}}}}]}}"#,
+            id, vault, schedule, retention_days
+        );
+
+        let args = vec![
+            "backup".into(),
+            "create-backup-plan".into(),
+            "--backup-plan".into(),
+            plan_json,
+        ];
+        Ok(args)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3327,5 +3520,167 @@ mod tests {
         let empty = serde_json::json!({});
         assert!(AwsResourceProvisioner::parse_iam_roles(&empty).is_empty());
         assert!(AwsResourceProvisioner::parse_vpc_endpoints(&empty).is_empty());
+    }
+
+    // ── SES build-args tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_ses_domain_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "example.com"
+        });
+        let args = p.build_create_args("ses_domain", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"ses".to_string()));
+        assert!(args.contains(&"verify-domain-identity".to_string()));
+        assert!(args.contains(&"--domain".to_string()));
+        assert!(args.contains(&"example.com".to_string()));
+        assert!(args.contains(&"--region".to_string()));
+        assert!(args.contains(&"us-east-1".to_string()));
+    }
+
+    #[test]
+    fn test_delete_ses_domain() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("ses_domain", "example.com").unwrap();
+        assert!(args.contains(&"ses".to_string()));
+        assert!(args.contains(&"delete-identity".to_string()));
+        assert!(args.contains(&"--identity".to_string()));
+        assert!(args.contains(&"example.com".to_string()));
+    }
+
+    #[test]
+    fn test_ses_smtp_user_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "ses-smtp-prod"
+        });
+        let args = p.build_create_args("ses_smtp_user", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"iam".to_string()));
+        assert!(args.contains(&"create-user".to_string()));
+        assert!(args.contains(&"--user-name".to_string()));
+        assert!(args.contains(&"ses-smtp-prod".to_string()));
+    }
+
+    #[test]
+    fn test_delete_ses_smtp_user() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args("ses_smtp_user", "ses-smtp-prod")
+            .unwrap();
+        assert!(args.contains(&"iam".to_string()));
+        assert!(args.contains(&"delete-user".to_string()));
+        assert!(args.contains(&"--user-name".to_string()));
+        assert!(args.contains(&"ses-smtp-prod".to_string()));
+    }
+
+    // ── Backup build-args tests ──────────────────────────────────────
+
+    #[test]
+    fn test_backup_vault_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-vault",
+            "encryption_key": "arn:aws:kms:us-east-1:123:key/abc-123"
+        });
+        let args = p.build_create_args("backup_vault", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"backup".to_string()));
+        assert!(args.contains(&"create-backup-vault".to_string()));
+        assert!(args.contains(&"--backup-vault-name".to_string()));
+        assert!(args.contains(&"my-vault".to_string()));
+        assert!(args.contains(&"--encryption-key-arn".to_string()));
+        assert!(args.contains(&"arn:aws:kms:us-east-1:123:key/abc-123".to_string()));
+    }
+
+    #[test]
+    fn test_backup_vault_build_args_no_encryption() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "simple-vault"
+        });
+        let args = p.build_create_args("backup_vault", &params).unwrap();
+
+        assert!(args.contains(&"create-backup-vault".to_string()));
+        assert!(args.contains(&"simple-vault".to_string()));
+        assert!(!args.contains(&"--encryption-key-arn".to_string()));
+    }
+
+    #[test]
+    fn test_delete_backup_vault() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("backup_vault", "my-vault").unwrap();
+        assert!(args.contains(&"backup".to_string()));
+        assert!(args.contains(&"delete-backup-vault".to_string()));
+        assert!(args.contains(&"--backup-vault-name".to_string()));
+        assert!(args.contains(&"my-vault".to_string()));
+    }
+
+    #[test]
+    fn test_backup_plan_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "daily-backup",
+            "vault": "my-vault",
+            "retention_days": "90",
+            "schedule": "cron(0 12 ? * * *)"
+        });
+        let args = p.build_create_args("backup_plan", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"backup".to_string()));
+        assert!(args.contains(&"create-backup-plan".to_string()));
+        assert!(args.contains(&"--backup-plan".to_string()));
+
+        // Verify the plan JSON contains expected fields
+        let plan_arg = args
+            .iter()
+            .find(|a| a.contains("BackupPlanName"))
+            .expect("backup plan JSON not found");
+        let plan: Value = serde_json::from_str(plan_arg).unwrap();
+        assert_eq!(plan["BackupPlanName"], "daily-backup");
+        let rule = &plan["Rules"][0];
+        assert_eq!(rule["RuleName"], "daily");
+        assert_eq!(rule["TargetBackupVaultName"], "my-vault");
+        assert_eq!(rule["ScheduleExpression"], "cron(0 12 ? * * *)");
+        assert_eq!(rule["Lifecycle"]["DeleteAfterDays"], 90);
+    }
+
+    #[test]
+    fn test_backup_plan_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-plan",
+            "vault": "default-vault"
+        });
+        let args = p.build_create_args("backup_plan", &params).unwrap();
+
+        assert!(args.contains(&"create-backup-plan".to_string()));
+
+        let plan_arg = args
+            .iter()
+            .find(|a| a.contains("BackupPlanName"))
+            .expect("backup plan JSON not found");
+        let plan: Value = serde_json::from_str(plan_arg).unwrap();
+        assert_eq!(plan["BackupPlanName"], "default-plan");
+        let rule = &plan["Rules"][0];
+        assert_eq!(rule["TargetBackupVaultName"], "default-vault");
+        assert_eq!(rule["ScheduleExpression"], "cron(0 5 ? * * *)");
+        assert_eq!(rule["Lifecycle"]["DeleteAfterDays"], 30);
+    }
+
+    #[test]
+    fn test_delete_backup_plan() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("backup_plan", "plan-abc-123").unwrap();
+        assert!(args.contains(&"backup".to_string()));
+        assert!(args.contains(&"delete-backup-plan".to_string()));
+        assert!(args.contains(&"--backup-plan-id".to_string()));
+        assert!(args.contains(&"plan-abc-123".to_string()));
     }
 }
