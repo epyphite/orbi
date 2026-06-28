@@ -69,7 +69,7 @@ EXPLAIN CREATE RESOURCE 'redis' id = 'cache' sku = 'Standard';
 ROLLBACK LAST;
 ```
 
-### 37 Managed Resource Types across 6 providers
+### 59 Managed Resource Types across 10 providers
 
 #### Azure (16 types)
 
@@ -92,7 +92,7 @@ ROLLBACK LAST;
 | `load_balancer` | Load Balancer |
 | `pg_database` | PostgreSQL Database (on a Flexible Server) |
 
-#### AWS (5 types)
+#### AWS (23 types)
 
 | Type | Description |
 |------|-------------|
@@ -101,6 +101,24 @@ ROLLBACK LAST;
 | `aws_subnet` | VPC Subnet |
 | `security_group` | Security Group |
 | `sg_rule` | Security Group Rule |
+| `eks_cluster` | EKS Kubernetes cluster |
+| `eks_nodegroup` | EKS managed node group |
+| `eks_addon` | EKS cluster addon (coredns, kube-proxy, ...) |
+| `s3_bucket` | S3 bucket (with versioning/encryption) |
+| `kms_key` | KMS encryption key with alias |
+| `elasticache_redis` | ElastiCache Redis cluster |
+| `elasticache_replication_group` | ElastiCache Redis with sharding/replicas |
+| `msk_cluster` | Managed Streaming for Kafka (MSK) |
+| `iam_role` | IAM role with trust policy |
+| `iam_policy` | IAM managed policy |
+| `vpc_endpoint` | VPC endpoint (Gateway/Interface) |
+| `nat_gateway` | NAT Gateway |
+| `acm_certificate` | ACM TLS certificate (DNS validation) |
+| `cloudwatch_alarm` | CloudWatch metric alarm |
+| `ses_domain` | SES domain identity with DKIM |
+| `ses_smtp_user` | IAM user for SES SMTP |
+| `backup_vault` | AWS Backup vault |
+| `backup_plan` | AWS Backup plan with schedule |
 
 #### Cloudflare (4 types)
 
@@ -146,6 +164,26 @@ SELECT name, replicas, ready_replicas FROM k8s_deployments
 ```
 
 Nothing else gives you SQL over live Kubernetes state.
+
+#### Docker (4 types)
+
+| Type | Description |
+|------|-------------|
+| `docker_container` | Container (ports, env, volumes, network, restart) |
+| `docker_network` | Custom network (bridge, overlay) |
+| `docker_volume` | Named volume |
+| `compose_stack` | Docker Compose project (up/down/scale) |
+
+Supports local Docker daemon and remote hosts via SSH (`host = 'ssh://user@remote'`).
+
+#### VMware (2+ types)
+
+| Type | Description |
+|------|-------------|
+| `vmware_vm` | Virtual machine (both backends) |
+| `vmware_snapshot` | VM snapshot (create/revert/delete) |
+
+Two backends: `driver = 'govc'` for vSphere/vCenter datacenters, `driver = 'vmrun'` for local VMware Workstation/Fusion. WSL auto-detection for vmrun on Windows.
 
 ### 9 Credential Backends
 
@@ -258,10 +296,14 @@ SELECT * FROM audit_log
 |  Parse -> Auth -> Plan -> Execute -> Audit   |
 +-----------------------+---------------------+
                         |
-+---------+---------+---------+------------+---------------+
-| Azure   |  AWS    |  GCP    | Cloudflare |  Firecracker  |
-| az CLI  | aws CLI | gcloud  |  REST API  |  Unix socket  |
-+---------+---------+---------+------------+---------------+
++---------+---------+---------+------------+--------+--------+--------+
+| Azure   |  AWS    |  GCP    | Cloudflare | Docker | VMware |  SSH   |
+| az CLI  | aws CLI | gcloud  |  REST API  | docker | govc/  | ssh    |
+|         |         |         |            |        | vmrun  |        |
++---------+---------+---------+------------+--------+--------+--------+
+| GitHub  |  K8s    | Firecracker |
+| gh CLI  | kubectl | Unix socket |
++---------+---------+-------------+
                         |
 +-----------------------v---------------------+
 |            Registry (SQLite)                 |
@@ -274,7 +316,7 @@ SELECT * FROM audit_log
 
 - [Getting Started](docs/getting-started.md) -- installation, first commands, registry concept
 - [Concepts](docs/concepts.md) -- providers, resources, registry, credentials, simulate mode
-- [Provider Reference](docs/providers.md) -- all 7 providers with resource types and auth patterns
+- [Provider Reference](docs/providers.md) -- all 10 providers with resource types and auth patterns
 - [IMPORT / Discover](docs/import-discover.md) -- auto-populate registry from live cloud state
 - [Network Verification](docs/network-verification.md) -- table-valued functions, ASSERT, deploy-and-verify
 - [Recipes](docs/recipes.md) -- 7 complete cookbook patterns (web stack, multi-cloud DB, Docker, K8s, ...)
@@ -300,7 +342,7 @@ orbi/
 │   ├── kvmql-common/      # Shared types, notification codes, config
 │   ├── kvmql-parser/      # Lexer (logos), AST, recursive descent parser
 │   ├── kvmql-registry/    # SQLite registry, migrations, CRUD
-│   ├── kvmql-driver/      # Driver trait + Azure/AWS/Cloudflare/GitHub/K8s/Firecracker
+│   ├── kvmql-driver/      # Driver trait + 10 providers (Azure/AWS/GCP/Docker/VMware/K8s/...)
 │   ├── kvmql-auth/        # 9 credential backends, access control
 │   ├── kvmql-engine/      # Execution pipeline, EXPLAIN, ROLLBACK
 │   ├── kvmql-agent/       # Per-host agent (heartbeat, state push)
@@ -320,11 +362,12 @@ The internal crates are prefixed `kvmql-*` because the engine name is KVMQL — 
 
 | Metric | Value |
 |--------|-------|
-| Lines of Rust | ~29,000 |
-| Tests | 572 |
+| Lines of Rust | ~46,000 |
+| Tests | 822 |
 | Crates | 8 |
-| Statement types | 35+ |
-| Resource types | 21 |
+| Statement types | 40 |
+| Resource types | 59 |
+| Providers | 10 |
 | Credential backends | 9 |
 
 ## License

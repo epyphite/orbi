@@ -63,19 +63,33 @@ Auth can be a bare profile name (`auth = 'myprofile'`) or an environment
 variable binding (`auth = 'env:AWS_PROFILE=myprofile'`). The `region` label is
 required.
 
-### Resource types
+### Resource types (23)
 
 | Type              | Description                                  |
 |-------------------|----------------------------------------------|
-| `ec2`             | EC2 instance (virtual machine)               |
 | `rds_postgres`    | RDS PostgreSQL database instance             |
 | `vpc`             | Virtual Private Cloud                        |
 | `aws_subnet`      | Subnet within a VPC                          |
 | `security_group`  | VPC security group                           |
 | `sg_rule`         | Inbound/outbound rule on a security group    |
-| `s3_bucket`       | S3 storage bucket                            |
-| `lambda`          | Lambda function                              |
-| `elb`             | Elastic Load Balancer                        |
+| `eks_cluster`     | EKS Kubernetes cluster                       |
+| `eks_nodegroup`   | EKS managed node group                       |
+| `eks_addon`       | EKS cluster addon (coredns, kube-proxy, ...) |
+| `s3_bucket`       | S3 bucket (with versioning/encryption)       |
+| `kms_key`         | KMS encryption key with alias                |
+| `elasticache_redis` | ElastiCache Redis cluster                  |
+| `elasticache_replication_group` | ElastiCache Redis with shards/replicas |
+| `msk_cluster`     | Managed Streaming for Kafka (MSK)            |
+| `iam_role`        | IAM role with trust policy                   |
+| `iam_policy`      | IAM managed policy                           |
+| `vpc_endpoint`    | VPC endpoint (Gateway/Interface)             |
+| `nat_gateway`     | NAT Gateway                                  |
+| `acm_certificate` | ACM TLS certificate (DNS validation)         |
+| `cloudwatch_alarm`| CloudWatch metric alarm                      |
+| `ses_domain`      | SES domain identity with DKIM                |
+| `ses_smtp_user`   | IAM user for SES SMTP                        |
+| `backup_vault`    | AWS Backup vault                             |
+| `backup_plan`     | AWS Backup plan with schedule                |
 
 ---
 
@@ -242,6 +256,96 @@ These functions execute commands on the remote host and return tabular results.
 ```sql
 SELECT * FROM systemd_services('web-server') WHERE active = 'running';
 SELECT * FROM docker_containers('web-server');
+```
+
+---
+
+## Docker
+
+Container lifecycle and Compose stack management. Uses the `docker` CLI.
+
+### Registration
+
+```sql
+ADD PROVIDER docker
+  name      = 'local-docker'
+  auth      = 'none';
+
+-- Remote Docker host via SSH
+ADD PROVIDER docker
+  name      = 'prod-docker'
+  host      = 'ssh://deploy@prod.dc.local'
+  auth      = 'file:~/.ssh/deploy_key';
+```
+
+### Resource types
+
+| Type                | Description                                        |
+|---------------------|----------------------------------------------------|
+| `docker_container`  | Container (run/stop/rm with ports, env, volumes)   |
+| `docker_network`    | Custom network (bridge, overlay)                   |
+| `docker_volume`     | Named volume                                       |
+| `compose_stack`     | Docker Compose project (up/down/scale)             |
+
+```sql
+CREATE RESOURCE 'docker_container' id = 'redis'
+  image = 'redis:7-alpine' ports = '6379:6379'
+  ON PROVIDER 'local-docker';
+
+CREATE RESOURCE 'compose_stack' id = 'myapp'
+  path = '/opt/myapp'
+  ON PROVIDER 'local-docker';
+
+SCALE RESOURCE 'compose_stack' 'myapp'
+  SET service = 'web', count = '3'
+  ON PROVIDER 'local-docker';
+```
+
+---
+
+## VMware
+
+Virtual machines on vSphere/vCenter or local VMware Workstation/Fusion.
+
+### Registration
+
+```sql
+-- vSphere / vCenter (datacenter)
+ADD PROVIDER vmware
+  name      = 'vsphere-dc'
+  driver    = 'govc'
+  host      = 'vcenter.dc.local'
+  auth      = 'env:GOVC_URL';
+
+-- VMware Workstation / Fusion (local)
+ADD PROVIDER vmware
+  name      = 'local-vmware'
+  driver    = 'vmrun'
+  auth      = 'none';
+```
+
+For govc: requires `GOVC_URL`, `GOVC_USERNAME`, `GOVC_PASSWORD` env vars.
+For vmrun: auto-detects binary on Linux, macOS, and WSL.
+
+### Resource types
+
+| Type                | Description                                        |
+|---------------------|----------------------------------------------------|
+| `vmware_vm`         | Virtual machine (create, clone, destroy, power)    |
+| `vmware_snapshot`   | VM snapshot (create, revert, delete)               |
+
+```sql
+-- Clone from template (vSphere)
+CREATE RESOURCE 'vmware_vm' id = 'web-prod-1'
+  template = '/DC/vm/templates/ubuntu-22.04'
+  cpus = '4' memory_mb = '8192'
+  ON PROVIDER 'vsphere-dc';
+
+-- Clone locally (Workstation/Fusion)
+CREATE RESOURCE 'vmware_vm' id = 'dev-db'
+  source = '/home/user/VMs/templates/ubuntu.vmx'
+  path = '/home/user/VMs/dev-db/dev-db.vmx'
+  ON PROVIDER 'local-vmware';
 ```
 
 ---
