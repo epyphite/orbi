@@ -34,7 +34,7 @@ SELECT * FROM resources;
 | Query state | External tools | `SELECT * FROM resources WHERE ...` |
 | Multi-cloud | Per-provider blocks | `ON PROVIDER 'aws'` / `ON PROVIDER 'azure'` |
 | Credentials | Per-provider config | 9 backends (env, Vault, Azure KV, AWS SM, 1Password, SOPS, ...) |
-| Cost estimation | External (Infracost $150+/mo) | Built-in `EXPLAIN COST` (free, offline) |
+| Cost estimation | External (Infracost $150+/mo) | Built-in `EXPLAIN COST` + live pricing from AWS/Azure APIs |
 
 ## Quick Start
 
@@ -363,7 +363,7 @@ The internal crates are prefixed `kvmql-*` because the engine name is KVMQL — 
 
 | Metric | Value |
 |--------|-------|
-| Lines of Rust | ~47,000 |
+| Lines of Rust | ~48,000 |
 | Tests | 829 |
 | Crates | 8 |
 | Statement types | 40 |
