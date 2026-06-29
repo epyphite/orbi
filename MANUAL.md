@@ -1,6 +1,6 @@
 # Orbi User Manual
 
-**Version 0.6.3**
+**Version 0.7.0**
 
 ---
 
