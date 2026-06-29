@@ -845,6 +845,60 @@ impl Registry {
     // Import log writes
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // Pricing writes
+    // -----------------------------------------------------------------------
+
+    pub fn insert_pricing(
+        &self,
+        provider: &str,
+        region: &str,
+        resource_type: &str,
+        param: &str,
+        hourly: f64,
+        monthly: f64,
+        unit: &str,
+    ) -> Result<(), RegistryError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO pricing (provider, region, resource_type, param, hourly, monthly, unit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![provider, region, resource_type, param, hourly, monthly, unit],
+        )?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Cost estimate writes
+    // -----------------------------------------------------------------------
+
+    pub fn clear_cost_estimates(&self) -> Result<(), RegistryError> {
+        self.conn.execute("DELETE FROM cost_estimate", [])?;
+        Ok(())
+    }
+
+    pub fn insert_cost_estimate(
+        &self,
+        id: &str,
+        resource_id: &str,
+        resource_type: &str,
+        provider: &str,
+        description: Option<&str>,
+        quantity: i64,
+        hourly: f64,
+        monthly: f64,
+    ) -> Result<(), RegistryError> {
+        self.conn.execute(
+            "INSERT INTO cost_estimate (id, resource_id, resource_type, provider, description, quantity, hourly, monthly)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![id, resource_id, resource_type, provider, description, quantity, hourly, monthly],
+        )?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Import log writes
+    // -----------------------------------------------------------------------
+
     pub fn insert_import_log(
         &self,
         provider_id: &str,

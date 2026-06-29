@@ -3,9 +3,9 @@ use rusqlite::{params, OptionalExtension};
 use crate::error::RegistryError;
 
 use super::{
-    AppliedFileRow, AuditLogRow, ClusterMemberRow, ClusterRow, EventRow, GrantRow, ImageRow,
-    ImportLogRow, MetricRow, MicrovmRow, PlanRow, PrincipalRow, ProviderRow, QueryHistoryRow,
-    Registry, ResourceRow, SnapshotRow, StateSnapshotRow, VolumeRow,
+    AppliedFileRow, AuditLogRow, ClusterMemberRow, ClusterRow, CostEstimateRow, EventRow, GrantRow,
+    ImageRow, ImportLogRow, MetricRow, MicrovmRow, PlanRow, PrincipalRow, ProviderRow,
+    QueryHistoryRow, Registry, ResourceRow, SnapshotRow, StateSnapshotRow, VolumeRow,
 };
 
 impl Registry {
@@ -925,6 +925,60 @@ impl Registry {
             result.push(r?);
         }
         Ok(result)
+    }
+
+    // -----------------------------------------------------------------------
+    // Import log reads
+    // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Pricing reads
+    // -----------------------------------------------------------------------
+
+    pub fn get_pricing(
+        &self,
+        provider: &str,
+        region: &str,
+        resource_type: &str,
+        param: &str,
+    ) -> Result<Option<(f64, f64)>, RegistryError> {
+        let result = self
+            .conn
+            .query_row(
+                "SELECT hourly, monthly FROM pricing
+                 WHERE provider = ?1 AND region = ?2 AND resource_type = ?3 AND param = ?4",
+                params![provider, region, resource_type, param],
+                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    // -----------------------------------------------------------------------
+    // Cost estimate reads
+    // -----------------------------------------------------------------------
+
+    pub fn list_cost_estimates(&self) -> Result<Vec<CostEstimateRow>, RegistryError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, resource_id, resource_type, provider, description, quantity, hourly, monthly, estimated_at
+             FROM cost_estimate ORDER BY estimated_at",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(CostEstimateRow {
+                    id: row.get(0)?,
+                    resource_id: row.get(1)?,
+                    resource_type: row.get(2)?,
+                    provider: row.get(3)?,
+                    description: row.get(4)?,
+                    quantity: row.get(5)?,
+                    hourly: row.get(6)?,
+                    monthly: row.get(7)?,
+                    estimated_at: row.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     // -----------------------------------------------------------------------

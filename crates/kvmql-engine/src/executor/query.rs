@@ -437,6 +437,28 @@ impl<'a> Executor<'a> {
                     })
                     .collect()
             }
+            Noun::CostEstimate => {
+                let list = self
+                    .ctx
+                    .registry
+                    .list_cost_estimates()
+                    .map_err(|e| format!("failed to query cost_estimate: {e}"))?;
+                list.into_iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "id": r.id,
+                            "resource_id": r.resource_id,
+                            "resource_type": r.resource_type,
+                            "provider": r.provider,
+                            "description": r.description,
+                            "quantity": r.quantity,
+                            "hourly": r.hourly,
+                            "monthly": r.monthly,
+                            "estimated_at": r.estimated_at,
+                        })
+                    })
+                    .collect()
+            }
         };
 
         // Apply WHERE filtering

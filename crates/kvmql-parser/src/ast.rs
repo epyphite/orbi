@@ -47,6 +47,7 @@ pub enum Statement {
     Scale(ScaleStmt),
     Upgrade(UpgradeStmt),
     Explain(Box<Statement>),
+    ExplainCost(Box<Statement>),
     Rollback(RollbackStmt),
     Assert(AssertStmt),
     ImportResources(ImportResourcesStmt),
@@ -125,6 +126,7 @@ pub enum Noun {
     K8sNamespaces,
     K8sNodes,
     ImportLog,
+    CostEstimate,
 }
 
 // ── Target Spec ────────────────────────────────────────────────────

@@ -204,6 +204,14 @@ impl Parser {
         match self.peek() {
             Some(Token::Explain) => {
                 self.advance();
+                // Check for EXPLAIN COST variant
+                if let Some(name) = self.peek_ident_like() {
+                    if name.eq_ignore_ascii_case("cost") {
+                        self.advance(); // consume "COST"
+                        let inner = self.parse_statement()?;
+                        return Ok(Statement::ExplainCost(Box::new(inner)));
+                    }
+                }
                 let inner = self.parse_statement()?;
                 Ok(Statement::Explain(Box::new(inner)))
             }
@@ -1269,6 +1277,7 @@ impl Parser {
             "k8s_namespaces" => Noun::K8sNamespaces,
             "k8s_nodes" => Noun::K8sNodes,
             "import_log" => Noun::ImportLog,
+            "cost_estimate" => Noun::CostEstimate,
             other => {
                 return Err(self.error_here(ParseErrorKind::InvalidNoun {
                     found: other.to_string(),

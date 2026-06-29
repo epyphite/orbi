@@ -239,6 +239,19 @@ pub struct ImportLogRow {
     pub imported_at: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct CostEstimateRow {
+    pub id: String,
+    pub resource_id: String,
+    pub resource_type: String,
+    pub provider: String,
+    pub description: Option<String>,
+    pub quantity: i64,
+    pub hourly: f64,
+    pub monthly: f64,
+    pub estimated_at: String,
+}
+
 pub struct AppliedFileRow {
     pub id: String,
     pub file_path: String,

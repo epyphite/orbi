@@ -1,4 +1,5 @@
 mod admin;
+mod cost;
 mod helpers;
 mod query;
 mod resource;
@@ -261,8 +262,8 @@ fn audit_event_for_statement(stmt: &Statement) -> Option<AuditEvent> {
         | Statement::Set(_)
         | Statement::Watch(_)
         | Statement::PublishImage(_) => None,
-        // EXPLAIN is introspection, never a mutation
-        Statement::Explain(_) => None,
+        // EXPLAIN / EXPLAIN COST are introspection, never a mutation
+        Statement::Explain(_) | Statement::ExplainCost(_) => None,
         Statement::Rollback(s) => Some(AuditEvent {
             action: "ROLLBACK",
             target_type: "resource",
@@ -320,6 +321,7 @@ fn verb_for_statement(stmt: &Statement) -> &'static str {
         Statement::Scale(_) => "SCALE",
         Statement::Upgrade(_) => "UPGRADE",
         Statement::Explain(_) => "EXPLAIN",
+        Statement::ExplainCost(_) => "EXPLAIN_COST",
         Statement::Rollback(_) => "ROLLBACK",
         Statement::Assert(_) => "ASSERT",
         Statement::ImportResources(_) => "IMPORT",
@@ -330,7 +332,11 @@ fn verb_for_statement(stmt: &Statement) -> &'static str {
 fn skip_history(stmt: &Statement) -> bool {
     matches!(
         stmt,
-        Statement::Set(_) | Statement::Show(_) | Statement::Explain(_) | Statement::Assert(_)
+        Statement::Set(_)
+            | Statement::Show(_)
+            | Statement::Explain(_)
+            | Statement::ExplainCost(_)
+            | Statement::Assert(_)
     )
 }
 
@@ -633,6 +639,7 @@ impl<'a> Executor<'a> {
             && !matches!(
                 stmt,
                 Statement::Explain(_)
+                    | Statement::ExplainCost(_)
                     | Statement::Select(_)
                     | Statement::Show(_)
                     | Statement::Set(_)
@@ -645,6 +652,7 @@ impl<'a> Executor<'a> {
 
         match stmt {
             Statement::Explain(inner) => self.exec_explain(inner).await,
+            Statement::ExplainCost(inner) => self.exec_explain_cost(inner).await,
             Statement::AddProvider(s) => self.exec_add_provider(s),
             Statement::RemoveProvider(s) => self.exec_remove_provider(s),
             Statement::CreateMicrovm(s) => self.exec_create_microvm(s).await,
@@ -3000,5 +3008,90 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["file_path"], "demo.kvmql");
         assert_eq!(files[0]["file_hash"], "somehash");
+    }
+
+    // ── EXPLAIN COST ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_explain_cost_eks_cluster() {
+        let ctx = setup();
+        let exec = Executor::new(&ctx);
+
+        let r = exec
+            .execute("EXPLAIN COST CREATE RESOURCE 'eks_cluster' id = 'my-cluster' name = 'prod'")
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "explain cost envelope: {r:?}");
+
+        let result = r.result.unwrap();
+        let rows = result.as_array().unwrap();
+        // Should have the resource row + TOTAL row
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["resource"], "my-cluster");
+        assert_eq!(rows[0]["type"], "eks_cluster");
+        assert_eq!(rows[0]["hourly"], "0.100");
+        assert_eq!(rows[0]["monthly"], "73.00");
+        // TOTAL row
+        assert_eq!(rows[1]["resource"], "TOTAL");
+        assert_eq!(rows[1]["hourly"], "0.100");
+        assert_eq!(rows[1]["monthly"], "73.00");
+    }
+
+    #[tokio::test]
+    async fn test_explain_cost_free_resource() {
+        let ctx = setup();
+        let exec = Executor::new(&ctx);
+
+        let r = exec
+            .execute("EXPLAIN COST CREATE RESOURCE 'vpc' id = 'my-vpc'")
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "explain cost vpc: {r:?}");
+
+        let result = r.result.unwrap();
+        let rows = result.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["resource"], "my-vpc");
+        assert_eq!(rows[0]["hourly"], "0.000");
+        assert_eq!(rows[0]["monthly"], "0.00");
+    }
+
+    #[tokio::test]
+    async fn test_explain_cost_rds_postgres() {
+        let ctx = setup();
+        let exec = Executor::new(&ctx);
+
+        let r = exec
+            .execute(
+                "EXPLAIN COST CREATE RESOURCE 'rds_postgres' id = 'db1' instance_class = 'db.r5.large'",
+            )
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "explain cost rds: {r:?}");
+
+        let result = r.result.unwrap();
+        let rows = result.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["resource"], "db1");
+        assert_eq!(rows[0]["type"], "rds_postgres");
+        assert_eq!(rows[0]["hourly"], "0.240");
+        assert_eq!(rows[0]["monthly"], "175.20");
+    }
+
+    #[tokio::test]
+    async fn test_explain_cost_populates_cost_estimate_table() {
+        let ctx = setup();
+        let exec = Executor::new(&ctx);
+
+        let r = exec
+            .execute("EXPLAIN COST CREATE RESOURCE 'nat_gateway' id = 'nat1'")
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "explain cost: {r:?}");
+
+        // The cost_estimate table should now be queryable
+        let r2 = exec.execute("SELECT * FROM cost_estimate").await;
+        assert_eq!(r2.status, ResultStatus::Ok, "select cost_estimate: {r2:?}");
+        let arr = r2.result.unwrap();
+        let estimates = arr.as_array().unwrap();
+        assert_eq!(estimates.len(), 1);
+        assert_eq!(estimates[0]["resource_id"], "nat1");
+        assert_eq!(estimates[0]["resource_type"], "nat_gateway");
     }
 }

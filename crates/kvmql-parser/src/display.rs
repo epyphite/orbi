@@ -57,6 +57,7 @@ impl fmt::Display for Statement {
             Statement::Scale(s) => write!(f, "{s}"),
             Statement::Upgrade(s) => write!(f, "{s}"),
             Statement::Explain(inner) => write!(f, "EXPLAIN {inner}"),
+            Statement::ExplainCost(inner) => write!(f, "EXPLAIN COST {inner}"),
             Statement::Rollback(s) => write!(f, "{s}"),
             Statement::Assert(s) => write!(f, "{s}"),
             Statement::ImportResources(s) => write!(f, "{s}"),
@@ -153,6 +154,7 @@ impl fmt::Display for Noun {
             Noun::K8sNamespaces => write!(f, "k8s_namespaces"),
             Noun::K8sNodes => write!(f, "k8s_nodes"),
             Noun::ImportLog => write!(f, "import_log"),
+            Noun::CostEstimate => write!(f, "cost_estimate"),
         }
     }
 }
@@ -1193,6 +1195,51 @@ mod tests {
         if let Statement::Select(ref s) = program.statements[0] {
             assert_eq!(s.from, SelectSource::Noun(Noun::Plans));
             assert_eq!(s.to_string(), "SELECT * FROM plans");
+        } else {
+            panic!("expected SELECT statement");
+        }
+    }
+
+    #[test]
+    fn parse_explain_cost_create_resource() {
+        use crate::parser::Parser;
+        let program = Parser::parse(
+            "EXPLAIN COST CREATE RESOURCE 'eks_cluster' id = 'my-cluster' name = 'prod';",
+        )
+        .unwrap();
+        assert_eq!(program.statements.len(), 1);
+        match &program.statements[0] {
+            Statement::ExplainCost(inner) => {
+                assert!(matches!(inner.as_ref(), Statement::CreateResource(_)));
+                assert_eq!(
+                    program.statements[0].to_string(),
+                    "EXPLAIN COST CREATE RESOURCE 'eks_cluster' id = 'my-cluster' name = 'prod'"
+                );
+            }
+            _ => panic!("expected ExplainCost statement"),
+        }
+    }
+
+    #[test]
+    fn parse_explain_cost_vs_explain() {
+        use crate::parser::Parser;
+        // EXPLAIN (without COST) should still work
+        let program = Parser::parse("EXPLAIN CREATE RESOURCE 'vpc' id = 'v1';").unwrap();
+        assert!(matches!(&program.statements[0], Statement::Explain(_)));
+
+        // EXPLAIN COST should produce ExplainCost
+        let program = Parser::parse("EXPLAIN COST CREATE RESOURCE 'vpc' id = 'v1';").unwrap();
+        assert!(matches!(&program.statements[0], Statement::ExplainCost(_)));
+    }
+
+    #[test]
+    fn test_select_from_cost_estimate() {
+        use crate::parser::Parser;
+        let program = Parser::parse("SELECT * FROM cost_estimate;").unwrap();
+        assert_eq!(program.statements.len(), 1);
+        if let Statement::Select(ref s) = program.statements[0] {
+            assert_eq!(s.from, SelectSource::Noun(Noun::CostEstimate));
+            assert_eq!(s.to_string(), "SELECT * FROM cost_estimate");
         } else {
             panic!("expected SELECT statement");
         }

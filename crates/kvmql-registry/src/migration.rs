@@ -235,6 +235,340 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
         info!("registry schema v8 applied successfully");
     }
 
+    if current_version < 9 {
+        info!("applying registry schema v9 — pricing + cost_estimate tables");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pricing (
+                provider      TEXT NOT NULL,
+                region        TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                param         TEXT NOT NULL DEFAULT '',
+                hourly        REAL NOT NULL DEFAULT 0.0,
+                monthly       REAL NOT NULL DEFAULT 0.0,
+                unit          TEXT NOT NULL DEFAULT 'instance',
+                updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (provider, region, resource_type, param)
+            );
+
+            CREATE TABLE IF NOT EXISTS cost_estimate (
+                id              TEXT PRIMARY KEY,
+                resource_id     TEXT NOT NULL,
+                resource_type   TEXT NOT NULL,
+                provider        TEXT NOT NULL DEFAULT 'aws',
+                description     TEXT,
+                quantity        INTEGER NOT NULL DEFAULT 1,
+                hourly          REAL NOT NULL DEFAULT 0.0,
+                monthly         REAL NOT NULL DEFAULT 0.0,
+                estimated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            );",
+        )
+        .map_err(|e| RegistryError::Migration(format!("v9 DDL failed: {e}")))?;
+
+        // Seed default AWS pricing data
+        seed_aws_pricing(conn)?;
+
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) VALUES (?1, datetime('now'), ?2)",
+            rusqlite::params![9, "add pricing + cost_estimate tables with AWS seed data"],
+        )?;
+
+        info!("registry schema v9 applied successfully");
+    }
+
+    Ok(())
+}
+
+/// Seed default AWS pricing data for us-east-1.
+fn seed_aws_pricing(conn: &Connection) -> Result<(), RegistryError> {
+    let rows: &[(&str, &str, &str, &str, f64, f64, &str)] = &[
+        // EKS control plane
+        (
+            "aws",
+            "us-east-1",
+            "eks_cluster",
+            "",
+            0.10,
+            73.00,
+            "cluster",
+        ),
+        // EC2 instance types (for EKS nodegroups)
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "t3.micro",
+            0.0104,
+            7.59,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "t3.small",
+            0.0208,
+            15.18,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "t3.medium",
+            0.0416,
+            30.37,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "t3.large",
+            0.0832,
+            60.74,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "t3.xlarge",
+            0.1664,
+            121.47,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "m5.large",
+            0.096,
+            70.08,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "m5.xlarge",
+            0.192,
+            140.16,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "c6i.large",
+            0.085,
+            62.05,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "r6i.large",
+            0.126,
+            91.98,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "eks_nodegroup",
+            "g5.xlarge",
+            1.006,
+            734.38,
+            "instance",
+        ),
+        // RDS PostgreSQL
+        (
+            "aws",
+            "us-east-1",
+            "rds_postgres",
+            "db.t3.micro",
+            0.018,
+            13.14,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "rds_postgres",
+            "db.t3.small",
+            0.036,
+            26.28,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "rds_postgres",
+            "db.t3.medium",
+            0.072,
+            52.56,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "rds_postgres",
+            "db.r5.large",
+            0.24,
+            175.20,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "rds_postgres",
+            "db.r6g.large",
+            0.216,
+            157.68,
+            "instance",
+        ),
+        // ElastiCache Redis
+        (
+            "aws",
+            "us-east-1",
+            "elasticache_redis",
+            "cache.t3.micro",
+            0.017,
+            12.41,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "elasticache_redis",
+            "cache.t3.small",
+            0.034,
+            24.82,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "elasticache_redis",
+            "cache.t3.medium",
+            0.068,
+            49.64,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "elasticache_redis",
+            "cache.r6g.large",
+            0.166,
+            121.18,
+            "instance",
+        ),
+        // Replication groups (same pricing as redis nodes)
+        (
+            "aws",
+            "us-east-1",
+            "elasticache_replication_group",
+            "cache.t3.micro",
+            0.017,
+            12.41,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "elasticache_replication_group",
+            "cache.t3.small",
+            0.034,
+            24.82,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "elasticache_replication_group",
+            "cache.t3.medium",
+            0.068,
+            49.64,
+            "instance",
+        ),
+        // MSK Kafka
+        (
+            "aws",
+            "us-east-1",
+            "msk_cluster",
+            "kafka.t3.small",
+            0.054,
+            39.42,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "msk_cluster",
+            "kafka.m5.large",
+            0.228,
+            166.44,
+            "instance",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "msk_cluster",
+            "kafka.m5.xlarge",
+            0.456,
+            332.88,
+            "instance",
+        ),
+        // Fixed-price services
+        (
+            "aws",
+            "us-east-1",
+            "nat_gateway",
+            "",
+            0.045,
+            32.85,
+            "gateway",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "vpc_endpoint",
+            "Interface",
+            0.01,
+            7.30,
+            "endpoint-az",
+        ),
+        (
+            "aws",
+            "us-east-1",
+            "vpc_endpoint",
+            "Gateway",
+            0.0,
+            0.0,
+            "endpoint",
+        ),
+        ("aws", "us-east-1", "kms_key", "", 0.00137, 1.00, "key"),
+        ("aws", "us-east-1", "s3_bucket", "", 0.0, 0.023, "gb-month"),
+        // Free resources
+        ("aws", "us-east-1", "vpc", "", 0.0, 0.0, "vpc"),
+        ("aws", "us-east-1", "aws_subnet", "", 0.0, 0.0, "subnet"),
+        ("aws", "us-east-1", "security_group", "", 0.0, 0.0, "sg"),
+        ("aws", "us-east-1", "iam_role", "", 0.0, 0.0, "role"),
+        ("aws", "us-east-1", "iam_policy", "", 0.0, 0.0, "policy"),
+        ("aws", "us-east-1", "ses_domain", "", 0.0, 0.0, "domain"),
+        ("aws", "us-east-1", "acm_certificate", "", 0.0, 0.0, "cert"),
+    ];
+
+    for &(provider, region, resource_type, param, hourly, monthly, unit) in rows {
+        conn.execute(
+            "INSERT OR IGNORE INTO pricing (provider, region, resource_type, param, hourly, monthly, unit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![provider, region, resource_type, param, hourly, monthly, unit],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -252,6 +586,6 @@ mod tests {
         let version: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 }
