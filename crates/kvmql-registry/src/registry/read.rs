@@ -4,7 +4,7 @@ use crate::error::RegistryError;
 
 use super::{
     AppliedFileRow, AuditLogRow, ClusterMemberRow, ClusterRow, CostEstimateRow, EventRow, GrantRow,
-    ImageRow, ImportLogRow, MetricRow, MicrovmRow, PlanRow, PrincipalRow, ProviderRow,
+    ImageRow, ImportLogRow, MetricRow, MicrovmRow, PlanRow, PricingRow, PrincipalRow, ProviderRow,
     QueryHistoryRow, Registry, ResourceRow, SnapshotRow, StateSnapshotRow, VolumeRow,
 };
 
@@ -952,6 +952,73 @@ impl Registry {
             )
             .optional()?;
         Ok(result)
+    }
+
+    /// List pricing rows with optional filters for provider, region, and resource type.
+    pub fn list_pricing(
+        &self,
+        provider: Option<&str>,
+        region: Option<&str>,
+        resource_type: Option<&str>,
+    ) -> Result<Vec<PricingRow>, RegistryError> {
+        let mut sql = String::from(
+            "SELECT provider, region, resource_type, param, hourly, monthly, unit FROM pricing WHERE 1=1",
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(p) = provider {
+            sql.push_str(&format!(" AND provider = ?{idx}"));
+            param_values.push(Box::new(p.to_string()));
+            idx += 1;
+        }
+        if let Some(r) = region {
+            sql.push_str(&format!(" AND region = ?{idx}"));
+            param_values.push(Box::new(r.to_string()));
+            idx += 1;
+        }
+        if let Some(rt) = resource_type {
+            sql.push_str(&format!(" AND resource_type = ?{idx}"));
+            param_values.push(Box::new(rt.to_string()));
+            let _ = idx; // suppress unused warning
+        }
+
+        sql.push_str(" ORDER BY provider, region, resource_type, param");
+
+        let refs: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                Ok(PricingRow {
+                    provider: row.get(0)?,
+                    region: row.get(1)?,
+                    resource_type: row.get(2)?,
+                    param: row.get(3)?,
+                    hourly: row.get(4)?,
+                    monthly: row.get(5)?,
+                    unit: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Return a summary of pricing entries grouped by provider and region.
+    pub fn pricing_summary(&self) -> Result<Vec<(String, String, i64)>, RegistryError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider, region, COUNT(*) FROM pricing GROUP BY provider, region ORDER BY provider, region",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     // -----------------------------------------------------------------------

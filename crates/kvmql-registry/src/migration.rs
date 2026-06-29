@@ -266,6 +266,8 @@ pub fn run_migrations(conn: &Connection) -> Result<(), RegistryError> {
 
         // Seed default AWS pricing data
         seed_aws_pricing(conn)?;
+        seed_aws_regional_pricing(conn)?;
+        seed_azure_pricing(conn)?;
 
         conn.execute(
             "INSERT INTO schema_version (version, applied_at, description) VALUES (?1, datetime('now'), ?2)",
@@ -568,6 +570,198 @@ fn seed_aws_pricing(conn: &Connection) -> Result<(), RegistryError> {
             rusqlite::params![provider, region, resource_type, param, hourly, monthly, unit],
         )?;
     }
+
+    Ok(())
+}
+
+/// Replicate us-east-1 AWS prices into additional regions with multipliers.
+fn seed_aws_regional_pricing(conn: &Connection) -> Result<(), RegistryError> {
+    let regional_multipliers: &[(&str, f64)] = &[
+        ("us-west-2", 1.0),
+        ("eu-west-1", 1.05),
+        ("ap-southeast-1", 1.10),
+        ("ap-northeast-1", 1.15),
+        ("af-south-1", 1.20),
+    ];
+
+    for &(region, multiplier) in regional_multipliers {
+        conn.execute(
+            "INSERT OR IGNORE INTO pricing (provider, region, resource_type, param, hourly, monthly, unit)
+             SELECT provider, ?1, resource_type, param,
+                    ROUND(hourly * ?2, 5), ROUND(monthly * ?2, 2), unit
+             FROM pricing WHERE provider = 'aws' AND region = 'us-east-1'",
+            rusqlite::params![region, multiplier],
+        )?;
+    }
+    Ok(())
+}
+
+/// Seed Azure pricing for eastus, then derive southafricanorth and westeurope.
+fn seed_azure_pricing(conn: &Connection) -> Result<(), RegistryError> {
+    let rows: &[(&str, &str, &str, &str, f64, f64, &str)] = &[
+        // PostgreSQL Flexible Server
+        (
+            "azure", "eastus", "postgres", "B1ms", 0.0210, 15.33, "instance",
+        ),
+        (
+            "azure", "eastus", "postgres", "B2s", 0.0420, 30.66, "instance",
+        ),
+        (
+            "azure",
+            "eastus",
+            "postgres",
+            "GP_Standard_D2s_v3",
+            0.1570,
+            114.61,
+            "instance",
+        ),
+        (
+            "azure",
+            "eastus",
+            "postgres",
+            "GP_Standard_D4s_v3",
+            0.3140,
+            229.22,
+            "instance",
+        ),
+        (
+            "azure",
+            "eastus",
+            "postgres",
+            "GP_Standard_D8s_v3",
+            0.6280,
+            458.44,
+            "instance",
+        ),
+        // Redis Cache
+        ("azure", "eastus", "redis", "C0", 0.0220, 16.06, "instance"),
+        ("azure", "eastus", "redis", "C1", 0.0550, 40.15, "instance"),
+        ("azure", "eastus", "redis", "C2", 0.1100, 80.30, "instance"),
+        ("azure", "eastus", "redis", "P1", 0.3080, 224.84, "instance"),
+        // AKS (control plane is free, nodes are VM cost)
+        ("azure", "eastus", "aks", "", 0.0, 0.0, "cluster"),
+        (
+            "azure",
+            "eastus",
+            "aks",
+            "Standard_D2s_v3",
+            0.096,
+            70.08,
+            "instance",
+        ),
+        (
+            "azure",
+            "eastus",
+            "aks",
+            "Standard_D4s_v3",
+            0.192,
+            140.16,
+            "instance",
+        ),
+        (
+            "azure",
+            "eastus",
+            "aks",
+            "Standard_D8s_v3",
+            0.384,
+            280.32,
+            "instance",
+        ),
+        // Storage Account
+        (
+            "azure",
+            "eastus",
+            "storage_account",
+            "Standard_LRS",
+            0.0,
+            0.018,
+            "gb-month",
+        ),
+        (
+            "azure",
+            "eastus",
+            "storage_account",
+            "Standard_GRS",
+            0.0,
+            0.036,
+            "gb-month",
+        ),
+        // Container Registry
+        (
+            "azure",
+            "eastus",
+            "container_registry",
+            "Basic",
+            0.00685,
+            5.00,
+            "registry",
+        ),
+        (
+            "azure",
+            "eastus",
+            "container_registry",
+            "Standard",
+            0.0274,
+            20.00,
+            "registry",
+        ),
+        (
+            "azure",
+            "eastus",
+            "container_registry",
+            "Premium",
+            0.0685,
+            50.00,
+            "registry",
+        ),
+        // Container App (consumption-based)
+        ("azure", "eastus", "container_app", "", 0.0, 0.0, "app"),
+        // Load Balancer
+        (
+            "azure",
+            "eastus",
+            "load_balancer",
+            "Standard",
+            0.0250,
+            18.25,
+            "lb",
+        ),
+        // DNS Zone
+        ("azure", "eastus", "dns_zone", "", 0.0, 0.50, "zone"),
+        // Free resources
+        ("azure", "eastus", "vnet", "", 0.0, 0.0, "vnet"),
+        ("azure", "eastus", "subnet", "", 0.0, 0.0, "subnet"),
+        ("azure", "eastus", "nsg", "", 0.0, 0.0, "nsg"),
+        ("azure", "eastus", "nsg_rule", "", 0.0, 0.0, "rule"),
+        ("azure", "eastus", "vnet_peering", "", 0.0, 0.0, "peering"),
+        ("azure", "eastus", "dns_vnet_link", "", 0.0, 0.0, "link"),
+    ];
+
+    for &(provider, region, resource_type, param, hourly, monthly, unit) in rows {
+        conn.execute(
+            "INSERT OR IGNORE INTO pricing (provider, region, resource_type, param, hourly, monthly, unit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![provider, region, resource_type, param, hourly, monthly, unit],
+        )?;
+    }
+
+    // South Africa North (~1.25x of eastus for most services)
+    conn.execute(
+        "INSERT OR IGNORE INTO pricing (provider, region, resource_type, param, hourly, monthly, unit)
+         SELECT provider, 'southafricanorth', resource_type, param,
+                ROUND(hourly * 1.25, 5), ROUND(monthly * 1.25, 2), unit
+         FROM pricing WHERE provider = 'azure' AND region = 'eastus'",
+        [],
+    )?;
+
+    // West Europe (~1.10x of eastus)
+    conn.execute(
+        "INSERT OR IGNORE INTO pricing (provider, region, resource_type, param, hourly, monthly, unit)
+         SELECT provider, 'westeurope', resource_type, param,
+                ROUND(hourly * 1.10, 5), ROUND(monthly * 1.10, 2), unit
+         FROM pricing WHERE provider = 'azure' AND region = 'eastus'",
+        [],
+    )?;
 
     Ok(())
 }

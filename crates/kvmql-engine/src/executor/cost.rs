@@ -105,15 +105,29 @@ impl<'a> Executor<'a> {
         resource_type: &str,
         params: &serde_json::Value,
     ) -> Result<Option<CostEstimate>, EngineError> {
+        // Determine the provider from the resource type
+        let provider = Self::provider_for_resource_type(resource_type);
+
+        // Determine the region: try the first provider of matching type, then
+        // fall back to a sensible default per cloud.
+        let default_region = match provider {
+            "azure" => "eastus",
+            _ => "us-east-1",
+        };
         let region = self
             .ctx
             .registry
             .list_providers()
             .ok()
-            .and_then(|ps| ps.first().and_then(|p| p.region.clone()))
-            .unwrap_or_else(|| "us-east-1".to_string());
+            .and_then(|ps| {
+                ps.iter()
+                    .find(|p| p.provider_type == provider)
+                    .and_then(|p| p.region.clone())
+            })
+            .unwrap_or_else(|| default_region.to_string());
 
         let (lookup_type, param_key, quantity) = match resource_type {
+            // ----- AWS resource types -----
             "eks_cluster" => ("eks_cluster", String::new(), 1_i64),
             "eks_nodegroup" => {
                 let instance_type = params
@@ -205,7 +219,56 @@ impl<'a> Executor<'a> {
             }
             "kms_key" => ("kms_key", String::new(), 1),
             "s3_bucket" => ("s3_bucket", String::new(), 1),
-            // Free resources
+
+            // ----- Azure resource types -----
+            "postgres" => {
+                let sku = params.get("sku").and_then(|v| v.as_str()).unwrap_or("B1ms");
+                ("postgres", sku.to_string(), 1)
+            }
+            "redis" => {
+                let sku = params.get("sku").and_then(|v| v.as_str()).unwrap_or("C0");
+                ("redis", sku.to_string(), 1)
+            }
+            "aks" => {
+                let vm_size = params.get("vm_size").and_then(|v| v.as_str()).unwrap_or("");
+                let node_count: i64 = params
+                    .get("node_count")
+                    .and_then(|v| {
+                        v.as_str()
+                            .and_then(|s| s.parse().ok())
+                            .or_else(|| v.as_i64())
+                    })
+                    .unwrap_or(3);
+                if vm_size.is_empty() {
+                    ("aks", String::new(), 1) // free control plane
+                } else {
+                    ("aks", vm_size.to_string(), node_count)
+                }
+            }
+            "storage_account" => {
+                let sku = params
+                    .get("sku")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Standard_LRS");
+                ("storage_account", sku.to_string(), 1)
+            }
+            "container_registry" => {
+                let sku = params
+                    .get("sku")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Basic");
+                ("container_registry", sku.to_string(), 1)
+            }
+            "load_balancer" => {
+                let sku = params
+                    .get("sku")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Standard");
+                ("load_balancer", sku.to_string(), 1)
+            }
+            "dns_zone" => ("dns_zone", String::new(), 1),
+
+            // ----- Free resources (AWS) -----
             "vpc" | "aws_subnet" | "security_group" | "sg_rule" | "iam_role" | "iam_policy"
             | "ses_domain" | "ses_smtp_user" | "acm_certificate" | "eks_addon" | "backup_vault"
             | "backup_plan" | "cloudwatch_alarm" => {
@@ -223,6 +286,23 @@ impl<'a> Executor<'a> {
                     monthly: 0.0,
                 }));
             }
+            // ----- Free resources (Azure) -----
+            "vnet" | "subnet" | "nsg" | "nsg_rule" | "vnet_peering" | "dns_vnet_link"
+            | "container_app" | "container_job" | "pg_database" => {
+                return Ok(Some(CostEstimate {
+                    resource_id: params
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string(),
+                    resource_type: resource_type.to_string(),
+                    provider: "azure".to_string(),
+                    description: Some(format!("{resource_type} (no hourly cost)")),
+                    quantity: 1,
+                    hourly: 0.0,
+                    monthly: 0.0,
+                }));
+            }
             _ => return Ok(None), // Unknown type, skip
         };
 
@@ -230,7 +310,7 @@ impl<'a> Executor<'a> {
         let pricing = self
             .ctx
             .registry
-            .get_pricing("aws", &region, lookup_type, &param_key)
+            .get_pricing(provider, &region, lookup_type, &param_key)
             .map_err(|e| -> EngineError { format!("pricing lookup failed: {e}").into() })?;
 
         let (base_hourly, base_monthly) = pricing.unwrap_or((0.0, 0.0));
@@ -251,11 +331,38 @@ impl<'a> Executor<'a> {
         Ok(Some(CostEstimate {
             resource_id,
             resource_type: resource_type.to_string(),
-            provider: "aws".to_string(),
+            provider: provider.to_string(),
             description: Some(description),
             quantity,
             hourly: base_hourly * quantity as f64,
             monthly: base_monthly * quantity as f64,
         }))
+    }
+
+    /// Map a resource type to its cloud provider.
+    fn provider_for_resource_type(resource_type: &str) -> &'static str {
+        const AZURE_TYPES: &[&str] = &[
+            "postgres",
+            "redis",
+            "aks",
+            "storage_account",
+            "container_registry",
+            "container_app",
+            "container_job",
+            "load_balancer",
+            "dns_zone",
+            "vnet",
+            "subnet",
+            "nsg",
+            "nsg_rule",
+            "vnet_peering",
+            "dns_vnet_link",
+            "pg_database",
+        ];
+        if AZURE_TYPES.contains(&resource_type) {
+            "azure"
+        } else {
+            "aws"
+        }
     }
 }

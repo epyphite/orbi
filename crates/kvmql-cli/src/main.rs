@@ -93,6 +93,11 @@ enum Commands {
         #[command(subcommand)]
         action: EnvAction,
     },
+    /// Manage embedded pricing data
+    Pricing {
+        #[command(subcommand)]
+        action: PricingAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -125,6 +130,24 @@ enum EnvAction {
         /// Environment name
         name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum PricingAction {
+    /// List pricing data
+    List {
+        /// Filter by provider (aws, azure)
+        #[arg(long)]
+        provider: Option<String>,
+        /// Filter by region
+        #[arg(long)]
+        region: Option<String>,
+        /// Filter by resource type
+        #[arg(long, name = "type")]
+        resource_type: Option<String>,
+    },
+    /// Show pricing summary (counts per provider/region)
+    Summary,
 }
 
 #[tokio::main]
@@ -607,6 +630,70 @@ async fn main() {
                     }
                 }
             }
+            Commands::Pricing { action } => match action {
+                PricingAction::List {
+                    provider,
+                    region,
+                    resource_type,
+                } => {
+                    let rows = ctx
+                        .registry
+                        .list_pricing(
+                            provider.as_deref(),
+                            region.as_deref(),
+                            resource_type.as_deref(),
+                        )
+                        .expect("failed to list pricing");
+                    if rows.is_empty() {
+                        println!("No pricing data found.");
+                    } else {
+                        println!(
+                            "{:<8} {:<20} {:<30} {:<25} {:>10} {:>10} {:<10}",
+                            "PROVIDER",
+                            "REGION",
+                            "RESOURCE_TYPE",
+                            "PARAM",
+                            "HOURLY",
+                            "MONTHLY",
+                            "UNIT"
+                        );
+                        println!("{}", "-".repeat(120));
+                        for r in &rows {
+                            println!(
+                                "{:<8} {:<20} {:<30} {:<25} {:>10.5} {:>10.2} {:<10}",
+                                r.provider,
+                                r.region,
+                                r.resource_type,
+                                r.param,
+                                r.hourly,
+                                r.monthly,
+                                r.unit,
+                            );
+                        }
+                        println!("{}", "-".repeat(120));
+                        println!("{} entries", rows.len());
+                    }
+                }
+                PricingAction::Summary => {
+                    let summary = ctx
+                        .registry
+                        .pricing_summary()
+                        .expect("failed to get pricing summary");
+                    if summary.is_empty() {
+                        println!("No pricing data found.");
+                    } else {
+                        println!("{:<10} {:<22} {:>8}", "PROVIDER", "REGION", "ENTRIES");
+                        println!("{}", "-".repeat(42));
+                        let mut total: i64 = 0;
+                        for (provider, region, count) in &summary {
+                            println!("{:<10} {:<22} {:>8}", provider, region, count);
+                            total += count;
+                        }
+                        println!("{}", "-".repeat(42));
+                        println!("{:<10} {:<22} {:>8}", "", "TOTAL", total);
+                    }
+                }
+            },
         }
     } else if let Some(ref stmt) = cli.statement {
         // Direct statement execution.

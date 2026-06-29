@@ -240,6 +240,17 @@ pub struct ImportLogRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct PricingRow {
+    pub provider: String,
+    pub region: String,
+    pub resource_type: String,
+    pub param: String,
+    pub hourly: f64,
+    pub monthly: f64,
+    pub unit: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct CostEstimateRow {
     pub id: String,
     pub resource_id: String,
