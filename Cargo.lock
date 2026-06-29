@@ -1038,6 +1038,7 @@ dependencies = [
  "kvmql-engine",
  "kvmql-parser",
  "kvmql-registry",
+ "reqwest",
  "rustyline",
  "serde",
  "serde_json",

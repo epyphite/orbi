@@ -1,5 +1,6 @@
 mod formatter;
 mod meta_commands;
+mod pricing;
 mod shell;
 
 use std::sync::Arc;
@@ -148,6 +149,15 @@ enum PricingAction {
     },
     /// Show pricing summary (counts per provider/region)
     Summary,
+    /// Fetch latest pricing from AWS/Azure APIs
+    Update {
+        /// Provider to update (aws, azure, or all)
+        #[arg(long, default_value = "all")]
+        provider: String,
+        /// Region to update (or all regions)
+        #[arg(long)]
+        region: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -692,6 +702,55 @@ async fn main() {
                         println!("{}", "-".repeat(42));
                         println!("{:<10} {:<22} {:>8}", "", "TOTAL", total);
                     }
+                }
+                PricingAction::Update { provider, region } => {
+                    let aws_regions = [
+                        "us-east-1",
+                        "us-west-2",
+                        "eu-west-1",
+                        "ap-southeast-1",
+                        "ap-northeast-1",
+                        "af-south-1",
+                    ];
+                    let azure_regions = ["eastus", "westeurope", "southafricanorth"];
+
+                    let do_aws = provider == "all" || provider == "aws";
+                    let do_azure = provider == "all" || provider == "azure";
+
+                    if do_azure {
+                        let regions: Vec<&str> = if let Some(ref r) = region {
+                            vec![r.as_str()]
+                        } else {
+                            azure_regions.to_vec()
+                        };
+                        println!("Fetching Azure pricing for {} region(s)...", regions.len());
+                        match pricing::update_azure_pricing(&ctx.registry, &regions) {
+                            Ok(n) => println!("  Updated {n} Azure pricing entries"),
+                            Err(e) => eprintln!("  Azure pricing update failed: {e}"),
+                        }
+                    }
+
+                    if do_aws {
+                        let regions: Vec<&str> = if let Some(ref r) = region {
+                            vec![r.as_str()]
+                        } else {
+                            aws_regions.to_vec()
+                        };
+                        println!("Fetching AWS pricing for {} region(s)...", regions.len());
+                        println!("  (requires AWS credentials and aws CLI)");
+                        match pricing::update_aws_pricing(&ctx.registry, &regions) {
+                            Ok(n) => println!("  Updated {n} AWS pricing entries"),
+                            Err(e) => eprintln!("  AWS pricing skipped: {e}"),
+                        }
+                    }
+
+                    // Show summary after update
+                    let summary = ctx
+                        .registry
+                        .pricing_summary()
+                        .expect("failed to get summary");
+                    let total: i64 = summary.iter().map(|(_, _, c)| c).sum();
+                    println!("\nPricing database: {total} entries total");
                 }
             },
         }
