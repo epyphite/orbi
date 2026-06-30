@@ -470,6 +470,42 @@ impl<'a> Executor<'a> {
             rows
         };
 
+        // Apply GROUP BY
+        let rows = if let Some(ref group_fields) = s.group_by {
+            apply_group_by(&rows, group_fields, &s.fields)
+        } else {
+            rows
+        };
+
+        // Apply ORDER BY
+        let mut rows = rows;
+        if let Some(ref order) = s.order_by {
+            rows.sort_by(|a, b| {
+                for item in order {
+                    let key = item.field.as_str();
+                    let va = a.get(key);
+                    let vb = b.get(key);
+                    let cmp = compare_json_values(va, vb);
+                    let cmp = if item.direction == SortDirection::Desc {
+                        cmp.reverse()
+                    } else {
+                        cmp
+                    };
+                    if cmp != std::cmp::Ordering::Equal {
+                        return cmp;
+                    }
+                }
+                std::cmp::Ordering::Equal
+            });
+        }
+
+        // Apply OFFSET
+        let rows: Vec<serde_json::Value> = if let Some(offset) = s.offset {
+            rows.into_iter().skip(offset as usize).collect()
+        } else {
+            rows
+        };
+
         // Apply LIMIT
         let rows = if let Some(limit) = s.limit {
             rows.into_iter().take(limit as usize).collect()
@@ -1050,5 +1086,260 @@ impl<'a> Executor<'a> {
                 )),
             }
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GROUP BY helper
+// ---------------------------------------------------------------------------
+
+/// Group rows by the specified fields, computing aggregates for any
+/// `FnCall` fields in the SELECT list (count, sum, avg, min, max).
+fn apply_group_by(
+    rows: &[serde_json::Value],
+    group_fields: &FieldList,
+    select_fields: &FieldList,
+) -> Vec<serde_json::Value> {
+    use std::collections::BTreeMap;
+
+    // Extract group-by field names
+    let group_keys: Vec<String> = match group_fields {
+        FieldList::Fields(fields) => fields
+            .iter()
+            .filter_map(|f| match f {
+                Field::Simple(name) => Some(name.clone()),
+                Field::Aliased { field, .. } => match field.as_ref() {
+                    Field::Simple(name) => Some(name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect(),
+        FieldList::All => return rows.to_vec(),
+    };
+
+    // Group rows by key values
+    let mut groups: BTreeMap<Vec<String>, Vec<&serde_json::Value>> = BTreeMap::new();
+    for row in rows {
+        let key: Vec<String> = group_keys
+            .iter()
+            .map(|k| {
+                row.get(k)
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Null => "null".to_string(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_else(|| "null".to_string())
+            })
+            .collect();
+        groups.entry(key).or_default().push(row);
+    }
+
+    // Collect aggregate descriptors from the SELECT field list
+    let agg_fields: Vec<(String, String, String)> = collect_aggregates(select_fields);
+
+    // Build output rows
+    groups
+        .into_iter()
+        .map(|(key_vals, group_rows)| {
+            let mut result = serde_json::Map::new();
+
+            // Add group-by fields (preserve original JSON types)
+            for (i, k) in group_keys.iter().enumerate() {
+                if let Some(first_row) = group_rows.first() {
+                    if let Some(val) = first_row.get(k) {
+                        result.insert(k.clone(), val.clone());
+                    } else {
+                        result.insert(k.clone(), serde_json::Value::String(key_vals[i].clone()));
+                    }
+                } else {
+                    result.insert(k.clone(), serde_json::Value::String(key_vals[i].clone()));
+                }
+            }
+
+            // Compute aggregates
+            for (func, arg, alias) in &agg_fields {
+                let val = compute_aggregate(func, arg, &group_rows);
+                result.insert(alias.clone(), val);
+            }
+
+            // For non-aggregate, non-group-by selected fields, take first row value
+            if let FieldList::Fields(fields) = select_fields {
+                collect_passthrough_fields(fields, &group_keys, &group_rows, &mut result);
+            }
+
+            serde_json::Value::Object(result)
+        })
+        .collect()
+}
+
+/// Extract aggregate function descriptors: (func_name, arg_name, output_alias).
+fn collect_aggregates(select_fields: &FieldList) -> Vec<(String, String, String)> {
+    let fields = match select_fields {
+        FieldList::Fields(f) => f,
+        FieldList::All => return vec![],
+    };
+
+    let mut aggs = Vec::new();
+    for f in fields {
+        match f {
+            Field::FnCall { name, star, args } => {
+                let func_name = name.to_lowercase();
+                let arg_name = if *star {
+                    "*".to_string()
+                } else {
+                    args.first()
+                        .map(|a| match a {
+                            Expr::Identifier(n) => n.clone(),
+                            _ => format!("{:?}", a),
+                        })
+                        .unwrap_or_default()
+                };
+                let alias = if func_name == "count" {
+                    "count".to_string()
+                } else {
+                    format!("{}_{}", func_name, arg_name)
+                };
+                aggs.push((func_name, arg_name, alias));
+            }
+            Field::Aliased { field, alias } => {
+                if let Field::FnCall { name, star, args } = field.as_ref() {
+                    let func_name = name.to_lowercase();
+                    let arg_name = if *star {
+                        "*".to_string()
+                    } else {
+                        args.first()
+                            .map(|a| match a {
+                                Expr::Identifier(n) => n.clone(),
+                                _ => format!("{:?}", a),
+                            })
+                            .unwrap_or_default()
+                    };
+                    aggs.push((func_name, arg_name, alias.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    aggs
+}
+
+/// Compute a single aggregate value for a group of rows.
+fn compute_aggregate(
+    func: &str,
+    arg: &str,
+    group_rows: &[&serde_json::Value],
+) -> serde_json::Value {
+    match func {
+        "count" => serde_json::json!(group_rows.len()),
+        "sum" => {
+            let sum: f64 = group_rows
+                .iter()
+                .filter_map(|r| r.get(arg))
+                .filter_map(|v| {
+                    v.as_f64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
+                .sum();
+            serde_json::json!(sum)
+        }
+        "avg" => {
+            let vals: Vec<f64> = group_rows
+                .iter()
+                .filter_map(|r| r.get(arg))
+                .filter_map(|v| {
+                    v.as_f64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
+                .collect();
+            if vals.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(vals.iter().sum::<f64>() / vals.len() as f64)
+            }
+        }
+        "min" => group_rows
+            .iter()
+            .filter_map(|r| r.get(arg))
+            .filter_map(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|v| serde_json::json!(v))
+            .unwrap_or(serde_json::Value::Null),
+        "max" => group_rows
+            .iter()
+            .filter_map(|r| r.get(arg))
+            .filter_map(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|v| serde_json::json!(v))
+            .unwrap_or(serde_json::Value::Null),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// For non-aggregate, non-group-by selected fields, take first row's value.
+fn collect_passthrough_fields(
+    fields: &[Field],
+    group_keys: &[String],
+    group_rows: &[&serde_json::Value],
+    result: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for f in fields {
+        match f {
+            Field::Simple(name) => {
+                if !result.contains_key(name) && !group_keys.contains(name) {
+                    if let Some(val) = group_rows.first().and_then(|r| r.get(name.as_str())) {
+                        result.insert(name.clone(), val.clone());
+                    }
+                }
+            }
+            Field::Aliased { field, alias } => {
+                if let Field::Simple(name) = field.as_ref() {
+                    if !result.contains_key(alias) && !group_keys.contains(name) {
+                        if let Some(val) = group_rows.first().and_then(|r| r.get(name.as_str())) {
+                            result.insert(alias.clone(), val.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ORDER BY helper
+// ---------------------------------------------------------------------------
+
+fn compare_json_values(
+    a: Option<&serde_json::Value>,
+    b: Option<&serde_json::Value>,
+) -> std::cmp::Ordering {
+    match (a, b) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(a), Some(b)) => {
+            // Try numeric comparison first
+            if let (Some(na), Some(nb)) = (a.as_f64(), b.as_f64()) {
+                return na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal);
+            }
+            // Fall back to string comparison
+            let sa = match a {
+                serde_json::Value::String(s) => s.as_str(),
+                _ => "",
+            };
+            let sb = match b {
+                serde_json::Value::String(s) => s.as_str(),
+                _ => "",
+            };
+            sa.cmp(sb)
+        }
     }
 }

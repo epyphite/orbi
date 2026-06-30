@@ -438,6 +438,13 @@ impl AwsResourceProvisioner {
             ("msk_cluster", Self::discover_msk_clusters),
             ("iam_role", Self::discover_iam_roles),
             ("vpc_endpoint", Self::discover_vpc_endpoints),
+            ("nat_gateway", Self::discover_nat_gateways),
+            ("kms_key", Self::discover_kms_keys),
+            ("acm_certificate", Self::discover_acm_certificates),
+            ("backup_vault", Self::discover_backup_vaults),
+            ("backup_plan", Self::discover_backup_plans),
+            ("ses_domain", Self::discover_ses_domains),
+            ("cloudwatch_alarm", Self::discover_cloudwatch_alarms),
         ];
 
         for (_, collector) in collectors {
@@ -882,6 +889,74 @@ impl AwsResourceProvisioner {
                 "config": config,
                 "outputs": outputs,
             }));
+
+            // Discover nodegroups for this cluster
+            if let Ok(ng_output) = self.run_aws(&["eks", "list-nodegroups", "--cluster-name", name])
+            {
+                results.extend(Self::parse_eks_nodegroups(&ng_output, name));
+            }
+
+            // Discover addons for this cluster
+            if let Ok(addon_output) = self.run_aws(&["eks", "list-addons", "--cluster-name", name])
+            {
+                results.extend(Self::parse_eks_addons(&addon_output, name));
+            }
+        }
+        results
+    }
+
+    fn parse_eks_nodegroups(output: &Value, cluster_name: &str) -> Vec<Value> {
+        let mut results = Vec::new();
+        let nodegroups = match output.get("nodegroups").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for ng in nodegroups {
+            let name = match ng.as_str() {
+                Some(n) => n,
+                None => continue,
+            };
+
+            let config = serde_json::json!({
+                "cluster": cluster_name,
+            });
+            let outputs = serde_json::json!({});
+
+            results.push(serde_json::json!({
+                "id": format!("{}/{}", cluster_name, name),
+                "resource_type": "eks_nodegroup",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn parse_eks_addons(output: &Value, cluster_name: &str) -> Vec<Value> {
+        let mut results = Vec::new();
+        let addons = match output.get("addons").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for addon in addons {
+            let name = match addon.as_str() {
+                Some(n) => n,
+                None => continue,
+            };
+
+            let config = serde_json::json!({
+                "cluster": cluster_name,
+            });
+            let outputs = serde_json::json!({});
+
+            results.push(serde_json::json!({
+                "id": format!("{}/{}", cluster_name, name),
+                "resource_type": "eks_addon",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
         }
         results
     }
@@ -1075,6 +1150,315 @@ impl AwsResourceProvisioner {
             results.push(serde_json::json!({
                 "id": id,
                 "resource_type": "vpc_endpoint",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    // ── Additional discovery helpers (v0.6.2–v0.6.3 resource types) ──
+
+    fn discover_nat_gateways(&self) -> Vec<Value> {
+        let output = match self.discover_run("nat_gateway", &["ec2", "describe-nat-gateways"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_nat_gateways(&output)
+    }
+
+    fn parse_nat_gateways(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let gateways = match output.get("NatGateways").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for gw in gateways {
+            let id = gw
+                .get("NatGatewayId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = extract_name_from_tags(gw).unwrap_or_else(|| id.clone());
+
+            let config = serde_json::json!({
+                "vpc_id": gw.get("VpcId"),
+                "subnet_id": gw.get("SubnetId"),
+                "connectivity_type": gw.get("ConnectivityType"),
+                "tags": gw.get("Tags"),
+            });
+            let outputs = serde_json::json!({
+                "state": gw.get("State"),
+                "nat_gateway_addresses": gw.get("NatGatewayAddresses"),
+            });
+
+            results.push(serde_json::json!({
+                "id": id,
+                "resource_type": "nat_gateway",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_kms_keys(&self) -> Vec<Value> {
+        let output = match self.discover_run("kms_key", &["kms", "list-keys"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_kms_keys(&output)
+    }
+
+    fn parse_kms_keys(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let keys = match output.get("Keys").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for key in keys {
+            let id = key
+                .get("KeyId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let arn = key
+                .get("KeyArn")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let config = serde_json::json!({});
+            let outputs = serde_json::json!({
+                "key_arn": arn,
+            });
+
+            results.push(serde_json::json!({
+                "id": id,
+                "resource_type": "kms_key",
+                "name": id,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_acm_certificates(&self) -> Vec<Value> {
+        let output = match self.discover_run("acm_certificate", &["acm", "list-certificates"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_acm_certificates(&output)
+    }
+
+    fn parse_acm_certificates(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let certs = match output
+            .get("CertificateSummaryList")
+            .and_then(|v| v.as_array())
+        {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for cert in certs {
+            let arn = cert
+                .get("CertificateArn")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let domain = cert
+                .get("DomainName")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&arn)
+                .to_string();
+
+            let config = serde_json::json!({
+                "domain_name": cert.get("DomainName"),
+                "type": cert.get("Type"),
+            });
+            let outputs = serde_json::json!({
+                "certificate_arn": &arn,
+                "status": cert.get("Status"),
+            });
+
+            results.push(serde_json::json!({
+                "id": arn,
+                "resource_type": "acm_certificate",
+                "name": domain,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_backup_vaults(&self) -> Vec<Value> {
+        let output = match self.discover_run("backup_vault", &["backup", "list-backup-vaults"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_backup_vaults(&output)
+    }
+
+    fn parse_backup_vaults(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let vaults = match output.get("BackupVaultList").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for vault in vaults {
+            let name = vault
+                .get("BackupVaultName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let config = serde_json::json!({
+                "encryption_key_arn": vault.get("EncryptionKeyArn"),
+            });
+            let outputs = serde_json::json!({
+                "backup_vault_arn": vault.get("BackupVaultArn"),
+                "creation_date": vault.get("CreationDate"),
+                "number_of_recovery_points": vault.get("NumberOfRecoveryPoints"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "backup_vault",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_backup_plans(&self) -> Vec<Value> {
+        let output = match self.discover_run("backup_plan", &["backup", "list-backup-plans"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_backup_plans(&output)
+    }
+
+    fn parse_backup_plans(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let plans = match output.get("BackupPlansList").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for plan in plans {
+            let id = plan
+                .get("BackupPlanId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = plan
+                .get("BackupPlanName")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id)
+                .to_string();
+
+            let config = serde_json::json!({
+                "backup_plan_name": plan.get("BackupPlanName"),
+            });
+            let outputs = serde_json::json!({
+                "backup_plan_arn": plan.get("BackupPlanArn"),
+                "backup_plan_id": &id,
+                "creation_date": plan.get("CreationDate"),
+                "version_id": plan.get("VersionId"),
+            });
+
+            results.push(serde_json::json!({
+                "id": id,
+                "resource_type": "backup_plan",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_ses_domains(&self) -> Vec<Value> {
+        let output = match self.discover_run(
+            "ses_domain",
+            &["ses", "list-identities", "--identity-type", "Domain"],
+        ) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_ses_domains(&output)
+    }
+
+    fn parse_ses_domains(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let identities = match output.get("Identities").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for identity in identities {
+            let domain = match identity.as_str() {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+
+            let config = serde_json::json!({});
+            let outputs = serde_json::json!({});
+
+            results.push(serde_json::json!({
+                "id": domain,
+                "resource_type": "ses_domain",
+                "name": domain,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_cloudwatch_alarms(&self) -> Vec<Value> {
+        let output = match self.discover_run("cloudwatch_alarm", &["cloudwatch", "describe-alarms"])
+        {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_cloudwatch_alarms(&output)
+    }
+
+    fn parse_cloudwatch_alarms(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let alarms = match output.get("MetricAlarms").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for alarm in alarms {
+            let name = alarm
+                .get("AlarmName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let config = serde_json::json!({
+                "metric_name": alarm.get("MetricName"),
+                "namespace": alarm.get("Namespace"),
+                "comparison_operator": alarm.get("ComparisonOperator"),
+                "threshold": alarm.get("Threshold"),
+                "period": alarm.get("Period"),
+                "evaluation_periods": alarm.get("EvaluationPeriods"),
+                "statistic": alarm.get("Statistic"),
+            });
+            let outputs = serde_json::json!({
+                "alarm_arn": alarm.get("AlarmArn"),
+                "state_value": alarm.get("StateValue"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "cloudwatch_alarm",
                 "name": name,
                 "config": config,
                 "outputs": outputs,
@@ -3682,5 +4066,260 @@ mod tests {
         assert!(args.contains(&"delete-backup-plan".to_string()));
         assert!(args.contains(&"--backup-plan-id".to_string()));
         assert!(args.contains(&"plan-abc-123".to_string()));
+    }
+
+    // ── Discovery parse tests for v0.6.2–v0.6.3 resource types ──────
+
+    #[test]
+    fn test_parse_nat_gateways() {
+        let json = serde_json::json!({
+            "NatGateways": [{
+                "NatGatewayId": "nat-0123456789abcdef0",
+                "VpcId": "vpc-111",
+                "SubnetId": "subnet-222",
+                "ConnectivityType": "public",
+                "State": "available",
+                "NatGatewayAddresses": [{"PublicIp": "52.1.2.3"}],
+                "Tags": [{ "Key": "Name", "Value": "main-nat" }]
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_nat_gateways(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "nat-0123456789abcdef0");
+        assert_eq!(r["resource_type"], "nat_gateway");
+        assert_eq!(r["name"], "main-nat");
+        assert_eq!(r["config"]["vpc_id"], "vpc-111");
+        assert_eq!(r["config"]["subnet_id"], "subnet-222");
+        assert_eq!(r["outputs"]["state"], "available");
+    }
+
+    #[test]
+    fn test_parse_nat_gateways_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_nat_gateways(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_kms_keys() {
+        let json = serde_json::json!({
+            "Keys": [{
+                "KeyId": "1234abcd-12ab-34cd-56ef-1234567890ab",
+                "KeyArn": "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_kms_keys(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "1234abcd-12ab-34cd-56ef-1234567890ab");
+        assert_eq!(r["resource_type"], "kms_key");
+        assert_eq!(
+            r["outputs"]["key_arn"],
+            "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+        );
+    }
+
+    #[test]
+    fn test_parse_kms_keys_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_kms_keys(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_eks_nodegroups() {
+        let json = serde_json::json!({
+            "nodegroups": ["workers", "gpu-pool"]
+        });
+
+        let results = AwsResourceProvisioner::parse_eks_nodegroups(&json, "prod-cluster");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["id"], "prod-cluster/workers");
+        assert_eq!(results[0]["resource_type"], "eks_nodegroup");
+        assert_eq!(results[0]["name"], "workers");
+        assert_eq!(results[0]["config"]["cluster"], "prod-cluster");
+        assert_eq!(results[1]["id"], "prod-cluster/gpu-pool");
+        assert_eq!(results[1]["name"], "gpu-pool");
+    }
+
+    #[test]
+    fn test_parse_eks_nodegroups_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_eks_nodegroups(&json, "c").is_empty());
+    }
+
+    #[test]
+    fn test_parse_eks_addons() {
+        let json = serde_json::json!({
+            "addons": ["vpc-cni", "coredns", "kube-proxy"]
+        });
+
+        let results = AwsResourceProvisioner::parse_eks_addons(&json, "my-cluster");
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0]["id"], "my-cluster/vpc-cni");
+        assert_eq!(results[0]["resource_type"], "eks_addon");
+        assert_eq!(results[0]["name"], "vpc-cni");
+        assert_eq!(results[0]["config"]["cluster"], "my-cluster");
+        assert_eq!(results[2]["name"], "kube-proxy");
+    }
+
+    #[test]
+    fn test_parse_eks_addons_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_eks_addons(&json, "c").is_empty());
+    }
+
+    #[test]
+    fn test_parse_acm_certificates() {
+        let json = serde_json::json!({
+            "CertificateSummaryList": [{
+                "CertificateArn": "arn:aws:acm:us-east-1:123:certificate/abc-123",
+                "DomainName": "example.com",
+                "Status": "ISSUED",
+                "Type": "AMAZON_ISSUED"
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_acm_certificates(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "arn:aws:acm:us-east-1:123:certificate/abc-123");
+        assert_eq!(r["resource_type"], "acm_certificate");
+        assert_eq!(r["name"], "example.com");
+        assert_eq!(r["config"]["domain_name"], "example.com");
+        assert_eq!(r["outputs"]["status"], "ISSUED");
+    }
+
+    #[test]
+    fn test_parse_acm_certificates_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_acm_certificates(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_backup_vaults() {
+        let json = serde_json::json!({
+            "BackupVaultList": [{
+                "BackupVaultName": "default-vault",
+                "BackupVaultArn": "arn:aws:backup:us-east-1:123:backup-vault:default-vault",
+                "EncryptionKeyArn": "arn:aws:kms:us-east-1:123:key/abc",
+                "CreationDate": "2025-01-01T00:00:00Z",
+                "NumberOfRecoveryPoints": 42
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_backup_vaults(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "default-vault");
+        assert_eq!(r["resource_type"], "backup_vault");
+        assert_eq!(r["name"], "default-vault");
+        assert_eq!(
+            r["config"]["encryption_key_arn"],
+            "arn:aws:kms:us-east-1:123:key/abc"
+        );
+        assert_eq!(r["outputs"]["number_of_recovery_points"], 42);
+    }
+
+    #[test]
+    fn test_parse_backup_vaults_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_backup_vaults(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_backup_plans() {
+        let json = serde_json::json!({
+            "BackupPlansList": [{
+                "BackupPlanId": "plan-abc-123",
+                "BackupPlanName": "daily-backups",
+                "BackupPlanArn": "arn:aws:backup:us-east-1:123:backup-plan:plan-abc-123",
+                "CreationDate": "2025-06-01T00:00:00Z",
+                "VersionId": "v1"
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_backup_plans(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "plan-abc-123");
+        assert_eq!(r["resource_type"], "backup_plan");
+        assert_eq!(r["name"], "daily-backups");
+        assert_eq!(r["outputs"]["backup_plan_id"], "plan-abc-123");
+        assert_eq!(r["outputs"]["version_id"], "v1");
+    }
+
+    #[test]
+    fn test_parse_backup_plans_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_backup_plans(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_ses_domains() {
+        let json = serde_json::json!({
+            "Identities": ["example.com", "notifications.example.com"]
+        });
+
+        let results = AwsResourceProvisioner::parse_ses_domains(&json);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["id"], "example.com");
+        assert_eq!(results[0]["resource_type"], "ses_domain");
+        assert_eq!(results[0]["name"], "example.com");
+        assert_eq!(results[1]["id"], "notifications.example.com");
+    }
+
+    #[test]
+    fn test_parse_ses_domains_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_ses_domains(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_cloudwatch_alarms() {
+        let json = serde_json::json!({
+            "MetricAlarms": [{
+                "AlarmName": "high-cpu",
+                "AlarmArn": "arn:aws:cloudwatch:us-east-1:123:alarm:high-cpu",
+                "MetricName": "CPUUtilization",
+                "Namespace": "AWS/EC2",
+                "ComparisonOperator": "GreaterThanThreshold",
+                "Threshold": 80.0,
+                "Period": 300,
+                "EvaluationPeriods": 2,
+                "Statistic": "Average",
+                "StateValue": "OK"
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_cloudwatch_alarms(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "high-cpu");
+        assert_eq!(r["resource_type"], "cloudwatch_alarm");
+        assert_eq!(r["name"], "high-cpu");
+        assert_eq!(r["config"]["metric_name"], "CPUUtilization");
+        assert_eq!(r["config"]["namespace"], "AWS/EC2");
+        assert_eq!(r["config"]["threshold"], 80.0);
+        assert_eq!(r["outputs"]["state_value"], "OK");
+    }
+
+    #[test]
+    fn test_parse_cloudwatch_alarms_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_cloudwatch_alarms(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_missing_top_level_key_v063_types() {
+        let empty = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_nat_gateways(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_kms_keys(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_acm_certificates(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_backup_vaults(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_backup_plans(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_ses_domains(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_cloudwatch_alarms(&empty).is_empty());
     }
 }

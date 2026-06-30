@@ -3094,4 +3094,209 @@ mod tests {
         assert_eq!(estimates[0]["resource_id"], "nat1");
         assert_eq!(estimates[0]["resource_type"], "nat_gateway");
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // GROUP BY, ORDER BY, OFFSET tests
+    // ══════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn select_group_by_with_count() {
+        let ctx = setup_with_provider();
+        let exec = Executor::new(&ctx);
+
+        // Create microvms across two tenants
+        for id in &["ga1", "ga2", "ga3"] {
+            exec.execute(&format!(
+                "CREATE MICROVM id='{}' tenant='alpha' vcpus=1 memory_mb=256 image='img-1' \
+                 ON PROVIDER 'test-provider'",
+                id
+            ))
+            .await;
+        }
+        for id in &["gb1", "gb2"] {
+            exec.execute(&format!(
+                "CREATE MICROVM id='{}' tenant='beta' vcpus=2 memory_mb=512 image='img-1' \
+                 ON PROVIDER 'test-provider'",
+                id
+            ))
+            .await;
+        }
+
+        let r = exec
+            .execute("SELECT tenant, count(*) AS count FROM microvms GROUP BY tenant")
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "group by: {r:?}");
+        let arr = r.result.unwrap();
+        let rows = arr.as_array().unwrap();
+        assert_eq!(rows.len(), 2, "expected 2 groups, got: {rows:?}");
+
+        // Find alpha and beta groups
+        let alpha = rows.iter().find(|r| r["tenant"] == "alpha").unwrap();
+        let beta = rows.iter().find(|r| r["tenant"] == "beta").unwrap();
+        assert_eq!(alpha["count"], 3);
+        assert_eq!(beta["count"], 2);
+    }
+
+    #[tokio::test]
+    async fn select_group_by_with_sum_avg() {
+        let ctx = setup_with_provider();
+        let exec = Executor::new(&ctx);
+
+        exec.execute(
+            "CREATE MICROVM id='s1' tenant='alpha' vcpus=2 memory_mb=256 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE MICROVM id='s2' tenant='alpha' vcpus=4 memory_mb=512 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE MICROVM id='s3' tenant='beta' vcpus=8 memory_mb=1024 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+
+        let r = exec
+            .execute(
+                "SELECT tenant, sum(vcpus) AS total_vcpus, avg(memory_mb) AS avg_mem \
+                 FROM microvms GROUP BY tenant",
+            )
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "group by sum/avg: {r:?}");
+        let arr = r.result.unwrap();
+        let rows = arr.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+
+        let alpha = rows.iter().find(|r| r["tenant"] == "alpha").unwrap();
+        assert_eq!(alpha["total_vcpus"], 6.0);
+        assert_eq!(alpha["avg_mem"], 384.0);
+
+        let beta = rows.iter().find(|r| r["tenant"] == "beta").unwrap();
+        assert_eq!(beta["total_vcpus"], 8.0);
+        assert_eq!(beta["avg_mem"], 1024.0);
+    }
+
+    #[tokio::test]
+    async fn select_order_by_asc() {
+        let ctx = setup_with_provider();
+        let exec = Executor::new(&ctx);
+
+        exec.execute(
+            "CREATE MICROVM id='ob1' tenant='charlie' vcpus=1 memory_mb=256 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE MICROVM id='ob2' tenant='alpha' vcpus=1 memory_mb=256 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE MICROVM id='ob3' tenant='beta' vcpus=1 memory_mb=256 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+
+        let r = exec
+            .execute("SELECT * FROM microvms ORDER BY tenant ASC")
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "order by: {r:?}");
+        let arr = r.result.unwrap();
+        let rows = arr.as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["tenant"], "alpha");
+        assert_eq!(rows[1]["tenant"], "beta");
+        assert_eq!(rows[2]["tenant"], "charlie");
+    }
+
+    #[tokio::test]
+    async fn select_order_by_desc() {
+        let ctx = setup_with_provider();
+        let exec = Executor::new(&ctx);
+
+        exec.execute(
+            "CREATE MICROVM id='od1' tenant='t' vcpus=1 memory_mb=128 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE MICROVM id='od2' tenant='t' vcpus=4 memory_mb=512 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE MICROVM id='od3' tenant='t' vcpus=2 memory_mb=256 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+
+        let r = exec
+            .execute("SELECT * FROM microvms ORDER BY vcpus DESC")
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "order by desc: {r:?}");
+        let arr = r.result.unwrap();
+        let rows = arr.as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["vcpus"], 4);
+        assert_eq!(rows[1]["vcpus"], 2);
+        assert_eq!(rows[2]["vcpus"], 1);
+    }
+
+    #[tokio::test]
+    async fn select_with_offset_and_limit() {
+        let ctx = setup_with_provider();
+        let exec = Executor::new(&ctx);
+
+        for i in 1..=5 {
+            exec.execute(&format!(
+                "CREATE MICROVM id='ol{}' tenant='t' vcpus={} memory_mb=256 image='img-1' \
+                 ON PROVIDER 'test-provider'",
+                i, i
+            ))
+            .await;
+        }
+
+        let r = exec
+            .execute("SELECT * FROM microvms ORDER BY vcpus ASC LIMIT 2 OFFSET 1")
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "offset+limit: {r:?}");
+        let arr = r.result.unwrap();
+        let rows = arr.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["vcpus"], 2);
+        assert_eq!(rows[1]["vcpus"], 3);
+    }
+
+    #[tokio::test]
+    async fn select_group_by_without_aggregates() {
+        let ctx = setup_with_provider();
+        let exec = Executor::new(&ctx);
+
+        exec.execute(
+            "CREATE MICROVM id='ng1' tenant='alpha' vcpus=1 memory_mb=256 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE MICROVM id='ng2' tenant='alpha' vcpus=2 memory_mb=512 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+        exec.execute(
+            "CREATE MICROVM id='ng3' tenant='beta' vcpus=4 memory_mb=1024 image='img-1' \
+             ON PROVIDER 'test-provider'",
+        )
+        .await;
+
+        // GROUP BY without aggregates should still deduplicate by tenant
+        let r = exec
+            .execute("SELECT tenant FROM microvms GROUP BY tenant")
+            .await;
+        assert_eq!(r.status, ResultStatus::Ok, "group by no agg: {r:?}");
+        let arr = r.result.unwrap();
+        let rows = arr.as_array().unwrap();
+        assert_eq!(rows.len(), 2, "expected 2 groups: {rows:?}");
+    }
 }
