@@ -60,6 +60,17 @@ impl AwsResourceProvisioner {
             "ses_smtp_user" => self.create_ses_smtp_user(params),
             "backup_vault" => self.create_backup_vault(params),
             "backup_plan" => self.create_backup_plan(params),
+            "ecs_cluster" => self.create_ecs_cluster(params),
+            "ecs_service" => self.create_ecs_service(params),
+            "ecs_task_definition" => self.create_ecs_task_definition(params),
+            "ecr_repository" => self.create_ecr_repository(params),
+            "alb" => self.create_alb(params),
+            "alb_target_group" => self.create_alb_target_group(params),
+            "alb_listener" => self.create_alb_listener(params),
+            "cloudfront_distribution" => self.create_cloudfront_distribution(params),
+            "route53_zone" => self.create_route53_zone(params),
+            "route53_record" => self.create_route53_record(params),
+            "secrets_manager_secret" => self.create_secrets_manager_secret(params),
             other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
@@ -181,6 +192,73 @@ impl AwsResourceProvisioner {
                 ])?;
                 Ok(())
             }
+            "ecs_cluster" => {
+                self.run_aws(&["ecs", "delete-cluster", "--cluster", id])?;
+                Ok(())
+            }
+            "ecs_service" => {
+                Err("ecs_service deletion requires params (cluster); use delete_with_params()".into())
+            }
+            "ecs_task_definition" => {
+                self.run_aws(&[
+                    "ecs", "deregister-task-definition",
+                    "--task-definition", id,
+                ])?;
+                Ok(())
+            }
+            "ecr_repository" => {
+                self.run_aws(&[
+                    "ecr", "delete-repository",
+                    "--repository-name", id,
+                    "--force",
+                ])?;
+                Ok(())
+            }
+            "alb" => {
+                self.run_aws(&[
+                    "elbv2", "delete-load-balancer",
+                    "--load-balancer-arn", id,
+                ])?;
+                Ok(())
+            }
+            "alb_target_group" => {
+                self.run_aws(&[
+                    "elbv2", "delete-target-group",
+                    "--target-group-arn", id,
+                ])?;
+                Ok(())
+            }
+            "alb_listener" => {
+                self.run_aws(&[
+                    "elbv2", "delete-listener",
+                    "--listener-arn", id,
+                ])?;
+                Ok(())
+            }
+            "cloudfront_distribution" => {
+                // CloudFront distributions must be disabled before deletion.
+                // Caller should disable first; we attempt delete directly.
+                self.run_aws(&[
+                    "cloudfront", "delete-distribution",
+                    "--id", id,
+                ])?;
+                Ok(())
+            }
+            "route53_zone" => {
+                self.run_aws(&["route53", "delete-hosted-zone", "--id", id])?;
+                Ok(())
+            }
+            "route53_record" => {
+                Err("route53_record deletion requires params (zone_id, record_type, value, ttl); use delete_with_params()".into())
+            }
+            "secrets_manager_secret" => {
+                self.run_aws(&[
+                    "secretsmanager", "delete-secret",
+                    "--secret-id", id,
+                    "--force-delete-without-recovery",
+                ])?;
+                Ok(())
+            }
             other => Err(format!("unsupported AWS resource type for delete: {other}").into()),
         }
     }
@@ -236,6 +314,38 @@ impl AwsResourceProvisioner {
                 ])?;
                 Ok(())
             }
+            "ecs_service" => {
+                let cluster = param_str(params, "cluster")?;
+                self.run_aws(&[
+                    "ecs",
+                    "delete-service",
+                    "--cluster",
+                    &cluster,
+                    "--service",
+                    _id,
+                    "--force",
+                ])?;
+                Ok(())
+            }
+            "route53_record" => {
+                let zone_id = param_str(params, "zone_id")?;
+                let record_type = param_str_or(params, "record_type", "A");
+                let value = param_str(params, "value")?;
+                let ttl = param_str_or(params, "ttl", "300");
+                let change_batch = format!(
+                    r#"{{"Changes":[{{"Action":"DELETE","ResourceRecordSet":{{"Name":"{}","Type":"{}","TTL":{},"ResourceRecords":[{{"Value":"{}"}}]}}}}]}}"#,
+                    _id, record_type, ttl, value
+                );
+                self.run_aws(&[
+                    "route53",
+                    "change-resource-record-sets",
+                    "--hosted-zone-id",
+                    &zone_id,
+                    "--change-batch",
+                    &change_batch,
+                ])?;
+                Ok(())
+            }
             other => self.delete(other, _id),
         }
     }
@@ -274,6 +384,17 @@ impl AwsResourceProvisioner {
             "ses_smtp_user" => self.build_ses_smtp_user_args(params)?,
             "backup_vault" => self.build_backup_vault_args(params)?,
             "backup_plan" => self.build_backup_plan_args(params)?,
+            "ecs_cluster" => self.build_ecs_cluster_args(params)?,
+            "ecs_service" => self.build_ecs_service_args(params)?,
+            "ecs_task_definition" => self.build_ecs_task_definition_args(params)?,
+            "ecr_repository" => self.build_ecr_repository_args(params)?,
+            "alb" => self.build_alb_args(params)?,
+            "alb_target_group" => self.build_alb_target_group_args(params)?,
+            "alb_listener" => self.build_alb_listener_args(params)?,
+            "cloudfront_distribution" => self.build_cloudfront_distribution_args(params)?,
+            "route53_zone" => self.build_route53_zone_args(params)?,
+            "route53_record" => self.build_route53_record_args(params)?,
+            "secrets_manager_secret" => self.build_secrets_manager_secret_args(params)?,
             other => return Err(format!("unsupported AWS resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))
@@ -347,6 +468,41 @@ impl AwsResourceProvisioner {
             "ses_smtp_user" => vec!["iam", "delete-user", "--user-name", id],
             "backup_vault" => vec!["backup", "delete-backup-vault", "--backup-vault-name", id],
             "backup_plan" => vec!["backup", "delete-backup-plan", "--backup-plan-id", id],
+            "ecs_cluster" => vec!["ecs", "delete-cluster", "--cluster", id],
+            "ecs_service" => {
+                return Err(
+                    "ecs_service deletion requires params (cluster); use delete_with_params()"
+                        .into(),
+                );
+            }
+            "ecs_task_definition" => {
+                vec!["ecs", "deregister-task-definition", "--task-definition", id]
+            }
+            "ecr_repository" => vec![
+                "ecr",
+                "delete-repository",
+                "--repository-name",
+                id,
+                "--force",
+            ],
+            "alb" => vec!["elbv2", "delete-load-balancer", "--load-balancer-arn", id],
+            "alb_target_group" => vec!["elbv2", "delete-target-group", "--target-group-arn", id],
+            "alb_listener" => vec!["elbv2", "delete-listener", "--listener-arn", id],
+            "cloudfront_distribution" => vec!["cloudfront", "delete-distribution", "--id", id],
+            "route53_zone" => vec!["route53", "delete-hosted-zone", "--id", id],
+            "route53_record" => {
+                return Err(
+                    "route53_record deletion requires params (zone_id); use delete_with_params()"
+                        .into(),
+                );
+            }
+            "secrets_manager_secret" => vec![
+                "secretsmanager",
+                "delete-secret",
+                "--secret-id",
+                id,
+                "--force-delete-without-recovery",
+            ],
             other => {
                 return Err(format!("unsupported AWS resource type for delete: {other}").into())
             }
@@ -445,6 +601,14 @@ impl AwsResourceProvisioner {
             ("backup_plan", Self::discover_backup_plans),
             ("ses_domain", Self::discover_ses_domains),
             ("cloudwatch_alarm", Self::discover_cloudwatch_alarms),
+            ("ecs_cluster", Self::discover_ecs_clusters),
+            ("ecr_repository", Self::discover_ecr_repositories),
+            ("alb", Self::discover_albs),
+            ("route53_zone", Self::discover_route53_zones),
+            (
+                "secrets_manager_secret",
+                Self::discover_secrets_manager_secrets,
+            ),
         ];
 
         for (_, collector) in collectors {
@@ -1467,6 +1631,246 @@ impl AwsResourceProvisioner {
         results
     }
 
+    // ── Additional discovery helpers (v0.7.0 resource types) ─────────
+
+    fn discover_ecs_clusters(&self) -> Vec<Value> {
+        let output = match self.discover_run("ecs_cluster", &["ecs", "list-clusters"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+
+        let mut results = Vec::new();
+        let arns = match output.get("clusterArns").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+
+        if arns.is_empty() {
+            return results;
+        }
+
+        // Describe all clusters in one call
+        let arn_strs: Vec<&str> = arns.iter().filter_map(|a| a.as_str()).collect();
+        let mut desc_args: Vec<&str> = vec!["ecs", "describe-clusters", "--clusters"];
+        desc_args.extend(&arn_strs);
+
+        let detail = match self.run_aws(&desc_args) {
+            Ok(v) => v,
+            Err(_) => return results,
+        };
+
+        let clusters = match detail.get("clusters").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+
+        for cluster in clusters {
+            let name = cluster
+                .get("clusterName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let config = serde_json::json!({
+                "capacity_providers": cluster.get("capacityProviders"),
+                "status": cluster.get("status"),
+            });
+            let outputs = serde_json::json!({
+                "cluster_arn": cluster.get("clusterArn"),
+                "status": cluster.get("status"),
+                "active_services_count": cluster.get("activeServicesCount"),
+                "running_tasks_count": cluster.get("runningTasksCount"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "ecs_cluster",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_ecr_repositories(&self) -> Vec<Value> {
+        let output = match self.discover_run("ecr_repository", &["ecr", "describe-repositories"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_ecr_repositories(&output)
+    }
+
+    fn parse_ecr_repositories(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let repos = match output.get("repositories").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for repo in repos {
+            let name = repo
+                .get("repositoryName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let config = serde_json::json!({
+                "image_scanning": repo.get("imageScanningConfiguration"),
+                "encryption": repo.get("encryptionConfiguration"),
+            });
+            let outputs = serde_json::json!({
+                "repository_arn": repo.get("repositoryArn"),
+                "repository_uri": repo.get("repositoryUri"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "ecr_repository",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_albs(&self) -> Vec<Value> {
+        let output = match self.discover_run("alb", &["elbv2", "describe-load-balancers"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_albs(&output)
+    }
+
+    fn parse_albs(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let lbs = match output.get("LoadBalancers").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for lb in lbs {
+            let lb_type = lb.get("Type").and_then(|v| v.as_str()).unwrap_or("");
+            if lb_type != "application" {
+                continue;
+            }
+            let name = lb
+                .get("LoadBalancerName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let config = serde_json::json!({
+                "scheme": lb.get("Scheme"),
+                "vpc_id": lb.get("VpcId"),
+                "availability_zones": lb.get("AvailabilityZones"),
+            });
+            let outputs = serde_json::json!({
+                "load_balancer_arn": lb.get("LoadBalancerArn"),
+                "dns_name": lb.get("DNSName"),
+                "hosted_zone_id": lb.get("CanonicalHostedZoneId"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "alb",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_route53_zones(&self) -> Vec<Value> {
+        let output = match self.discover_run("route53_zone", &["route53", "list-hosted-zones"]) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_route53_zones(&output)
+    }
+
+    fn parse_route53_zones(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let zones = match output.get("HostedZones").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for zone in zones {
+            let id = zone
+                .get("Id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = zone
+                .get("Name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id)
+                .to_string();
+
+            let config = serde_json::json!({
+                "name": zone.get("Name"),
+                "private_zone": zone.get("Config").and_then(|c| c.get("PrivateZone")),
+            });
+            let outputs = serde_json::json!({
+                "hosted_zone_id": &id,
+                "resource_record_set_count": zone.get("ResourceRecordSetCount"),
+            });
+
+            results.push(serde_json::json!({
+                "id": id,
+                "resource_type": "route53_zone",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_secrets_manager_secrets(&self) -> Vec<Value> {
+        let output = match self.discover_run(
+            "secrets_manager_secret",
+            &["secretsmanager", "list-secrets"],
+        ) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        Self::parse_secrets_manager_secrets(&output)
+    }
+
+    fn parse_secrets_manager_secrets(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let secrets = match output.get("SecretList").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for secret in secrets {
+            let name = secret
+                .get("Name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let config = serde_json::json!({
+                "description": secret.get("Description"),
+            });
+            let outputs = serde_json::json!({
+                "arn": secret.get("ARN"),
+                "name": &name,
+                "last_changed_date": secret.get("LastChangedDate"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "secrets_manager_secret",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
     // ── Per-resource create implementations ──────────────────────────
 
     /// Create an RDS PostgreSQL instance.
@@ -2426,6 +2830,213 @@ impl AwsResourceProvisioner {
         })
     }
 
+    // ── ECS / ECR / ALB / CloudFront / Route53 / SecretsManager create ──
+
+    fn create_ecs_cluster(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_ecs_cluster_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let cluster = result.get("cluster");
+        let outputs = serde_json::json!({
+            "cluster_arn": cluster.and_then(|c| c.get("clusterArn")),
+            "status": cluster.and_then(|c| c.get("status")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_ecs_service(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_ecs_service_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let service = result.get("service");
+        let outputs = serde_json::json!({
+            "service_arn": service.and_then(|s| s.get("serviceArn")),
+            "status": service.and_then(|s| s.get("status")),
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_ecs_task_definition(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_ecs_task_definition_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let td = result.get("taskDefinition");
+        let outputs = serde_json::json!({
+            "task_definition_arn": td.and_then(|t| t.get("taskDefinitionArn")),
+            "revision": td.and_then(|t| t.get("revision")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_ecr_repository(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_ecr_repository_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let repo = result.get("repository");
+        let outputs = serde_json::json!({
+            "repository_arn": repo.and_then(|r| r.get("repositoryArn")),
+            "repository_uri": repo.and_then(|r| r.get("repositoryUri")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_alb(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_alb_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let lb = result
+            .get("LoadBalancers")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first());
+        let outputs = serde_json::json!({
+            "load_balancer_arn": lb.and_then(|l| l.get("LoadBalancerArn")),
+            "dns_name": lb.and_then(|l| l.get("DNSName")),
+            "hosted_zone_id": lb.and_then(|l| l.get("CanonicalHostedZoneId")),
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_alb_target_group(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_alb_target_group_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let tg = result
+            .get("TargetGroups")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first());
+        let outputs = serde_json::json!({
+            "target_group_arn": tg.and_then(|t| t.get("TargetGroupArn")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_alb_listener(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_alb_listener_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let listener = result
+            .get("Listeners")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first());
+        let outputs = serde_json::json!({
+            "listener_arn": listener.and_then(|l| l.get("ListenerArn")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_cloudfront_distribution(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_cloudfront_distribution_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let dist = result.get("Distribution");
+        let outputs = serde_json::json!({
+            "distribution_id": dist.and_then(|d| d.get("Id")),
+            "domain_name": dist.and_then(|d| d.get("DomainName")),
+            "arn": dist.and_then(|d| d.get("ARN")),
+        });
+
+        Ok(ProvisionResult {
+            status: "creating".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_route53_zone(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_route53_zone_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let zone = result.get("HostedZone");
+        let outputs = serde_json::json!({
+            "hosted_zone_id": zone.and_then(|z| z.get("Id")),
+            "name_servers": result.get("DelegationSet").and_then(|d| d.get("NameServers")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_route53_record(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_route53_record_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let change_info = result.get("ChangeInfo");
+        let outputs = serde_json::json!({
+            "change_id": change_info.and_then(|c| c.get("Id")),
+            "status": change_info.and_then(|c| c.get("Status")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_secrets_manager_secret(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let args = self.build_secrets_manager_secret_args(params)?;
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let outputs = serde_json::json!({
+            "arn": result.get("ARN"),
+            "name": result.get("Name"),
+            "version_id": result.get("VersionId"),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
     // ── SES / Backup argument builders ─────────────────────────────
 
     fn build_ses_domain_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
@@ -2477,6 +3088,272 @@ impl AwsResourceProvisioner {
             "--backup-plan".into(),
             plan_json,
         ];
+        Ok(args)
+    }
+    // ── ECS / ECR / ALB / CloudFront / Route53 / SecretsManager arg builders ──
+
+    fn build_ecs_cluster_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let capacity_providers = param_str_or(params, "capacity_providers", "FARGATE");
+
+        let mut args = vec![
+            "ecs".into(),
+            "create-cluster".into(),
+            "--cluster-name".into(),
+            id,
+            "--capacity-providers".into(),
+            capacity_providers,
+        ];
+        // Allow passing additional settings tags etc
+        if let Some(tags) = params.get("tags").and_then(|v| v.as_str()) {
+            args.push("--tags".into());
+            args.push(tags.into());
+        }
+        Ok(args)
+    }
+
+    fn build_ecs_service_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let cluster = param_str(params, "cluster")?;
+        let task_definition = param_str(params, "task_definition")?;
+        let desired_count = param_str_or(params, "desired_count", "1");
+        let subnets = param_str(params, "subnets")?;
+        let security_groups = param_str(params, "security_groups")?;
+        let public_ip = param_str_or(params, "public_ip", "DISABLED");
+
+        let network_config = format!(
+            "awsvpcConfiguration={{subnets=[{subnets}],securityGroups=[{security_groups}],assignPublicIp={public_ip}}}"
+        );
+
+        let args = vec![
+            "ecs".into(),
+            "create-service".into(),
+            "--cluster".into(),
+            cluster,
+            "--service-name".into(),
+            id,
+            "--task-definition".into(),
+            task_definition,
+            "--desired-count".into(),
+            desired_count,
+            "--launch-type".into(),
+            "FARGATE".into(),
+            "--network-configuration".into(),
+            network_config,
+        ];
+        Ok(args)
+    }
+
+    fn build_ecs_task_definition_args(
+        &self,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let cpu = param_str_or(params, "cpu", "256");
+        let memory = param_str_or(params, "memory", "512");
+        let container_name = param_str_or(params, "container_name", &id);
+        let image = param_str(params, "image")?;
+        let port = param_str_or(params, "port", "80");
+
+        let container_defs = format!(
+            r#"[{{"name":"{}","image":"{}","portMappings":[{{"containerPort":{},"protocol":"tcp"}}],"essential":true}}]"#,
+            container_name, image, port
+        );
+
+        let args = vec![
+            "ecs".into(),
+            "register-task-definition".into(),
+            "--family".into(),
+            id,
+            "--network-mode".into(),
+            "awsvpc".into(),
+            "--requires-compatibilities".into(),
+            "FARGATE".into(),
+            "--cpu".into(),
+            cpu,
+            "--memory".into(),
+            memory,
+            "--container-definitions".into(),
+            container_defs,
+        ];
+        Ok(args)
+    }
+
+    fn build_ecr_repository_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let scan = param_str_or(params, "scan", "true");
+        let encryption = param_str_or(params, "encryption", "AES256");
+
+        let scan_config = format!("scanOnPush={scan}");
+        let encryption_config = format!("encryptionType={encryption}");
+
+        let args = vec![
+            "ecr".into(),
+            "create-repository".into(),
+            "--repository-name".into(),
+            id,
+            "--image-scanning-configuration".into(),
+            scan_config,
+            "--encryption-configuration".into(),
+            encryption_config,
+        ];
+        Ok(args)
+    }
+
+    fn build_alb_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let subnets = param_str(params, "subnets")?;
+        let security_groups = param_str(params, "security_groups")?;
+        let scheme = param_str_or(params, "scheme", "internet-facing");
+
+        let args = vec![
+            "elbv2".into(),
+            "create-load-balancer".into(),
+            "--name".into(),
+            id,
+            "--type".into(),
+            "application".into(),
+            "--subnets".into(),
+            subnets,
+            "--security-groups".into(),
+            security_groups,
+            "--scheme".into(),
+            scheme,
+        ];
+        Ok(args)
+    }
+
+    fn build_alb_target_group_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let protocol = param_str_or(params, "protocol", "HTTP");
+        let port = param_str(params, "port")?;
+        let vpc_id = param_str(params, "vpc_id")?;
+        let target_type = param_str_or(params, "target_type", "ip");
+        let health_check = param_str_or(params, "health_check", "/");
+
+        let args = vec![
+            "elbv2".into(),
+            "create-target-group".into(),
+            "--name".into(),
+            id,
+            "--protocol".into(),
+            protocol,
+            "--port".into(),
+            port,
+            "--vpc-id".into(),
+            vpc_id,
+            "--target-type".into(),
+            target_type,
+            "--health-check-path".into(),
+            health_check,
+        ];
+        Ok(args)
+    }
+
+    fn build_alb_listener_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let alb_arn = param_str(params, "alb_arn")?;
+        let protocol = param_str_or(params, "protocol", "HTTP");
+        let port = param_str_or(params, "port", "80");
+        let target_group_arn = param_str(params, "target_group_arn")?;
+
+        let action = format!("Type=forward,TargetGroupArn={target_group_arn}");
+
+        let args = vec![
+            "elbv2".into(),
+            "create-listener".into(),
+            "--load-balancer-arn".into(),
+            alb_arn,
+            "--protocol".into(),
+            protocol,
+            "--port".into(),
+            port,
+            "--default-actions".into(),
+            action,
+        ];
+        Ok(args)
+    }
+
+    fn build_cloudfront_distribution_args(
+        &self,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let origin_domain = param_str(params, "origin_domain")?;
+        let origin_id = param_str_or(params, "origin_id", &id);
+        let viewer_protocol = param_str_or(params, "viewer_protocol", "redirect-to-https");
+        let comment = param_str_or(params, "comment", "");
+
+        let config_json = format!(
+            r#"{{"CallerReference":"{}","Origins":{{"Quantity":1,"Items":[{{"Id":"{}","DomainName":"{}","S3OriginConfig":{{"OriginAccessIdentity":""}}}}]}},"DefaultCacheBehavior":{{"TargetOriginId":"{}","ViewerProtocolPolicy":"{}","ForwardedValues":{{"QueryString":false,"Cookies":{{"Forward":"none"}}}}}},"Enabled":true,"Comment":"{}"}}"#,
+            id, origin_id, origin_domain, origin_id, viewer_protocol, comment
+        );
+
+        let args = vec![
+            "cloudfront".into(),
+            "create-distribution".into(),
+            "--distribution-config".into(),
+            config_json,
+        ];
+        Ok(args)
+    }
+
+    fn build_route53_zone_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let caller_ref = param_str_or(params, "caller_ref", &id);
+
+        let args = vec![
+            "route53".into(),
+            "create-hosted-zone".into(),
+            "--name".into(),
+            id,
+            "--caller-reference".into(),
+            caller_ref,
+        ];
+        Ok(args)
+    }
+
+    fn build_route53_record_args(&self, params: &Value) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let zone_id = param_str(params, "zone_id")?;
+        let record_type = param_str_or(params, "record_type", "A");
+        let value = param_str(params, "value")?;
+        let ttl = param_str_or(params, "ttl", "300");
+
+        let change_batch = format!(
+            r#"{{"Changes":[{{"Action":"UPSERT","ResourceRecordSet":{{"Name":"{}","Type":"{}","TTL":{},"ResourceRecords":[{{"Value":"{}"}}]}}}}]}}"#,
+            id, record_type, ttl, value
+        );
+
+        let args = vec![
+            "route53".into(),
+            "change-resource-record-sets".into(),
+            "--hosted-zone-id".into(),
+            zone_id,
+            "--change-batch".into(),
+            change_batch,
+        ];
+        Ok(args)
+    }
+
+    fn build_secrets_manager_secret_args(
+        &self,
+        params: &Value,
+    ) -> Result<Vec<String>, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let value = param_str(params, "value")?;
+
+        let mut args = vec![
+            "secretsmanager".into(),
+            "create-secret".into(),
+            "--name".into(),
+            id,
+            "--secret-string".into(),
+            value,
+        ];
+        if let Some(desc) = params.get("description").and_then(|v| v.as_str()) {
+            args.push("--description".into());
+            args.push(desc.into());
+        }
         Ok(args)
     }
 }
@@ -4321,5 +5198,785 @@ mod tests {
         assert!(AwsResourceProvisioner::parse_backup_plans(&empty).is_empty());
         assert!(AwsResourceProvisioner::parse_ses_domains(&empty).is_empty());
         assert!(AwsResourceProvisioner::parse_cloudwatch_alarms(&empty).is_empty());
+    }
+
+    // ── ECS build-args tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_ecs_cluster_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-ecs-cluster",
+            "capacity_providers": "FARGATE FARGATE_SPOT"
+        });
+        let args = p.build_create_args("ecs_cluster", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"ecs".to_string()));
+        assert!(args.contains(&"create-cluster".to_string()));
+        assert!(args.contains(&"--cluster-name".to_string()));
+        assert!(args.contains(&"my-ecs-cluster".to_string()));
+        assert!(args.contains(&"--capacity-providers".to_string()));
+        assert!(args.contains(&"FARGATE FARGATE_SPOT".to_string()));
+    }
+
+    #[test]
+    fn test_ecs_cluster_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-cluster"
+        });
+        let args = p.build_create_args("ecs_cluster", &params).unwrap();
+
+        assert!(args.contains(&"create-cluster".to_string()));
+        assert!(args.contains(&"default-cluster".to_string()));
+        assert!(args.contains(&"FARGATE".to_string()));
+    }
+
+    #[test]
+    fn test_delete_ecs_cluster() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("ecs_cluster", "my-cluster").unwrap();
+        assert!(args.contains(&"ecs".to_string()));
+        assert!(args.contains(&"delete-cluster".to_string()));
+        assert!(args.contains(&"--cluster".to_string()));
+        assert!(args.contains(&"my-cluster".to_string()));
+    }
+
+    #[test]
+    fn test_ecs_service_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "web-service",
+            "cluster": "my-cluster",
+            "task_definition": "web-task:1",
+            "desired_count": "2",
+            "subnets": "subnet-aaa,subnet-bbb",
+            "security_groups": "sg-111",
+            "public_ip": "ENABLED"
+        });
+        let args = p.build_create_args("ecs_service", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"ecs".to_string()));
+        assert!(args.contains(&"create-service".to_string()));
+        assert!(args.contains(&"--cluster".to_string()));
+        assert!(args.contains(&"my-cluster".to_string()));
+        assert!(args.contains(&"--service-name".to_string()));
+        assert!(args.contains(&"web-service".to_string()));
+        assert!(args.contains(&"--task-definition".to_string()));
+        assert!(args.contains(&"web-task:1".to_string()));
+        assert!(args.contains(&"--desired-count".to_string()));
+        assert!(args.contains(&"2".to_string()));
+        assert!(args.contains(&"--launch-type".to_string()));
+        assert!(args.contains(&"FARGATE".to_string()));
+        assert!(args.contains(&"--network-configuration".to_string()));
+        // Verify network config contains expected values
+        let net_arg = args
+            .iter()
+            .find(|a| a.contains("awsvpcConfiguration"))
+            .expect("network config not found");
+        assert!(net_arg.contains("subnet-aaa,subnet-bbb"));
+        assert!(net_arg.contains("sg-111"));
+        assert!(net_arg.contains("ENABLED"));
+    }
+
+    #[test]
+    fn test_ecs_service_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "api",
+            "cluster": "prod",
+            "task_definition": "api:1",
+            "subnets": "subnet-aaa",
+            "security_groups": "sg-111"
+        });
+        let args = p.build_create_args("ecs_service", &params).unwrap();
+
+        assert!(args.contains(&"1".to_string())); // default desired_count
+        let net_arg = args
+            .iter()
+            .find(|a| a.contains("awsvpcConfiguration"))
+            .expect("network config not found");
+        assert!(net_arg.contains("DISABLED")); // default public_ip
+    }
+
+    #[test]
+    fn test_delete_ecs_service_requires_params() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let err = p.build_delete_args("ecs_service", "web-svc").unwrap_err();
+        assert!(err.to_string().contains("cluster"));
+    }
+
+    #[test]
+    fn test_ecs_task_definition_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "web-task",
+            "cpu": "512",
+            "memory": "1024",
+            "container_name": "web",
+            "image": "nginx:latest",
+            "port": "8080"
+        });
+        let args = p.build_create_args("ecs_task_definition", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"ecs".to_string()));
+        assert!(args.contains(&"register-task-definition".to_string()));
+        assert!(args.contains(&"--family".to_string()));
+        assert!(args.contains(&"web-task".to_string()));
+        assert!(args.contains(&"--network-mode".to_string()));
+        assert!(args.contains(&"awsvpc".to_string()));
+        assert!(args.contains(&"--requires-compatibilities".to_string()));
+        assert!(args.contains(&"FARGATE".to_string()));
+        assert!(args.contains(&"--cpu".to_string()));
+        assert!(args.contains(&"512".to_string()));
+        assert!(args.contains(&"--memory".to_string()));
+        assert!(args.contains(&"1024".to_string()));
+        assert!(args.contains(&"--container-definitions".to_string()));
+
+        let cd_arg = args
+            .iter()
+            .find(|a| a.contains("containerPort"))
+            .expect("container definitions not found");
+        let cd: Value = serde_json::from_str(cd_arg).unwrap();
+        assert_eq!(cd[0]["name"], "web");
+        assert_eq!(cd[0]["image"], "nginx:latest");
+        assert_eq!(cd[0]["portMappings"][0]["containerPort"], 8080);
+        assert_eq!(cd[0]["essential"], true);
+    }
+
+    #[test]
+    fn test_ecs_task_definition_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "api-task",
+            "image": "myapp:v1"
+        });
+        let args = p.build_create_args("ecs_task_definition", &params).unwrap();
+
+        assert!(args.contains(&"256".to_string())); // default cpu
+        assert!(args.contains(&"512".to_string())); // default memory
+
+        let cd_arg = args
+            .iter()
+            .find(|a| a.contains("containerPort"))
+            .expect("container definitions not found");
+        let cd: Value = serde_json::from_str(cd_arg).unwrap();
+        assert_eq!(cd[0]["name"], "api-task"); // default container_name = id
+        assert_eq!(cd[0]["portMappings"][0]["containerPort"], 80); // default port
+    }
+
+    #[test]
+    fn test_delete_ecs_task_definition() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args("ecs_task_definition", "web-task:1")
+            .unwrap();
+        assert!(args.contains(&"ecs".to_string()));
+        assert!(args.contains(&"deregister-task-definition".to_string()));
+        assert!(args.contains(&"--task-definition".to_string()));
+        assert!(args.contains(&"web-task:1".to_string()));
+    }
+
+    // ── ECR build-args tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_ecr_repository_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-app",
+            "scan": "true",
+            "encryption": "AES256"
+        });
+        let args = p.build_create_args("ecr_repository", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"ecr".to_string()));
+        assert!(args.contains(&"create-repository".to_string()));
+        assert!(args.contains(&"--repository-name".to_string()));
+        assert!(args.contains(&"my-app".to_string()));
+        assert!(args.contains(&"--image-scanning-configuration".to_string()));
+        assert!(args.contains(&"scanOnPush=true".to_string()));
+        assert!(args.contains(&"--encryption-configuration".to_string()));
+        assert!(args.contains(&"encryptionType=AES256".to_string()));
+    }
+
+    #[test]
+    fn test_ecr_repository_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-repo"
+        });
+        let args = p.build_create_args("ecr_repository", &params).unwrap();
+
+        assert!(args.contains(&"create-repository".to_string()));
+        assert!(args.contains(&"default-repo".to_string()));
+        assert!(args.contains(&"scanOnPush=true".to_string()));
+        assert!(args.contains(&"encryptionType=AES256".to_string()));
+    }
+
+    #[test]
+    fn test_delete_ecr_repository() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p.build_delete_args("ecr_repository", "my-app").unwrap();
+        assert!(args.contains(&"ecr".to_string()));
+        assert!(args.contains(&"delete-repository".to_string()));
+        assert!(args.contains(&"--repository-name".to_string()));
+        assert!(args.contains(&"my-app".to_string()));
+        assert!(args.contains(&"--force".to_string()));
+    }
+
+    // ── ALB build-args tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_alb_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-alb",
+            "subnets": "subnet-aaa subnet-bbb",
+            "security_groups": "sg-111 sg-222",
+            "scheme": "internal"
+        });
+        let args = p.build_create_args("alb", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"elbv2".to_string()));
+        assert!(args.contains(&"create-load-balancer".to_string()));
+        assert!(args.contains(&"--name".to_string()));
+        assert!(args.contains(&"my-alb".to_string()));
+        assert!(args.contains(&"--type".to_string()));
+        assert!(args.contains(&"application".to_string()));
+        assert!(args.contains(&"--subnets".to_string()));
+        assert!(args.contains(&"subnet-aaa subnet-bbb".to_string()));
+        assert!(args.contains(&"--security-groups".to_string()));
+        assert!(args.contains(&"sg-111 sg-222".to_string()));
+        assert!(args.contains(&"--scheme".to_string()));
+        assert!(args.contains(&"internal".to_string()));
+    }
+
+    #[test]
+    fn test_alb_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-alb",
+            "subnets": "subnet-aaa",
+            "security_groups": "sg-111"
+        });
+        let args = p.build_create_args("alb", &params).unwrap();
+
+        assert!(args.contains(&"create-load-balancer".to_string()));
+        assert!(args.contains(&"internet-facing".to_string()));
+    }
+
+    #[test]
+    fn test_delete_alb() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args(
+                "alb",
+                "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/my-alb/abc",
+            )
+            .unwrap();
+        assert!(args.contains(&"elbv2".to_string()));
+        assert!(args.contains(&"delete-load-balancer".to_string()));
+        assert!(args.contains(&"--load-balancer-arn".to_string()));
+    }
+
+    #[test]
+    fn test_alb_target_group_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-tg",
+            "protocol": "HTTPS",
+            "port": "443",
+            "vpc_id": "vpc-12345",
+            "target_type": "instance",
+            "health_check": "/health"
+        });
+        let args = p.build_create_args("alb_target_group", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"elbv2".to_string()));
+        assert!(args.contains(&"create-target-group".to_string()));
+        assert!(args.contains(&"--name".to_string()));
+        assert!(args.contains(&"my-tg".to_string()));
+        assert!(args.contains(&"--protocol".to_string()));
+        assert!(args.contains(&"HTTPS".to_string()));
+        assert!(args.contains(&"--port".to_string()));
+        assert!(args.contains(&"443".to_string()));
+        assert!(args.contains(&"--vpc-id".to_string()));
+        assert!(args.contains(&"vpc-12345".to_string()));
+        assert!(args.contains(&"--target-type".to_string()));
+        assert!(args.contains(&"instance".to_string()));
+        assert!(args.contains(&"--health-check-path".to_string()));
+        assert!(args.contains(&"/health".to_string()));
+    }
+
+    #[test]
+    fn test_alb_target_group_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-tg",
+            "port": "80",
+            "vpc_id": "vpc-111"
+        });
+        let args = p.build_create_args("alb_target_group", &params).unwrap();
+
+        assert!(args.contains(&"create-target-group".to_string()));
+        assert!(args.contains(&"HTTP".to_string())); // default protocol
+        assert!(args.contains(&"ip".to_string())); // default target_type
+        assert!(args.contains(&"/".to_string())); // default health_check
+    }
+
+    #[test]
+    fn test_delete_alb_target_group() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args(
+                "alb_target_group",
+                "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/my-tg/abc",
+            )
+            .unwrap();
+        assert!(args.contains(&"elbv2".to_string()));
+        assert!(args.contains(&"delete-target-group".to_string()));
+        assert!(args.contains(&"--target-group-arn".to_string()));
+    }
+
+    #[test]
+    fn test_alb_listener_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-listener",
+            "alb_arn": "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/my-alb/abc",
+            "protocol": "HTTPS",
+            "port": "443",
+            "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/my-tg/abc"
+        });
+        let args = p.build_create_args("alb_listener", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"elbv2".to_string()));
+        assert!(args.contains(&"create-listener".to_string()));
+        assert!(args.contains(&"--load-balancer-arn".to_string()));
+        assert!(args.contains(&"--protocol".to_string()));
+        assert!(args.contains(&"HTTPS".to_string()));
+        assert!(args.contains(&"--port".to_string()));
+        assert!(args.contains(&"443".to_string()));
+        assert!(args.contains(&"--default-actions".to_string()));
+
+        let action_arg = args
+            .iter()
+            .find(|a| a.contains("Type=forward"))
+            .expect("action not found");
+        assert!(action_arg.contains("TargetGroupArn="));
+    }
+
+    #[test]
+    fn test_alb_listener_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-listener",
+            "alb_arn": "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/alb/abc",
+            "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/tg/abc"
+        });
+        let args = p.build_create_args("alb_listener", &params).unwrap();
+
+        assert!(args.contains(&"HTTP".to_string())); // default protocol
+        assert!(args.contains(&"80".to_string())); // default port
+    }
+
+    #[test]
+    fn test_delete_alb_listener() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args(
+                "alb_listener",
+                "arn:aws:elasticloadbalancing:us-east-1:123:listener/app/alb/abc/def",
+            )
+            .unwrap();
+        assert!(args.contains(&"elbv2".to_string()));
+        assert!(args.contains(&"delete-listener".to_string()));
+        assert!(args.contains(&"--listener-arn".to_string()));
+    }
+
+    // ── CloudFront build-args tests ──────────────────────────────────
+
+    #[test]
+    fn test_cloudfront_distribution_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "my-dist",
+            "origin_domain": "my-bucket.s3.amazonaws.com",
+            "origin_id": "s3-origin",
+            "viewer_protocol": "allow-all",
+            "comment": "My distribution"
+        });
+        let args = p
+            .build_create_args("cloudfront_distribution", &params)
+            .unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"cloudfront".to_string()));
+        assert!(args.contains(&"create-distribution".to_string()));
+        assert!(args.contains(&"--distribution-config".to_string()));
+
+        let config_arg = args
+            .iter()
+            .find(|a| a.contains("CallerReference"))
+            .expect("distribution config not found");
+        let config: Value = serde_json::from_str(config_arg).unwrap();
+        assert_eq!(config["CallerReference"], "my-dist");
+        assert_eq!(config["Origins"]["Items"][0]["Id"], "s3-origin");
+        assert_eq!(
+            config["Origins"]["Items"][0]["DomainName"],
+            "my-bucket.s3.amazonaws.com"
+        );
+        assert_eq!(
+            config["DefaultCacheBehavior"]["ViewerProtocolPolicy"],
+            "allow-all"
+        );
+        assert_eq!(config["Enabled"], true);
+        assert_eq!(config["Comment"], "My distribution");
+    }
+
+    #[test]
+    fn test_cloudfront_distribution_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "default-dist",
+            "origin_domain": "example.s3.amazonaws.com"
+        });
+        let args = p
+            .build_create_args("cloudfront_distribution", &params)
+            .unwrap();
+
+        let config_arg = args
+            .iter()
+            .find(|a| a.contains("CallerReference"))
+            .expect("distribution config not found");
+        let config: Value = serde_json::from_str(config_arg).unwrap();
+        assert_eq!(config["Origins"]["Items"][0]["Id"], "default-dist"); // default origin_id = id
+        assert_eq!(
+            config["DefaultCacheBehavior"]["ViewerProtocolPolicy"],
+            "redirect-to-https"
+        ); // default
+    }
+
+    #[test]
+    fn test_delete_cloudfront_distribution() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args("cloudfront_distribution", "E1234567890AB")
+            .unwrap();
+        assert!(args.contains(&"cloudfront".to_string()));
+        assert!(args.contains(&"delete-distribution".to_string()));
+        assert!(args.contains(&"--id".to_string()));
+        assert!(args.contains(&"E1234567890AB".to_string()));
+    }
+
+    // ── Route53 build-args tests ─────────────────────────────────────
+
+    #[test]
+    fn test_route53_zone_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "example.com",
+            "caller_ref": "unique-ref-123"
+        });
+        let args = p.build_create_args("route53_zone", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"route53".to_string()));
+        assert!(args.contains(&"create-hosted-zone".to_string()));
+        assert!(args.contains(&"--name".to_string()));
+        assert!(args.contains(&"example.com".to_string()));
+        assert!(args.contains(&"--caller-reference".to_string()));
+        assert!(args.contains(&"unique-ref-123".to_string()));
+    }
+
+    #[test]
+    fn test_route53_zone_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "example.org"
+        });
+        let args = p.build_create_args("route53_zone", &params).unwrap();
+
+        assert!(args.contains(&"create-hosted-zone".to_string()));
+        assert!(args.contains(&"example.org".to_string()));
+        // default caller_ref = id
+        let ref_idx = args.iter().position(|a| a == "--caller-reference").unwrap();
+        assert_eq!(args[ref_idx + 1], "example.org");
+    }
+
+    #[test]
+    fn test_delete_route53_zone() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args("route53_zone", "/hostedzone/Z12345")
+            .unwrap();
+        assert!(args.contains(&"route53".to_string()));
+        assert!(args.contains(&"delete-hosted-zone".to_string()));
+        assert!(args.contains(&"--id".to_string()));
+        assert!(args.contains(&"/hostedzone/Z12345".to_string()));
+    }
+
+    #[test]
+    fn test_route53_record_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "api.example.com",
+            "zone_id": "Z12345",
+            "record_type": "CNAME",
+            "value": "lb.example.com",
+            "ttl": "600"
+        });
+        let args = p.build_create_args("route53_record", &params).unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"route53".to_string()));
+        assert!(args.contains(&"change-resource-record-sets".to_string()));
+        assert!(args.contains(&"--hosted-zone-id".to_string()));
+        assert!(args.contains(&"Z12345".to_string()));
+        assert!(args.contains(&"--change-batch".to_string()));
+
+        let batch_arg = args
+            .iter()
+            .find(|a| a.contains("UPSERT"))
+            .expect("change batch not found");
+        let batch: Value = serde_json::from_str(batch_arg).unwrap();
+        let rrs = &batch["Changes"][0]["ResourceRecordSet"];
+        assert_eq!(rrs["Name"], "api.example.com");
+        assert_eq!(rrs["Type"], "CNAME");
+        assert_eq!(rrs["TTL"], 600);
+        assert_eq!(rrs["ResourceRecords"][0]["Value"], "lb.example.com");
+    }
+
+    #[test]
+    fn test_route53_record_build_args_defaults() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "web.example.com",
+            "zone_id": "Z99999",
+            "value": "1.2.3.4"
+        });
+        let args = p.build_create_args("route53_record", &params).unwrap();
+
+        let batch_arg = args
+            .iter()
+            .find(|a| a.contains("UPSERT"))
+            .expect("change batch not found");
+        let batch: Value = serde_json::from_str(batch_arg).unwrap();
+        let rrs = &batch["Changes"][0]["ResourceRecordSet"];
+        assert_eq!(rrs["Type"], "A"); // default record_type
+        assert_eq!(rrs["TTL"], 300); // default ttl
+    }
+
+    #[test]
+    fn test_delete_route53_record_requires_params() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let err = p
+            .build_delete_args("route53_record", "api.example.com")
+            .unwrap_err();
+        assert!(err.to_string().contains("zone_id"));
+    }
+
+    // ── Secrets Manager build-args tests ─────────────────────────────
+
+    #[test]
+    fn test_secrets_manager_secret_build_args() {
+        let p = AwsResourceProvisioner::new(Some("us-east-1"), None);
+        let params = serde_json::json!({
+            "id": "prod/db-password",
+            "value": "supersecret123",
+            "description": "Production database password"
+        });
+        let args = p
+            .build_create_args("secrets_manager_secret", &params)
+            .unwrap();
+
+        assert_eq!(args[0], "aws");
+        assert!(args.contains(&"secretsmanager".to_string()));
+        assert!(args.contains(&"create-secret".to_string()));
+        assert!(args.contains(&"--name".to_string()));
+        assert!(args.contains(&"prod/db-password".to_string()));
+        assert!(args.contains(&"--secret-string".to_string()));
+        assert!(args.contains(&"supersecret123".to_string()));
+        assert!(args.contains(&"--description".to_string()));
+        assert!(args.contains(&"Production database password".to_string()));
+    }
+
+    #[test]
+    fn test_secrets_manager_secret_build_args_no_description() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let params = serde_json::json!({
+            "id": "api-key",
+            "value": "key123"
+        });
+        let args = p
+            .build_create_args("secrets_manager_secret", &params)
+            .unwrap();
+
+        assert!(args.contains(&"create-secret".to_string()));
+        assert!(args.contains(&"api-key".to_string()));
+        assert!(args.contains(&"key123".to_string()));
+        assert!(!args.contains(&"--description".to_string()));
+    }
+
+    #[test]
+    fn test_delete_secrets_manager_secret() {
+        let p = AwsResourceProvisioner::new(None, None);
+        let args = p
+            .build_delete_args("secrets_manager_secret", "prod/db-password")
+            .unwrap();
+        assert!(args.contains(&"secretsmanager".to_string()));
+        assert!(args.contains(&"delete-secret".to_string()));
+        assert!(args.contains(&"--secret-id".to_string()));
+        assert!(args.contains(&"prod/db-password".to_string()));
+        assert!(args.contains(&"--force-delete-without-recovery".to_string()));
+    }
+
+    // ── Discovery parse tests for v0.7.0 resource types ─────────────
+
+    #[test]
+    fn test_parse_ecr_repositories() {
+        let json = serde_json::json!({
+            "repositories": [{
+                "repositoryName": "my-app",
+                "repositoryArn": "arn:aws:ecr:us-east-1:123:repository/my-app",
+                "repositoryUri": "123.dkr.ecr.us-east-1.amazonaws.com/my-app",
+                "imageScanningConfiguration": { "scanOnPush": true },
+                "encryptionConfiguration": { "encryptionType": "AES256" }
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_ecr_repositories(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "my-app");
+        assert_eq!(r["resource_type"], "ecr_repository");
+        assert_eq!(r["name"], "my-app");
+        assert_eq!(
+            r["outputs"]["repository_arn"],
+            "arn:aws:ecr:us-east-1:123:repository/my-app"
+        );
+        assert_eq!(
+            r["outputs"]["repository_uri"],
+            "123.dkr.ecr.us-east-1.amazonaws.com/my-app"
+        );
+    }
+
+    #[test]
+    fn test_parse_ecr_repositories_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_ecr_repositories(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_albs() {
+        let json = serde_json::json!({
+            "LoadBalancers": [{
+                "LoadBalancerName": "web-alb",
+                "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/web-alb/abc",
+                "DNSName": "web-alb-123.us-east-1.elb.amazonaws.com",
+                "CanonicalHostedZoneId": "Z35SXDOTRQ7X7K",
+                "Type": "application",
+                "Scheme": "internet-facing",
+                "VpcId": "vpc-111",
+                "AvailabilityZones": [{"ZoneName": "us-east-1a"}]
+            }, {
+                "LoadBalancerName": "nlb-internal",
+                "Type": "network",
+                "Scheme": "internal"
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_albs(&json);
+        // Only application type should be included
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "web-alb");
+        assert_eq!(r["resource_type"], "alb");
+        assert_eq!(r["name"], "web-alb");
+        assert_eq!(r["config"]["scheme"], "internet-facing");
+        assert_eq!(
+            r["outputs"]["dns_name"],
+            "web-alb-123.us-east-1.elb.amazonaws.com"
+        );
+        assert_eq!(r["outputs"]["hosted_zone_id"], "Z35SXDOTRQ7X7K");
+    }
+
+    #[test]
+    fn test_parse_albs_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_albs(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_route53_zones() {
+        let json = serde_json::json!({
+            "HostedZones": [{
+                "Id": "/hostedzone/Z12345",
+                "Name": "example.com.",
+                "Config": { "PrivateZone": false },
+                "ResourceRecordSetCount": 10
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_route53_zones(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "/hostedzone/Z12345");
+        assert_eq!(r["resource_type"], "route53_zone");
+        assert_eq!(r["name"], "example.com.");
+        assert_eq!(r["config"]["private_zone"], false);
+        assert_eq!(r["outputs"]["resource_record_set_count"], 10);
+    }
+
+    #[test]
+    fn test_parse_route53_zones_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_route53_zones(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_secrets_manager_secrets() {
+        let json = serde_json::json!({
+            "SecretList": [{
+                "Name": "prod/db-password",
+                "ARN": "arn:aws:secretsmanager:us-east-1:123:secret:prod/db-password-abc123",
+                "Description": "Production DB password",
+                "LastChangedDate": "2025-06-01T00:00:00Z"
+            }]
+        });
+
+        let results = AwsResourceProvisioner::parse_secrets_manager_secrets(&json);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r["id"], "prod/db-password");
+        assert_eq!(r["resource_type"], "secrets_manager_secret");
+        assert_eq!(r["name"], "prod/db-password");
+        assert_eq!(
+            r["outputs"]["arn"],
+            "arn:aws:secretsmanager:us-east-1:123:secret:prod/db-password-abc123"
+        );
+        assert_eq!(r["config"]["description"], "Production DB password");
+    }
+
+    #[test]
+    fn test_parse_secrets_manager_secrets_empty() {
+        let json = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_secrets_manager_secrets(&json).is_empty());
+    }
+
+    #[test]
+    fn test_parse_missing_top_level_key_v070_types() {
+        let empty = serde_json::json!({});
+        assert!(AwsResourceProvisioner::parse_ecr_repositories(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_albs(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_route53_zones(&empty).is_empty());
+        assert!(AwsResourceProvisioner::parse_secrets_manager_secrets(&empty).is_empty());
     }
 }
