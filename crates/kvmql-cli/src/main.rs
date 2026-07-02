@@ -149,6 +149,8 @@ enum PricingAction {
     },
     /// Show pricing summary (counts per provider/region)
     Summary,
+    /// Clear accumulated cost estimates (reset the cost_estimate table)
+    ClearEstimates,
     /// Fetch latest pricing from AWS/Azure APIs
     Update {
         /// Provider to update (aws, azure, or all)
@@ -751,6 +753,12 @@ async fn main() {
                         .expect("failed to get summary");
                     let total: i64 = summary.iter().map(|(_, _, c)| c).sum();
                     println!("\nPricing database: {total} entries total");
+                }
+                PricingAction::ClearEstimates => {
+                    ctx.registry
+                        .clear_cost_estimates()
+                        .expect("failed to clear cost estimates");
+                    println!("Cost estimates cleared.");
                 }
             },
         }

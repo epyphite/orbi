@@ -27,13 +27,8 @@ impl<'a> Executor<'a> {
         &self,
         stmt: &Statement,
     ) -> Result<StmtOutcome, EngineError> {
-        // 1. Clear previous cost estimates
-        self.ctx
-            .registry
-            .clear_cost_estimates()
-            .map_err(|e| -> EngineError {
-                format!("failed to clear cost estimates: {e}").into()
-            })?;
+        // 1. Accumulate cost estimates (don't clear — allows multi-statement costing)
+        // Use `orbi pricing clear` or a fresh session to reset.
 
         // 2. Collect cost rows from the statement
         let mut cost_rows = Vec::new();
@@ -51,9 +46,9 @@ impl<'a> Executor<'a> {
             }
         }
 
-        // 3. Insert cost estimates into the registry
+        // 3. Insert cost estimates into the registry (accumulates across calls)
         for row in &cost_rows {
-            let _ = self.ctx.registry.insert_cost_estimate(
+            if let Err(e) = self.ctx.registry.insert_cost_estimate(
                 &uuid::Uuid::new_v4().to_string(),
                 &row.resource_id,
                 &row.resource_type,
@@ -62,7 +57,9 @@ impl<'a> Executor<'a> {
                 row.quantity,
                 row.hourly,
                 row.monthly,
-            );
+            ) {
+                tracing::warn!(error = %e, resource = %row.resource_id, "failed to persist cost estimate");
+            }
         }
 
         // 4. Build result table
@@ -306,24 +303,63 @@ impl<'a> Executor<'a> {
             _ => return Ok(None), // Unknown type, skip
         };
 
-        // Look up pricing
+        // Look up pricing — try provider region first, then fallback to default region
         let pricing = self
             .ctx
             .registry
             .get_pricing(provider, &region, lookup_type, &param_key)
             .map_err(|e| -> EngineError { format!("pricing lookup failed: {e}").into() })?;
 
-        let (base_hourly, base_monthly) = pricing.unwrap_or((0.0, 0.0));
+        let (base_hourly, base_monthly, used_region) = if let Some((h, m)) = pricing {
+            (h, m, region.clone())
+        } else {
+            // Fallback: try the default region
+            let fallback = match provider {
+                "azure" => "eastus",
+                _ => "us-east-1",
+            };
+            if fallback != region {
+                let fb_pricing = self
+                    .ctx
+                    .registry
+                    .get_pricing(provider, fallback, lookup_type, &param_key)
+                    .map_err(|e| -> EngineError {
+                        format!("pricing fallback lookup failed: {e}").into()
+                    })?;
+                if let Some((h, m)) = fb_pricing {
+                    (h, m, format!("{fallback}*"))
+                } else {
+                    (0.0, 0.0, format!("{region}?"))
+                }
+            } else {
+                (0.0, 0.0, format!("{region}?"))
+            }
+        };
+
         let resource_id = params
             .get("id")
             .and_then(|v| v.as_str())
             .unwrap_or("?")
             .to_string();
 
-        let description = if param_key.is_empty() {
-            resource_type.to_string()
+        let has_pricing = base_hourly > 0.0 || base_monthly > 0.0;
+        let description = if !has_pricing && !param_key.is_empty() {
+            // No pricing found — warn in description
+            format!("{param_key} (no pricing for {used_region})")
+        } else if param_key.is_empty() {
+            if used_region.ends_with('*') {
+                format!("{resource_type} (fallback: {used_region})")
+            } else {
+                resource_type.to_string()
+            }
         } else if quantity > 1 {
-            format!("{quantity}x {param_key}")
+            if used_region.ends_with('*') {
+                format!("{quantity}x {param_key} (fallback: {used_region})")
+            } else {
+                format!("{quantity}x {param_key}")
+            }
+        } else if used_region.ends_with('*') {
+            format!("{param_key} (fallback: {used_region})")
         } else {
             param_key.clone()
         };
