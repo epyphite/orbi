@@ -70,7 +70,7 @@ EXPLAIN CREATE RESOURCE 'redis' id = 'cache' sku = 'Standard';
 ROLLBACK LAST;
 ```
 
-### 59 Managed Resource Types across 10 providers
+### 71 Managed Resource Types across 10 providers
 
 #### Azure (16 types)
 
@@ -93,7 +93,7 @@ ROLLBACK LAST;
 | `load_balancer` | Load Balancer |
 | `pg_database` | PostgreSQL Database (on a Flexible Server) |
 
-#### AWS (23 types)
+#### AWS (35 types)
 
 | Type | Description |
 |------|-------------|
@@ -120,6 +120,18 @@ ROLLBACK LAST;
 | `ses_smtp_user` | IAM user for SES SMTP |
 | `backup_vault` | AWS Backup vault |
 | `backup_plan` | AWS Backup plan with schedule |
+| `ecs_cluster` | ECS Fargate cluster |
+| `ecs_service` | ECS Fargate service |
+| `ecs_task_definition` | ECS task definition |
+| `ecr_repository` | ECR container image repository |
+| `alb` | Application Load Balancer |
+| `alb_target_group` | ALB target group |
+| `alb_listener` | ALB listener |
+| `cloudfront_distribution` | CloudFront CDN distribution |
+| `route53_zone` | Route53 hosted zone |
+| `route53_record` | Route53 DNS record |
+| `secrets_manager_secret` | Secrets Manager secret |
+| `sg_rule` | Security Group Rule |
 
 #### Cloudflare (4 types)
 
@@ -363,11 +375,11 @@ The internal crates are prefixed `kvmql-*` because the engine name is KVMQL — 
 
 | Metric | Value |
 |--------|-------|
-| Lines of Rust | ~48,000 |
-| Tests | 829 |
+| Lines of Rust | ~50,000 |
+| Tests | 896 |
 | Crates | 8 |
 | Statement types | 40 |
-| Resource types | 59 |
+| Resource types | 71 |
 | Providers | 10 |
 | Credential backends | 9 |
 

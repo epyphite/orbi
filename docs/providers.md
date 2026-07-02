@@ -63,7 +63,7 @@ Auth can be a bare profile name (`auth = 'myprofile'`) or an environment
 variable binding (`auth = 'env:AWS_PROFILE=myprofile'`). The `region` label is
 required.
 
-### Resource types (23)
+### Resource types (35)
 
 | Type              | Description                                  |
 |-------------------|----------------------------------------------|
@@ -90,6 +90,17 @@ required.
 | `ses_smtp_user`   | IAM user for SES SMTP                        |
 | `backup_vault`    | AWS Backup vault                             |
 | `backup_plan`     | AWS Backup plan with schedule                |
+| `ecs_cluster`     | ECS Fargate cluster                          |
+| `ecs_service`     | ECS Fargate service (awsvpc networking)       |
+| `ecs_task_definition` | ECS task definition                      |
+| `ecr_repository`  | ECR container image repository               |
+| `alb`             | Application Load Balancer                    |
+| `alb_target_group`| ALB target group                             |
+| `alb_listener`    | ALB listener rule                            |
+| `cloudfront_distribution` | CloudFront CDN distribution          |
+| `route53_zone`    | Route53 hosted zone                          |
+| `route53_record`  | Route53 DNS record (A, CNAME, etc.)          |
+| `secrets_manager_secret` | Secrets Manager secret                |
 
 ---
 
