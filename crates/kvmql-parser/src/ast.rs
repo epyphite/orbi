@@ -51,6 +51,9 @@ pub enum Statement {
     Rollback(RollbackStmt),
     Assert(AssertStmt),
     ImportResources(ImportResourcesStmt),
+    /// `EXEC 'file.kvmql'` — execute a file of statements.
+    /// Usable standalone or as inner target for EXPLAIN COST.
+    ExecFile(String),
 }
 
 // ── Fields and Selection ───────────────────────────────────────────

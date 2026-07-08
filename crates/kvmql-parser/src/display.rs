@@ -61,6 +61,7 @@ impl fmt::Display for Statement {
             Statement::Rollback(s) => write!(f, "{s}"),
             Statement::Assert(s) => write!(f, "{s}"),
             Statement::ImportResources(s) => write!(f, "{s}"),
+            Statement::ExecFile(path) => write!(f, "EXEC '{path}'"),
         }
     }
 }

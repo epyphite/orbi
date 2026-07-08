@@ -40,6 +40,80 @@ impl<'a> Executor<'a> {
         resolved
     }
 
+    /// Resolve cross-resource reference parameters.
+    ///
+    /// When a parameter like `vpc_id = 'my-vpc'` refers to a resource managed by
+    /// Orbi, the actual cloud-assigned ID (e.g. `vpc-0abc123`) must be passed to
+    /// the cloud CLI.  This method checks known reference keys against the
+    /// registry and replaces logical IDs with the cloud ID from `outputs`.
+    fn resolve_resource_refs(&self, params: &serde_json::Value) -> serde_json::Value {
+        /// Map of parameter key → output field that contains the cloud ID
+        const REF_KEYS: &[(&str, &str)] = &[
+            ("vpc_id", "vpc_id"),
+            ("subnet_id", "subnet_id"),
+            ("security_group_id", "group_id"),
+            ("allocation_id", "allocation_id"),
+            ("target_group_arn", "target_group_arn"),
+            ("alb_arn", "load_balancer_arn"),
+            ("internet_gateway_id", "internet_gateway_id"),
+            ("route_table_id", "route_table_id"),
+            ("gateway_id", "internet_gateway_id"),
+            ("nat_gateway_id", "nat_gateway_id"),
+        ];
+
+        let mut resolved = params.clone();
+        let obj = match resolved.as_object_mut() {
+            Some(o) => o,
+            None => return resolved,
+        };
+
+        for &(param_key, output_key) in REF_KEYS {
+            let logical_id = match obj.get(param_key).and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+
+            // Skip if the value already looks like a cloud-assigned ID
+            if logical_id.contains('-')
+                && (logical_id.starts_with("vpc-")
+                    || logical_id.starts_with("subnet-")
+                    || logical_id.starts_with("sg-")
+                    || logical_id.starts_with("igw-")
+                    || logical_id.starts_with("eipalloc-")
+                    || logical_id.starts_with("arn:")
+                    || logical_id.starts_with("nat-")
+                    || logical_id.starts_with("vpce-")
+                    || logical_id.starts_with("rtb-"))
+            {
+                continue;
+            }
+
+            // Look up the referenced resource in the registry
+            if let Ok(resource) = self.ctx.registry.get_resource(&logical_id) {
+                if let Some(outputs_json) = &resource.outputs {
+                    if let Ok(outputs) =
+                        serde_json::from_str::<serde_json::Value>(outputs_json)
+                    {
+                        if let Some(cloud_id) = outputs.get(output_key).and_then(|v| v.as_str()) {
+                            obj.insert(
+                                param_key.to_string(),
+                                serde_json::Value::String(cloud_id.to_string()),
+                            );
+                            tracing::debug!(
+                                param = param_key,
+                                logical = %logical_id,
+                                resolved = cloud_id,
+                                "resolved resource cross-reference"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        resolved
+    }
+
     pub(super) fn exec_create_resource(
         &self,
         s: &CreateResourceStmt,
@@ -97,6 +171,8 @@ impl<'a> Executor<'a> {
         };
         // Resolve credential references before passing to the provisioner
         let config_value = self.resolve_credential_params(&config_value);
+        // Resolve cross-resource references (logical ID → AWS/cloud ID)
+        let config_value = self.resolve_resource_refs(&config_value);
         let config = config_value.to_string();
 
         // Attempt real provisioning via the appropriate cloud CLI.
@@ -113,7 +189,12 @@ impl<'a> Executor<'a> {
             let is_aws = provider_type == "aws"
                 || matches!(
                     s.resource_type.as_str(),
-                    "rds_postgres" | "vpc" | "aws_subnet" | "security_group" | "sg_rule"
+                    "rds_postgres"
+                        | "vpc"
+                        | "aws_subnet"
+                        | "security_group"
+                        | "sg_rule"
+                        | "internet_gateway"
                 );
 
             let is_cloudflare = provider_type == "cloudflare"

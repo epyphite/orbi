@@ -27,8 +27,12 @@ impl<'a> Executor<'a> {
         &self,
         stmt: &Statement,
     ) -> Result<StmtOutcome, EngineError> {
-        // 1. Accumulate cost estimates (don't clear — allows multi-statement costing)
-        // Use `orbi pricing clear` or a fresh session to reset.
+        // 1. Clear previous cost estimates to prevent stale accumulation.
+        //    Each EXPLAIN COST shows the cost of the statement being analysed;
+        //    accumulated totals caused ASSERT false-positives.
+        if let Err(e) = self.ctx.registry.clear_cost_estimates() {
+            tracing::warn!(error = %e, "failed to clear previous cost estimates");
+        }
 
         // 2. Collect cost rows from the statement
         let mut cost_rows = Vec::new();
@@ -38,6 +42,28 @@ impl<'a> Executor<'a> {
                 let params = self.params_to_json(&s.params);
                 if let Some(c) = self.estimate_resource_cost(&s.resource_type, &params)? {
                     cost_rows.push(c);
+                }
+            }
+            Statement::ExecFile(path) => {
+                // Read and parse the file, then cost every CREATE RESOURCE statement
+                let source = std::fs::read_to_string(path).map_err(|e| -> EngineError {
+                    format!("failed to read file '{path}': {e}").into()
+                })?;
+                let program = kvmql_parser::parser::Parser::parse(&source).map_err(|e| -> EngineError {
+                    format!("failed to parse file '{path}': {e}").into()
+                })?;
+                for file_stmt in &program.statements {
+                    if let Statement::CreateResource(s) = file_stmt {
+                        let params = self.params_to_json(&s.params);
+                        if let Some(c) = self.estimate_resource_cost(&s.resource_type, &params)? {
+                            cost_rows.push(c);
+                        }
+                    }
+                }
+                if cost_rows.is_empty() {
+                    return Err(
+                        format!("no CREATE RESOURCE statements found in '{path}'").into()
+                    );
                 }
             }
             _ => {
@@ -268,7 +294,9 @@ impl<'a> Executor<'a> {
             // ----- Free resources (AWS) -----
             "vpc" | "aws_subnet" | "security_group" | "sg_rule" | "iam_role" | "iam_policy"
             | "ses_domain" | "ses_smtp_user" | "acm_certificate" | "eks_addon" | "backup_vault"
-            | "backup_plan" | "cloudwatch_alarm" => {
+            | "backup_plan" | "cloudwatch_alarm" | "internet_gateway" | "route_table"
+            | "route_table_association" | "route" | "db_subnet_group"
+            | "cache_subnet_group" => {
                 return Ok(Some(CostEstimate {
                     resource_id: params
                         .get("id")

@@ -71,6 +71,12 @@ impl AwsResourceProvisioner {
             "route53_zone" => self.create_route53_zone(params),
             "route53_record" => self.create_route53_record(params),
             "secrets_manager_secret" => self.create_secrets_manager_secret(params),
+            "internet_gateway" => self.create_internet_gateway(params),
+            "route_table" => self.create_route_table(params),
+            "route_table_association" => self.create_route_table_association(params),
+            "route" => self.create_route(params),
+            "db_subnet_group" => self.create_db_subnet_group(params),
+            "cache_subnet_group" => self.create_cache_subnet_group(params),
             other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
@@ -256,6 +262,56 @@ impl AwsResourceProvisioner {
                     "secretsmanager", "delete-secret",
                     "--secret-id", id,
                     "--force-delete-without-recovery",
+                ])?;
+                Ok(())
+            }
+            "internet_gateway" => {
+                // Detach from VPC before deleting (AWS requires this)
+                if let Ok(desc) = self.run_aws(&[
+                    "ec2", "describe-internet-gateways",
+                    "--internet-gateway-ids", id,
+                ]) {
+                    if let Some(attachments) = desc
+                        .get("InternetGateways")
+                        .and_then(|v| v.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|igw| igw.get("Attachments"))
+                        .and_then(|v| v.as_array())
+                    {
+                        for att in attachments {
+                            if let Some(vpc_id) = att.get("VpcId").and_then(|v| v.as_str()) {
+                                let _ = self.run_aws(&[
+                                    "ec2", "detach-internet-gateway",
+                                    "--internet-gateway-id", id,
+                                    "--vpc-id", vpc_id,
+                                ]);
+                            }
+                        }
+                    }
+                }
+                self.run_aws(&["ec2", "delete-internet-gateway", "--internet-gateway-id", id])?;
+                Ok(())
+            }
+            "route_table" => {
+                self.run_aws(&["ec2", "delete-route-table", "--route-table-id", id])?;
+                Ok(())
+            }
+            "route_table_association" => {
+                self.run_aws(&["ec2", "disassociate-route-table", "--association-id", id])?;
+                Ok(())
+            }
+            "route" => {
+                // Route deletion requires route_table_id and destination_cidr via delete_with_params
+                Err("route deletion requires params (route_table_id, destination_cidr); use delete_with_params()".into())
+            }
+            "db_subnet_group" => {
+                self.run_aws(&["rds", "delete-db-subnet-group", "--db-subnet-group-name", id])?;
+                Ok(())
+            }
+            "cache_subnet_group" => {
+                self.run_aws(&[
+                    "elasticache", "delete-cache-subnet-group",
+                    "--cache-subnet-group-name", id,
                 ])?;
                 Ok(())
             }
@@ -531,6 +587,9 @@ impl AwsResourceProvisioner {
         }
         // Also inject AWS_PAGER="" as env to double-guard against pager
         cmd.env("AWS_PAGER", "");
+        // Ensure UTF-8 locale so non-ASCII characters in descriptions,
+        // tags, and other user-supplied values are handled correctly.
+        cmd.env("LC_ALL", "en_US.UTF-8");
 
         let output = cmd
             .output()
@@ -569,6 +628,21 @@ impl AwsResourceProvisioner {
         result
     }
 
+    /// Tag a resource with a Name tag. Uses JSON tag syntax which is safe
+    /// for non-ASCII characters, commas, equals signs, and other special
+    /// characters that break the `Key=k,Value=v` shorthand.
+    fn tag_resource(&self, resource_id: &str, name: &str) {
+        let tag_json = serde_json::json!([{"Key": "Name", "Value": name}]).to_string();
+        let _ = self.run_aws(&[
+            "ec2",
+            "create-tags",
+            "--resources",
+            resource_id,
+            "--tags",
+            &tag_json,
+        ]);
+    }
+
     // ── Discovery ────────────────────────────────────────────────────
 
     /// Discover all supported AWS resources in the configured region/profile.
@@ -595,6 +669,10 @@ impl AwsResourceProvisioner {
             ("iam_role", Self::discover_iam_roles),
             ("vpc_endpoint", Self::discover_vpc_endpoints),
             ("nat_gateway", Self::discover_nat_gateways),
+            ("internet_gateway", Self::discover_internet_gateways),
+            ("route_table", Self::discover_route_tables),
+            ("db_subnet_group", Self::discover_db_subnet_groups),
+            ("cache_subnet_group", Self::discover_cache_subnet_groups),
             ("kms_key", Self::discover_kms_keys),
             ("acm_certificate", Self::discover_acm_certificates),
             ("backup_vault", Self::discover_backup_vaults),
@@ -1368,6 +1446,185 @@ impl AwsResourceProvisioner {
         results
     }
 
+    fn discover_internet_gateways(&self) -> Vec<Value> {
+        let output =
+            match self.discover_run("internet_gateway", &["ec2", "describe-internet-gateways"]) {
+                Ok(v) => v,
+                Err(diag) => return diag,
+            };
+        Self::parse_internet_gateways(&output)
+    }
+
+    fn parse_internet_gateways(output: &Value) -> Vec<Value> {
+        let mut results = Vec::new();
+        let gateways = match output.get("InternetGateways").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for gw in gateways {
+            let id = gw
+                .get("InternetGatewayId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = extract_name_from_tags(gw).unwrap_or_else(|| id.clone());
+
+            let attachments = gw.get("Attachments").and_then(|a| a.as_array());
+            let vpc_id = attachments
+                .and_then(|arr| arr.first())
+                .and_then(|att| att.get("VpcId"));
+
+            let config = serde_json::json!({
+                "vpc_id": vpc_id,
+                "tags": gw.get("Tags"),
+            });
+            let outputs = serde_json::json!({
+                "attachments": gw.get("Attachments"),
+            });
+
+            results.push(serde_json::json!({
+                "id": id,
+                "resource_type": "internet_gateway",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_route_tables(&self) -> Vec<Value> {
+        let output =
+            match self.discover_run("route_table", &["ec2", "describe-route-tables"]) {
+                Ok(v) => v,
+                Err(diag) => return diag,
+            };
+        let mut results = Vec::new();
+        let tables = match output.get("RouteTables").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for rt in tables {
+            let id = rt
+                .get("RouteTableId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = extract_name_from_tags(rt).unwrap_or_else(|| id.clone());
+
+            let config = serde_json::json!({
+                "vpc_id": rt.get("VpcId"),
+                "tags": rt.get("Tags"),
+            });
+            let outputs = serde_json::json!({
+                "routes": rt.get("Routes"),
+                "associations": rt.get("Associations"),
+            });
+
+            results.push(serde_json::json!({
+                "id": id,
+                "resource_type": "route_table",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_db_subnet_groups(&self) -> Vec<Value> {
+        let output =
+            match self.discover_run("db_subnet_group", &["rds", "describe-db-subnet-groups"]) {
+                Ok(v) => v,
+                Err(diag) => return diag,
+            };
+        let mut results = Vec::new();
+        let groups = match output.get("DBSubnetGroups").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for g in groups {
+            let name = g
+                .get("DBSubnetGroupName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let subnet_ids: Vec<&str> = g
+                .get("Subnets")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|s| s.get("SubnetIdentifier").and_then(|v| v.as_str()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let config = serde_json::json!({
+                "description": g.get("DBSubnetGroupDescription"),
+                "subnet_ids": subnet_ids.join(" "),
+                "vpc_id": g.get("VpcId"),
+            });
+            let outputs = serde_json::json!({
+                "db_subnet_group_arn": g.get("DBSubnetGroupArn"),
+                "subnets": g.get("Subnets"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "db_subnet_group",
+                "name": name,
+                "config": config,
+                "outputs": outputs,
+            }));
+        }
+        results
+    }
+
+    fn discover_cache_subnet_groups(&self) -> Vec<Value> {
+        let output = match self.discover_run(
+            "cache_subnet_group",
+            &["elasticache", "describe-cache-subnet-groups"],
+        ) {
+            Ok(v) => v,
+            Err(diag) => return diag,
+        };
+        let mut results = Vec::new();
+        let groups = match output.get("CacheSubnetGroups").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return results,
+        };
+        for g in groups {
+            let name = g
+                .get("CacheSubnetGroupName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let subnet_ids: Vec<&str> = g
+                .get("Subnets")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|s| s.get("SubnetIdentifier").and_then(|v| v.as_str()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let config = serde_json::json!({
+                "description": g.get("CacheSubnetGroupDescription"),
+                "subnet_ids": subnet_ids.join(" "),
+                "vpc_id": g.get("VpcId"),
+            });
+
+            results.push(serde_json::json!({
+                "id": name,
+                "resource_type": "cache_subnet_group",
+                "name": name,
+                "config": config,
+            }));
+        }
+        results
+    }
+
     fn discover_kms_keys(&self) -> Vec<Value> {
         let output = match self.discover_run("kms_key", &["kms", "list-keys"]) {
             Ok(v) => v,
@@ -1908,14 +2165,29 @@ impl AwsResourceProvisioner {
 
         // Tag the VPC with its name
         if let (Some(vid), Some(name)) = (vpc_id, params.get("id").and_then(|v| v.as_str())) {
-            let _ = self.run_aws(&[
-                "ec2",
-                "create-tags",
-                "--resources",
-                vid,
-                "--tags",
-                &format!("Key=Name,Value={name}"),
-            ]);
+            self.tag_resource(vid, name);
+        }
+
+        // Apply DNS attributes via modify-vpc-attribute (not supported on create-vpc)
+        if let Some(vid) = vpc_id {
+            if params.get("enable_dns_support").and_then(|v| v.as_bool()) == Some(true) {
+                let _ = self.run_aws(&[
+                    "ec2",
+                    "modify-vpc-attribute",
+                    "--vpc-id",
+                    vid,
+                    "--enable-dns-support",
+                ]);
+            }
+            if params.get("enable_dns_hostnames").and_then(|v| v.as_bool()) == Some(true) {
+                let _ = self.run_aws(&[
+                    "ec2",
+                    "modify-vpc-attribute",
+                    "--vpc-id",
+                    vid,
+                    "--enable-dns-hostnames",
+                ]);
+            }
         }
 
         let outputs = serde_json::json!({
@@ -1934,8 +2206,26 @@ impl AwsResourceProvisioner {
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let result = self.run_aws(&refs)?;
 
+        let subnet_id = result
+            .get("Subnet")
+            .and_then(|s| s.get("SubnetId"))
+            .and_then(|v| v.as_str());
+
+        // Apply map_public_ip via modify-subnet-attribute (not valid on create-subnet)
+        if let Some(sid) = subnet_id {
+            if params.get("map_public_ip").and_then(|v| v.as_bool()) == Some(true) {
+                let _ = self.run_aws(&[
+                    "ec2",
+                    "modify-subnet-attribute",
+                    "--subnet-id",
+                    sid,
+                    "--map-public-ip-on-launch",
+                ]);
+            }
+        }
+
         let outputs = serde_json::json!({
-            "subnet_id": result.get("Subnet").and_then(|s| s.get("SubnetId")),
+            "subnet_id": subnet_id,
             "availability_zone": result.get("Subnet").and_then(|s| s.get("AvailabilityZone")),
         });
 
@@ -2223,6 +2513,204 @@ impl AwsResourceProvisioner {
         })
     }
 
+    fn create_internet_gateway(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        // Internet gateways are created unattached, then attached to a VPC
+        let result = self.run_aws(&["ec2", "create-internet-gateway"])?;
+
+        let igw_id = result
+            .get("InternetGateway")
+            .and_then(|v| v.get("InternetGatewayId"))
+            .and_then(|v| v.as_str());
+
+        // Attach to VPC
+        if let Some(gw_id) = igw_id {
+            let vpc_id = param_str(params, "vpc_id")?;
+            let _ = self.run_aws(&[
+                "ec2",
+                "attach-internet-gateway",
+                "--internet-gateway-id",
+                gw_id,
+                "--vpc-id",
+                &vpc_id,
+            ]);
+
+            // Tag with name
+            if let Some(name) = params.get("id").and_then(|v| v.as_str()) {
+                self.tag_resource(gw_id, name);
+            }
+        }
+
+        let outputs = serde_json::json!({
+            "internet_gateway_id": igw_id,
+            "vpc_id": params.get("vpc_id"),
+        });
+
+        Ok(ProvisionResult {
+            status: "available".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_route_table(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let vpc_id = param_str(params, "vpc_id")?;
+        let result = self.run_aws(&[
+            "ec2",
+            "create-route-table",
+            "--vpc-id",
+            &vpc_id,
+        ])?;
+
+        let rt_id = result
+            .get("RouteTable")
+            .and_then(|v| v.get("RouteTableId"))
+            .and_then(|v| v.as_str());
+
+        // Tag with name
+        if let (Some(rtid), Some(name)) = (rt_id, params.get("id").and_then(|v| v.as_str())) {
+            self.tag_resource(rtid, name);
+        }
+
+        let outputs = serde_json::json!({
+            "route_table_id": rt_id,
+            "vpc_id": vpc_id,
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_route_table_association(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let route_table_id = param_str(params, "route_table_id")?;
+        let subnet_id = param_str(params, "subnet_id")?;
+        let result = self.run_aws(&[
+            "ec2",
+            "associate-route-table",
+            "--route-table-id",
+            &route_table_id,
+            "--subnet-id",
+            &subnet_id,
+        ])?;
+
+        let assoc_id = result
+            .get("AssociationId")
+            .and_then(|v| v.as_str());
+
+        let outputs = serde_json::json!({
+            "association_id": assoc_id,
+            "route_table_id": route_table_id,
+            "subnet_id": subnet_id,
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_route(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let route_table_id = param_str(params, "route_table_id")?;
+        let destination = param_str(params, "destination_cidr")?;
+
+        let mut args = vec![
+            "ec2".to_string(),
+            "create-route".to_string(),
+            "--route-table-id".to_string(),
+            route_table_id.clone(),
+            "--destination-cidr-block".to_string(),
+            destination.clone(),
+        ];
+
+        // Exactly one target must be specified
+        if let Some(gw) = params.get("gateway_id").and_then(|v| v.as_str()) {
+            args.push("--gateway-id".into());
+            args.push(gw.into());
+        } else if let Some(nat) = params.get("nat_gateway_id").and_then(|v| v.as_str()) {
+            args.push("--nat-gateway-id".into());
+            args.push(nat.into());
+        } else if let Some(ep) = params.get("vpc_endpoint_id").and_then(|v| v.as_str()) {
+            args.push("--vpc-endpoint-id".into());
+            args.push(ep.into());
+        }
+
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_aws(&refs)?;
+
+        let outputs = serde_json::json!({
+            "route_table_id": route_table_id,
+            "destination_cidr": destination,
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_db_subnet_group(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let name = param_str(params, "id")?;
+        let subnet_ids = param_str(params, "subnet_ids")?;
+        let description = param_str_or(params, "description", &format!("Subnet group {name}"));
+
+        let result = self.run_aws(&[
+            "rds",
+            "create-db-subnet-group",
+            "--db-subnet-group-name",
+            &name,
+            "--db-subnet-group-description",
+            &description,
+            "--subnet-ids",
+            &subnet_ids,
+        ])?;
+
+        let group = result.get("DBSubnetGroup");
+        let outputs = serde_json::json!({
+            "db_subnet_group_name": group.and_then(|g| g.get("DBSubnetGroupName")),
+            "db_subnet_group_arn": group.and_then(|g| g.get("DBSubnetGroupArn")),
+            "vpc_id": group.and_then(|g| g.get("VpcId")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_cache_subnet_group(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let name = param_str(params, "id")?;
+        let subnet_ids = param_str(params, "subnet_ids")?;
+        let description = param_str_or(params, "description", &format!("Cache subnet group {name}"));
+
+        let result = self.run_aws(&[
+            "elasticache",
+            "create-cache-subnet-group",
+            "--cache-subnet-group-name",
+            &name,
+            "--cache-subnet-group-description",
+            &description,
+            "--subnet-ids",
+            &subnet_ids,
+        ])?;
+
+        let group = result.get("CacheSubnetGroup");
+        let outputs = serde_json::json!({
+            "cache_subnet_group_name": group.and_then(|g| g.get("CacheSubnetGroupName")),
+            "vpc_id": group.and_then(|g| g.get("VpcId")),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
     fn create_acm_certificate(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_acm_certificate_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -2336,9 +2824,8 @@ impl AwsResourceProvisioner {
             args.push("--availability-zone".into());
             args.push(az.into());
         }
-        if params.get("map_public_ip").and_then(|v| v.as_bool()) == Some(true) {
-            args.push("--map-public-ip-on-launch".into());
-        }
+        // NOTE: map_public_ip is applied post-creation via modify-subnet-attribute
+        // (--map-public-ip-on-launch is not a valid flag for create-subnet)
         Ok(args)
     }
 

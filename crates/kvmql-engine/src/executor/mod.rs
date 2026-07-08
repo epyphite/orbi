@@ -262,8 +262,8 @@ fn audit_event_for_statement(stmt: &Statement) -> Option<AuditEvent> {
         | Statement::Set(_)
         | Statement::Watch(_)
         | Statement::PublishImage(_) => None,
-        // EXPLAIN / EXPLAIN COST are introspection, never a mutation
-        Statement::Explain(_) | Statement::ExplainCost(_) => None,
+        // EXPLAIN / EXPLAIN COST / EXEC are introspection or meta, never a mutation
+        Statement::Explain(_) | Statement::ExplainCost(_) | Statement::ExecFile(_) => None,
         Statement::Rollback(s) => Some(AuditEvent {
             action: "ROLLBACK",
             target_type: "resource",
@@ -325,6 +325,7 @@ fn verb_for_statement(stmt: &Statement) -> &'static str {
         Statement::Rollback(_) => "ROLLBACK",
         Statement::Assert(_) => "ASSERT",
         Statement::ImportResources(_) => "IMPORT",
+        Statement::ExecFile(_) => "EXEC",
     }
 }
 
@@ -645,6 +646,7 @@ impl<'a> Executor<'a> {
                     | Statement::Set(_)
                     | Statement::Assert(_)
                     | Statement::ImportResources(_)
+                    | Statement::ExecFile(_)
             )
         {
             return self.exec_explain(stmt).await;
@@ -691,7 +693,32 @@ impl<'a> Executor<'a> {
             Statement::Upgrade(s) => self.exec_upgrade(s),
             Statement::Rollback(s) => self.exec_rollback(s),
             Statement::ImportResources(s) => self.exec_import_resources(s),
+            Statement::ExecFile(path) => self.exec_file(path).await,
         }
+    }
+
+    // =======================================================================
+    // EXEC FILE
+    // =======================================================================
+
+    fn exec_file(
+        &self,
+        path: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<StmtOutcome, EngineError>> + '_>>
+    {
+        let path = path.to_string();
+        Box::pin(async move {
+            let source = std::fs::read_to_string(&path).map_err(|e| -> EngineError {
+                format!("failed to read file '{path}': {e}").into()
+            })?;
+            let result = self.execute(&source).await;
+            Ok(StmtOutcome::ok_val(serde_json::json!({
+                "file": path,
+                "status": result.status,
+                "rows_affected": result.rows_affected,
+                "notifications": result.notifications.len(),
+            })))
+        })
     }
 
     // =======================================================================

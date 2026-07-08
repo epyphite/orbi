@@ -208,6 +208,16 @@ impl Parser {
                 if let Some(name) = self.peek_ident_like() {
                     if name.eq_ignore_ascii_case("cost") {
                         self.advance(); // consume "COST"
+                        // Check for EXPLAIN COST EXEC 'file' variant
+                        if let Some(exec_kw) = self.peek_ident_like() {
+                            if exec_kw.eq_ignore_ascii_case("exec") {
+                                self.advance(); // consume "EXEC"
+                                let path = self.expect_string()?;
+                                return Ok(Statement::ExplainCost(Box::new(
+                                    Statement::ExecFile(path),
+                                )));
+                            }
+                        }
                         let inner = self.parse_statement()?;
                         return Ok(Statement::ExplainCost(Box::new(inner)));
                     }

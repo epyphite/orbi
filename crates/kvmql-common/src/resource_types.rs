@@ -173,6 +173,42 @@ pub const RESOURCE_TYPES: &[ResourceTypeDef] = &[
         required_params: &["id", "security_group_id", "protocol", "port", "cidr"],
         optional_params: &["direction", "description"],
     },
+    ResourceTypeDef {
+        name: "internet_gateway",
+        description: "AWS Internet Gateway",
+        required_params: &["id", "vpc_id"],
+        optional_params: &["tags"],
+    },
+    ResourceTypeDef {
+        name: "route_table",
+        description: "AWS VPC Route Table",
+        required_params: &["id", "vpc_id"],
+        optional_params: &["tags"],
+    },
+    ResourceTypeDef {
+        name: "route_table_association",
+        description: "AWS Route Table ↔ Subnet Association",
+        required_params: &["id", "route_table_id", "subnet_id"],
+        optional_params: &[],
+    },
+    ResourceTypeDef {
+        name: "route",
+        description: "AWS Route in a Route Table",
+        required_params: &["id", "route_table_id", "destination_cidr"],
+        optional_params: &["gateway_id", "nat_gateway_id", "vpc_endpoint_id"],
+    },
+    ResourceTypeDef {
+        name: "db_subnet_group",
+        description: "AWS RDS DB Subnet Group",
+        required_params: &["id", "subnet_ids"],
+        optional_params: &["description"],
+    },
+    ResourceTypeDef {
+        name: "cache_subnet_group",
+        description: "AWS ElastiCache Subnet Group",
+        required_params: &["id", "subnet_ids"],
+        optional_params: &["description"],
+    },
     // ── Cloudflare resource types ───────────────────────────
     ResourceTypeDef {
         name: "cf_zone",
