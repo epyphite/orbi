@@ -682,6 +682,21 @@ impl<'a> Executor<'a> {
             .into());
         }
 
+        // If the resource is pending (never actually provisioned), skip the
+        // cloud deletion and just remove it from the registry.
+        if existing.status == "pending" {
+            self.ctx
+                .registry
+                .delete_resource(&s.id)
+                .map_err(|e| format!("failed to delete pending resource: {e}"))?;
+            return Ok(StmtOutcome::ok_val(serde_json::json!({
+                "id": s.id,
+                "resource_type": s.resource_type,
+                "status": "removed",
+                "note": "pending resource removed from registry (was never provisioned)",
+            })));
+        }
+
         // Attempt real deletion via the appropriate cloud CLI
         let mut notifications: Vec<Notification> = Vec::new();
         {

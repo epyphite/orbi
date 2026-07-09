@@ -356,14 +356,22 @@ impl SshClient {
 
     /// Upload bytes to `remote_path` atomically: stream through stdin into
     /// a temp file, then `mv` into place.  Respects the provider's sudo mode.
+    /// Ensures the parent directory exists before moving.
     pub fn upload(&self, content: &[u8], remote_path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(remote_path);
-        let mv = match self.sudo {
-            SudoMode::On => "sudo -n mv",
-            SudoMode::Smart => "sudo -n mv",
-            SudoMode::Off => "mv",
+        let (maybe_sudo, mv) = match self.sudo {
+            SudoMode::On | SudoMode::Smart => ("sudo -n ", "sudo -n mv"),
+            SudoMode::Off => ("", "mv"),
         };
-        let cmd = format!("tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && {mv} \"$tmp\" {q}");
+        // Ensure parent directory exists, then write to tmp and move into place
+        let parent = std::path::Path::new(remote_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string());
+        let qp = shell_single_quote(&parent);
+        let cmd = format!(
+            "{maybe_sudo}mkdir -p {qp} && tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && {mv} \"$tmp\" {q}"
+        );
         let out = self.exec.exec_with_stdin(&cmd, content)?;
         if out.exit_code != 0 {
             return Err(SshError::CommandFailed {

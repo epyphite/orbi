@@ -143,7 +143,17 @@ impl<'a> Executor<'a> {
         &self,
         s: &AlterProviderStmt,
     ) -> Result<StmtOutcome, EngineError> {
+        // Keys that live inside the labels JSON rather than as direct columns
+        const LABEL_KEYS: &[(&str, &str)] = &[
+            ("sudo", "sudo"),
+            ("user", "ssh_user"),
+            ("port", "ssh_port"),
+        ];
+
         let mut changed = Vec::new();
+        // Collect label-bound updates to merge in one shot
+        let mut label_updates: Vec<(&str, String)> = Vec::new();
+
         for item in &s.set_items {
             let val = match &item.value {
                 Value::String(v) => v.clone(),
@@ -151,11 +161,39 @@ impl<'a> Executor<'a> {
                 Value::Boolean(b) => b.to_string(),
                 _ => format!("{}", item.value),
             };
+
+            if let Some((_, json_key)) = LABEL_KEYS.iter().find(|(k, _)| *k == item.key.as_str()) {
+                label_updates.push((json_key, val.clone()));
+                changed.push(format!("{} = '{val}'", item.key));
+            } else {
+                self.ctx
+                    .registry
+                    .update_provider_field(&s.name, &item.key, &val)
+                    .map_err(|e| format!("failed to alter provider '{}': {e}", s.name))?;
+                changed.push(format!("{} = '{val}'", item.key));
+            }
+        }
+
+        // Merge label-bound updates into the existing labels JSON
+        if !label_updates.is_empty() {
+            let existing = self
+                .ctx
+                .registry
+                .get_provider(&s.name)
+                .map_err(|e| format!("provider '{}' not found: {e}", s.name))?;
+            let mut obj: serde_json::Map<String, serde_json::Value> = existing
+                .labels
+                .as_deref()
+                .and_then(|l| serde_json::from_str(l).ok())
+                .unwrap_or_default();
+            for (key, val) in label_updates {
+                obj.insert(key.to_string(), serde_json::Value::String(val));
+            }
+            let new_labels = serde_json::Value::Object(obj).to_string();
             self.ctx
                 .registry
-                .update_provider_field(&s.name, &item.key, &val)
-                .map_err(|e| format!("failed to alter provider '{}': {e}", s.name))?;
-            changed.push(format!("{} = '{val}'", item.key));
+                .update_provider_field(&s.name, "labels", &new_labels)
+                .map_err(|e| format!("failed to update labels for '{}': {e}", s.name))?;
         }
         let msg = if changed.is_empty() {
             "no changes".to_string()
