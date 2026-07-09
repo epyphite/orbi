@@ -334,9 +334,17 @@ impl SshClient {
     pub fn exec_elevated_checked(&self, cmd: &str) -> Result<String, SshError> {
         let out = self.exec_elevated(cmd)?;
         if out.exit_code != 0 {
+            let stderr = out.stderr.trim();
+            let msg = if stderr.contains("a password is required") {
+                format!(
+                    "{stderr}\nHint: configure passwordless sudo on the remote host, or use sudo = 'off'"
+                )
+            } else {
+                stderr.to_string()
+            };
             return Err(SshError::CommandFailed {
                 exit_code: out.exit_code,
-                stderr: out.stderr.trim().to_string(),
+                stderr: msg,
             });
         }
         Ok(out.stdout)
@@ -359,24 +367,45 @@ impl SshClient {
     /// Ensures the parent directory exists before moving.
     pub fn upload(&self, content: &[u8], remote_path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(remote_path);
-        let (maybe_sudo, mv) = match self.sudo {
-            SudoMode::On | SudoMode::Smart => ("sudo -n ", "sudo -n mv"),
-            SudoMode::Off => ("", "mv"),
-        };
-        // Ensure parent directory exists, then write to tmp and move into place
         let parent = std::path::Path::new(remote_path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "/".to_string());
         let qp = shell_single_quote(&parent);
-        let cmd = format!(
-            "{maybe_sudo}mkdir -p {qp} && tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && {mv} \"$tmp\" {q}"
-        );
+
+        // Build the upload command based on sudo mode
+        let cmd = match self.sudo {
+            SudoMode::Off => {
+                format!("mkdir -p {qp} && tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && mv \"$tmp\" {q}")
+            }
+            SudoMode::On => {
+                format!("sudo -n mkdir -p {qp} && tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && sudo -n mv \"$tmp\" {q}")
+            }
+            SudoMode::Smart => {
+                // Try without sudo first; if mkdir or mv fails, retry with sudo
+                format!(
+                    "mkdir -p {qp} 2>/dev/null || sudo -n mkdir -p {qp} && \
+                     tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && \
+                     (mv \"$tmp\" {q} 2>/dev/null || sudo -n mv \"$tmp\" {q})"
+                )
+            }
+        };
+
         let out = self.exec.exec_with_stdin(&cmd, content)?;
         if out.exit_code != 0 {
+            let stderr = out.stderr.trim();
+            let msg = if stderr.contains("a password is required") {
+                format!(
+                    "{stderr}\n\nHint: the remote user needs passwordless sudo. Add to sudoers:\n  \
+                     {} ALL=(ALL) NOPASSWD: ALL",
+                    self.exec.exec("whoami").map(|o| o.stdout.trim().to_string()).unwrap_or_else(|_| "USER".into())
+                )
+            } else {
+                stderr.to_string()
+            };
             return Err(SshError::CommandFailed {
                 exit_code: out.exit_code,
-                stderr: out.stderr.trim().to_string(),
+                stderr: msg,
             });
         }
         Ok(())

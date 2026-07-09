@@ -127,25 +127,31 @@ impl<'a> Executor<'a> {
 
         let id = get_param(&params, "id").unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        // IF NOT EXISTS: skip silently if resource already exists
+        // IF NOT EXISTS: skip silently if resource already exists and is not pending.
+        // Pending resources are treated as non-existent so retries can re-provision.
         if s.if_not_exists {
-            if let Ok(_existing) = self.ctx.registry.get_resource(&id) {
-                let val = serde_json::json!({
-                    "id": id,
-                    "status": "already_exists",
-                    "skipped": true,
-                });
-                let mut outcome = StmtOutcome::ok_val(val);
-                outcome.notifications.push(Notification {
-                    level: "INFO".into(),
-                    code: "RES_EXISTS".into(),
-                    provider_id: None,
-                    message: format!(
-                        "Resource '{}' '{}' already exists -- skipped",
-                        s.resource_type, id
-                    ),
-                });
-                return Ok(outcome);
+            if let Ok(existing) = self.ctx.registry.get_resource(&id) {
+                if existing.status == "pending" {
+                    // Delete the pending entry so we can re-create it
+                    let _ = self.ctx.registry.delete_resource(&id);
+                } else {
+                    let val = serde_json::json!({
+                        "id": id,
+                        "status": "already_exists",
+                        "skipped": true,
+                    });
+                    let mut outcome = StmtOutcome::ok_val(val);
+                    outcome.notifications.push(Notification {
+                        level: "INFO".into(),
+                        code: "RES_EXISTS".into(),
+                        provider_id: None,
+                        message: format!(
+                            "Resource '{}' '{}' already exists -- skipped",
+                            s.resource_type, id
+                        ),
+                    });
+                    return Ok(outcome);
+                }
             }
         }
         let name = get_param(&params, "name");
