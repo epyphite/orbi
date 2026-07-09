@@ -290,13 +290,14 @@ impl SshClient {
     }
 
     /// Upload bytes to `remote_path` atomically: stream through stdin into
-    /// `path.tmp.<pid>`, then `mv` into place.  `chmod`/`chown` must be
-    /// called separately.
+    /// a temp file, then `mv` into place.  Uses `sudo tee` so the write
+    /// succeeds even when the target directory is root-owned.
     pub fn upload(&self, content: &[u8], remote_path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(remote_path);
-        // Use process-local uniqueness so concurrent writers don't collide
-        // on the tmp filename.  The `$$` is evaluated on the remote shell.
-        let cmd = format!("tmp={q}.tmp.$$ && cat > \"$tmp\" && mv \"$tmp\" {q}");
+        // Write to a world-writable tmp location first, then sudo mv into place.
+        let cmd = format!(
+            "tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && sudo -n mv \"$tmp\" {q}"
+        );
         let out = self.exec.exec_with_stdin(&cmd, content)?;
         if out.exit_code != 0 {
             return Err(SshError::CommandFailed {
@@ -418,7 +419,7 @@ impl SshClient {
 
     pub fn mkdir_p(&self, path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(path);
-        self.exec_checked(&format!("mkdir -p {q}")).map(|_| ())
+        self.exec_sudo_checked(&format!("mkdir -p {q}")).map(|_| ())
     }
 
     pub fn chmod(&self, path: &str, mode: &str) -> Result<(), SshError> {
@@ -434,7 +435,7 @@ impl SshClient {
             });
         }
         let q = shell_single_quote(path);
-        self.exec_checked(&format!("chmod {mode} {q}")).map(|_| ())
+        self.exec_sudo_checked(&format!("chmod {mode} {q}")).map(|_| ())
     }
 
     pub fn chown(
@@ -461,24 +462,24 @@ impl SshClient {
             });
         }
         let q = shell_single_quote(path);
-        self.exec_checked(&format!("chown {spec} {q}")).map(|_| ())
+        self.exec_sudo_checked(&format!("chown {spec} {q}")).map(|_| ())
     }
 
     /// `ln -sfn target link` — atomic replace of an existing symlink.
     pub fn symlink_create(&self, target: &str, link_path: &str) -> Result<(), SshError> {
         let qt = shell_single_quote(target);
         let ql = shell_single_quote(link_path);
-        self.exec_checked(&format!("ln -sfn {qt} {ql}")).map(|_| ())
+        self.exec_sudo_checked(&format!("ln -sfn {qt} {ql}")).map(|_| ())
     }
 
     pub fn remove(&self, path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(path);
-        self.exec_checked(&format!("rm -f {q}")).map(|_| ())
+        self.exec_sudo_checked(&format!("rm -f {q}")).map(|_| ())
     }
 
     pub fn remove_dir(&self, path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(path);
-        self.exec_checked(&format!("rmdir {q}")).map(|_| ())
+        self.exec_sudo_checked(&format!("rmdir {q}")).map(|_| ())
     }
 }
 
