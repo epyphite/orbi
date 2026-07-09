@@ -377,18 +377,45 @@ pub(super) fn parse_ssh_connection_hints(labels: Option<&str>) -> (Option<String
         return (None, None);
     };
     let user = v.get("ssh_user").and_then(|x| x.as_str()).map(String::from);
-    let port = v
-        .get("ssh_port")
-        .and_then(|x| x.as_u64())
-        .and_then(|p| u16::try_from(p).ok());
+    let port = v.get("ssh_port").and_then(|x| {
+        x.as_u64()
+            .or_else(|| x.as_str().and_then(|s| s.parse::<u64>().ok()))
+    }).and_then(|p| u16::try_from(p).ok());
     (user, port)
 }
 
 /// Write resolved private-key material to a mode-0600 tempfile and return
 /// its path.
+///
+/// Handles both OpenSSH format (`BEGIN OPENSSH PRIVATE KEY`) and PEM format
+/// (`BEGIN RSA PRIVATE KEY` / `BEGIN EC PRIVATE KEY`).  Credential resolvers
+/// sometimes return keys with mangled whitespace (e.g. literal `\n` instead
+/// of real newlines, or a single long line from env vars / secrets managers).
+/// We normalise the content before writing.
 pub(super) fn write_ephemeral_key(key_material: &str) -> Result<std::path::PathBuf, String> {
     use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt;
+
+    // Normalise key material: replace literal "\n" sequences with real
+    // newlines (common when keys come from env vars or JSON secrets).
+    let normalised = if key_material.contains("\\n") && !key_material.contains('\n') {
+        key_material.replace("\\n", "\n")
+    } else if key_material.contains("\\n") {
+        // Mixed — some real newlines and some escaped.  Replace escaped ones.
+        key_material.replace("\\n", "\n")
+    } else {
+        key_material.to_string()
+    };
+
+    // Validate that the key looks like a private key
+    let trimmed = normalised.trim();
+    if !trimmed.starts_with("-----BEGIN ") {
+        return Err(format!(
+            "SSH key does not look like a PEM or OpenSSH private key (starts with {:?}…). \
+             Supported formats: OpenSSH (BEGIN OPENSSH PRIVATE KEY) and PEM (BEGIN RSA/EC/DSA PRIVATE KEY).",
+            &trimmed[..trimmed.len().min(30)]
+        ));
+    }
 
     let dir = std::env::temp_dir();
     let filename = format!("orbi-ssh-{}.pem", uuid::Uuid::new_v4());
@@ -404,9 +431,9 @@ pub(super) fn write_ephemeral_key(key_material: &str) -> Result<std::path::PathB
     let mut f = opts
         .open(&path)
         .map_err(|e| format!("failed to create ssh key tempfile: {e}"))?;
-    f.write_all(key_material.as_bytes())
+    f.write_all(trimmed.as_bytes())
         .map_err(|e| format!("failed to write ssh key tempfile: {e}"))?;
-    if !key_material.ends_with('\n') {
+    if !trimmed.ends_with('\n') {
         f.write_all(b"\n")
             .map_err(|e| format!("failed to write ssh key tempfile newline: {e}"))?;
     }
