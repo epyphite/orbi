@@ -733,10 +733,7 @@ impl<'a> Executor<'a> {
                 let config = self.params_to_json(&s.params);
                 let rtype = s.resource_type.as_str();
 
-                let is_aws = matches!(
-                    rtype,
-                    "rds_postgres" | "vpc" | "aws_subnet" | "security_group" | "sg_rule"
-                );
+                let is_aws = Self::is_aws_resource_type(rtype);
                 let is_cloudflare = rtype.starts_with("cf_");
                 let is_github = rtype.starts_with("gh_");
                 let is_k8s = rtype.starts_with("k8s_");
@@ -788,10 +785,7 @@ impl<'a> Executor<'a> {
             }
             Statement::DestroyResource(s) => {
                 let rtype = s.resource_type.as_str();
-                let is_aws = matches!(
-                    rtype,
-                    "rds_postgres" | "vpc" | "aws_subnet" | "security_group" | "sg_rule"
-                );
+                let is_aws = Self::is_aws_resource_type(rtype);
                 let is_cloudflare = rtype.starts_with("cf_");
                 let is_github = rtype.starts_with("gh_");
                 let is_k8s = rtype.starts_with("k8s_");

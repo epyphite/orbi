@@ -474,6 +474,58 @@ impl AwsResourceProvisioner {
             "route53_zone" => self.build_route53_zone_args(params)?,
             "route53_record" => self.build_route53_record_args(params)?,
             "secrets_manager_secret" => self.build_secrets_manager_secret_args(params)?,
+            // Types added in v0.8.1 — inline arg construction for EXPLAIN
+            "internet_gateway" => {
+                let vpc_id = param_str(params, "vpc_id")?;
+                vec!["ec2".into(), "create-internet-gateway".into(),
+                     "&&".into(), "ec2".into(), "attach-internet-gateway".into(),
+                     "--vpc-id".into(), vpc_id]
+            }
+            "route_table" => {
+                let vpc_id = param_str(params, "vpc_id")?;
+                vec!["ec2".into(), "create-route-table".into(), "--vpc-id".into(), vpc_id]
+            }
+            "route_table_association" => {
+                let rt_id = param_str(params, "route_table_id")?;
+                let subnet_id = param_str(params, "subnet_id")?;
+                vec!["ec2".into(), "associate-route-table".into(),
+                     "--route-table-id".into(), rt_id, "--subnet-id".into(), subnet_id]
+            }
+            "route" => {
+                let rt_id = param_str(params, "route_table_id")?;
+                let dest = param_str(params, "destination_cidr")?;
+                vec!["ec2".into(), "create-route".into(),
+                     "--route-table-id".into(), rt_id, "--destination-cidr-block".into(), dest]
+            }
+            "db_subnet_group" => {
+                let name = param_str(params, "id")?;
+                let subnets = param_str(params, "subnet_ids")?;
+                vec!["rds".into(), "create-db-subnet-group".into(),
+                     "--db-subnet-group-name".into(), name, "--subnet-ids".into(), subnets]
+            }
+            "cache_subnet_group" => {
+                let name = param_str(params, "id")?;
+                let subnets = param_str(params, "subnet_ids")?;
+                vec!["elasticache".into(), "create-cache-subnet-group".into(),
+                     "--cache-subnet-group-name".into(), name, "--subnet-ids".into(), subnets]
+            }
+            "iam_policy_attachment" => {
+                let role = param_str(params, "role_name")?;
+                let policy = param_str(params, "policy_arn")?;
+                vec!["iam".into(), "attach-role-policy".into(),
+                     "--role-name".into(), role, "--policy-arn".into(), policy]
+            }
+            "kms_alias" => {
+                let id = param_str(params, "id")?;
+                let key = param_str(params, "target_key_id")?;
+                let alias = if id.starts_with("alias/") { id } else { format!("alias/{id}") };
+                vec!["kms".into(), "create-alias".into(),
+                     "--alias-name".into(), alias, "--target-key-id".into(), key]
+            }
+            "cloudwatch_log_group" => {
+                let id = param_str(params, "id")?;
+                vec!["logs".into(), "create-log-group".into(), "--log-group-name".into(), id]
+            }
             other => return Err(format!("unsupported AWS resource type: {other}").into()),
         };
         Ok(self.build_args(&raw.iter().map(|s| s.as_str()).collect::<Vec<_>>()))

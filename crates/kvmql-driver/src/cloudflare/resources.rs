@@ -63,7 +63,10 @@ impl CloudflareResourceProvisioner {
 
     fn client(&self) -> Result<&CloudflareClient, ProvisionError> {
         self.client.as_ref().ok_or_else(|| {
-            ProvisionError::from("Cloudflare API token not configured. Set auth='env:CLOUDFLARE_API_TOKEN' on provider.")
+            ProvisionError::from(
+                "Cloudflare API token not resolved. Ensure the provider's auth_ref is valid \
+                 (e.g. auth='env:MY_CF_TOKEN') or set CLOUDFLARE_API_TOKEN as a fallback."
+            )
         })
     }
 

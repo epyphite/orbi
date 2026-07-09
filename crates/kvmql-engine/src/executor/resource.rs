@@ -546,10 +546,7 @@ impl<'a> Executor<'a> {
         // Attempt real update via the appropriate cloud CLI
         let mut notifications: Vec<Notification> = Vec::new();
         {
-            let is_aws = matches!(
-                s.resource_type.as_str(),
-                "rds_postgres" | "vpc" | "aws_subnet" | "security_group" | "sg_rule"
-            );
+            let is_aws = Self::is_aws_resource_type(s.resource_type.as_str());
 
             let is_cloudflare = matches!(
                 s.resource_type.as_str(),
@@ -688,10 +685,7 @@ impl<'a> Executor<'a> {
         // Attempt real deletion via the appropriate cloud CLI
         let mut notifications: Vec<Notification> = Vec::new();
         {
-            let is_aws = matches!(
-                s.resource_type.as_str(),
-                "rds_postgres" | "vpc" | "aws_subnet" | "security_group" | "sg_rule"
-            );
+            let is_aws = Self::is_aws_resource_type(s.resource_type.as_str());
 
             let is_cloudflare = matches!(
                 s.resource_type.as_str(),

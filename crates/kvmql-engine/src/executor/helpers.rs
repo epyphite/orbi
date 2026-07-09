@@ -101,6 +101,64 @@ impl<'a> Executor<'a> {
     }
 
     // =======================================================================
+    // Provider type detection
+    // =======================================================================
+
+    /// Returns true if the resource type belongs to the AWS provider.
+    ///
+    /// Used by EXPLAIN, dry-run, and ALTER to route to the correct provisioner
+    /// without a registry lookup. Must be kept in sync with the AWS driver's
+    /// `create()` dispatch.
+    pub(super) fn is_aws_resource_type(rtype: &str) -> bool {
+        matches!(
+            rtype,
+            "rds_postgres"
+                | "vpc"
+                | "aws_subnet"
+                | "security_group"
+                | "sg_rule"
+                | "eks_cluster"
+                | "eks_nodegroup"
+                | "eks_addon"
+                | "s3_bucket"
+                | "kms_key"
+                | "kms_alias"
+                | "elasticache_redis"
+                | "elasticache_replication_group"
+                | "msk_cluster"
+                | "iam_role"
+                | "iam_policy"
+                | "iam_policy_attachment"
+                | "vpc_endpoint"
+                | "nat_gateway"
+                | "internet_gateway"
+                | "route_table"
+                | "route_table_association"
+                | "route"
+                | "db_subnet_group"
+                | "cache_subnet_group"
+                | "acm_certificate"
+                | "cloudwatch_alarm"
+                | "cloudwatch_log_group"
+                | "ses_domain"
+                | "ses_smtp_user"
+                | "backup_vault"
+                | "backup_plan"
+                | "ecs_cluster"
+                | "ecs_service"
+                | "ecs_task_definition"
+                | "ecr_repository"
+                | "alb"
+                | "alb_target_group"
+                | "alb_listener"
+                | "cloudfront_distribution"
+                | "route53_zone"
+                | "route53_record"
+                | "secrets_manager_secret"
+        )
+    }
+
+    // =======================================================================
     // Provisioner getters
     // =======================================================================
 
@@ -144,7 +202,19 @@ impl<'a> Executor<'a> {
         let token = if let Ok(p) = self.ctx.registry.get_provider(provider_id) {
             kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref).ok()
         } else {
-            std::env::var("CLOUDFLARE_API_TOKEN").ok()
+            // Fallback: find any provider of type "cloudflare" and resolve its auth_ref
+            self.ctx
+                .registry
+                .list_providers()
+                .ok()
+                .and_then(|ps| {
+                    ps.iter()
+                        .find(|p| p.provider_type == "cloudflare")
+                        .and_then(|p| {
+                            kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref).ok()
+                        })
+                })
+                .or_else(|| std::env::var("CLOUDFLARE_API_TOKEN").ok())
         };
         kvmql_driver::cloudflare::CloudflareResourceProvisioner::new(token.as_deref())
     }
