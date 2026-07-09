@@ -908,7 +908,11 @@ impl AzureResourceProvisioner {
             args.push("--resource-group".into());
             args.push(rg.clone());
         }
-        if let Some(v) = params.get("source_address").and_then(|v| v.as_str()) {
+        // Support either source_address (CIDR) or source_nsg (NSG-to-NSG)
+        if let Some(v) = params.get("source_nsg").and_then(|v| v.as_str()) {
+            args.push("--source-asgs".into());
+            args.push(v.into());
+        } else if let Some(v) = params.get("source_address").and_then(|v| v.as_str()) {
             args.push("--source-address-prefixes".into());
             args.push(v.into());
         }

@@ -170,14 +170,32 @@ pub const RESOURCE_TYPES: &[ResourceTypeDef] = &[
     ResourceTypeDef {
         name: "sg_rule",
         description: "Security Group Rule",
-        required_params: &["id", "security_group_id", "protocol", "port", "cidr"],
-        optional_params: &["direction", "description"],
+        required_params: &["id", "security_group_id", "protocol", "port"],
+        optional_params: &["cidr", "source_group", "direction", "description"],
     },
     ResourceTypeDef {
         name: "internet_gateway",
         description: "AWS Internet Gateway",
         required_params: &["id", "vpc_id"],
         optional_params: &["tags"],
+    },
+    ResourceTypeDef {
+        name: "iam_policy_attachment",
+        description: "AWS IAM Managed Policy Attachment (role ↔ policy)",
+        required_params: &["id", "role_name", "policy_arn"],
+        optional_params: &[],
+    },
+    ResourceTypeDef {
+        name: "kms_alias",
+        description: "AWS KMS Key Alias",
+        required_params: &["id", "target_key_id"],
+        optional_params: &[],
+    },
+    ResourceTypeDef {
+        name: "cloudwatch_log_group",
+        description: "AWS CloudWatch Log Group",
+        required_params: &["id"],
+        optional_params: &["retention_in_days", "tags"],
     },
     ResourceTypeDef {
         name: "route_table",
@@ -463,7 +481,9 @@ mod tests {
         assert!(sg.required_params.contains(&"security_group_id"));
         assert!(sg.required_params.contains(&"protocol"));
         assert!(sg.required_params.contains(&"port"));
-        assert!(sg.required_params.contains(&"cidr"));
+        // cidr is now optional (can use source_group instead)
+        assert!(sg.optional_params.contains(&"cidr"));
+        assert!(sg.optional_params.contains(&"source_group"));
         assert!(sg.optional_params.contains(&"direction"));
     }
 }

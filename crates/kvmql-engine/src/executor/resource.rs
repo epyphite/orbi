@@ -582,14 +582,27 @@ impl<'a> Executor<'a> {
                     message: "GitHub resource update not yet implemented, config updated in registry only".into(),
                 });
             } else if is_aws {
-                notifications.push(Notification {
-                    level: "WARN".into(),
-                    code: "AWS_UPDATE_NOT_IMPLEMENTED".into(),
-                    provider_id: Some(existing.provider_id.clone()),
-                    message:
-                        "AWS resource update not yet implemented, config updated in registry only"
-                            .into(),
-                });
+                let provisioner = self.get_aws_provisioner(&existing.provider_id);
+                match provisioner.update(&s.resource_type, &s.id, &config) {
+                    Ok(result) => {
+                        if let Some(outputs) = result.outputs {
+                            let _ = self
+                                .ctx
+                                .registry
+                                .update_resource_outputs(&s.id, &outputs.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        notifications.push(Notification {
+                            level: "WARN".into(),
+                            code: "AWS_UPDATE_PARTIAL".into(),
+                            provider_id: Some(existing.provider_id.clone()),
+                            message: format!(
+                                "AWS update not supported for this resource type, config updated in registry only: {e}"
+                            ),
+                        });
+                    }
+                }
             } else {
                 let provisioner = self.get_azure_provisioner(&existing.provider_id);
                 match provisioner.update(&s.resource_type, &s.id, &config) {

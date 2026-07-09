@@ -296,7 +296,8 @@ impl<'a> Executor<'a> {
             | "ses_domain" | "ses_smtp_user" | "acm_certificate" | "eks_addon" | "backup_vault"
             | "backup_plan" | "cloudwatch_alarm" | "internet_gateway" | "route_table"
             | "route_table_association" | "route" | "db_subnet_group"
-            | "cache_subnet_group" => {
+            | "cache_subnet_group" | "iam_policy_attachment" | "kms_alias"
+            | "cloudwatch_log_group" => {
                 return Ok(Some(CostEstimate {
                     resource_id: params
                         .get("id")

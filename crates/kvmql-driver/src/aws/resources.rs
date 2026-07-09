@@ -77,6 +77,9 @@ impl AwsResourceProvisioner {
             "route" => self.create_route(params),
             "db_subnet_group" => self.create_db_subnet_group(params),
             "cache_subnet_group" => self.create_cache_subnet_group(params),
+            "iam_policy_attachment" => self.create_iam_policy_attachment(params),
+            "kms_alias" => self.create_kms_alias(params),
+            "cloudwatch_log_group" => self.create_cloudwatch_log_group(params),
             other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
@@ -312,6 +315,26 @@ impl AwsResourceProvisioner {
                 self.run_aws(&[
                     "elasticache", "delete-cache-subnet-group",
                     "--cache-subnet-group-name", id,
+                ])?;
+                Ok(())
+            }
+            "iam_policy_attachment" => {
+                // id format: "role_name::policy_arn" — need delete_with_params
+                Err("iam_policy_attachment deletion requires params (role_name, policy_arn); use delete_with_params()".into())
+            }
+            "kms_alias" => {
+                let alias_name = if id.starts_with("alias/") {
+                    id.to_string()
+                } else {
+                    format!("alias/{id}")
+                };
+                self.run_aws(&["kms", "delete-alias", "--alias-name", &alias_name])?;
+                Ok(())
+            }
+            "cloudwatch_log_group" => {
+                self.run_aws(&[
+                    "logs", "delete-log-group",
+                    "--log-group-name", id,
                 ])?;
                 Ok(())
             }
@@ -2711,6 +2734,104 @@ impl AwsResourceProvisioner {
         })
     }
 
+    fn create_iam_policy_attachment(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let role_name = param_str(params, "role_name")?;
+        let policy_arn = param_str(params, "policy_arn")?;
+
+        self.run_aws(&[
+            "iam",
+            "attach-role-policy",
+            "--role-name",
+            &role_name,
+            "--policy-arn",
+            &policy_arn,
+        ])?;
+
+        let outputs = serde_json::json!({
+            "role_name": role_name,
+            "policy_arn": policy_arn,
+        });
+
+        Ok(ProvisionResult {
+            status: "attached".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_kms_alias(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
+        let id = param_str(params, "id")?;
+        let target_key_id = param_str(params, "target_key_id")?;
+
+        let alias_name = if id.starts_with("alias/") {
+            id.clone()
+        } else {
+            format!("alias/{id}")
+        };
+
+        self.run_aws(&[
+            "kms",
+            "create-alias",
+            "--alias-name",
+            &alias_name,
+            "--target-key-id",
+            &target_key_id,
+        ])?;
+
+        let outputs = serde_json::json!({
+            "alias_name": alias_name,
+            "target_key_id": target_key_id,
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    fn create_cloudwatch_log_group(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let id = param_str(params, "id")?;
+
+        self.run_aws(&["logs", "create-log-group", "--log-group-name", &id])?;
+
+        // Set retention if specified
+        if let Some(retention) = params.get("retention_in_days").and_then(|v| v.as_str()) {
+            let _ = self.run_aws(&[
+                "logs",
+                "put-retention-policy",
+                "--log-group-name",
+                &id,
+                "--retention-in-days",
+                retention,
+            ]);
+        } else if let Some(retention) = params.get("retention_in_days").and_then(|v| v.as_i64()) {
+            let ret_str = retention.to_string();
+            let _ = self.run_aws(&[
+                "logs",
+                "put-retention-policy",
+                "--log-group-name",
+                &id,
+                "--retention-in-days",
+                &ret_str,
+            ]);
+        }
+
+        let outputs = serde_json::json!({
+            "log_group_name": id,
+            "retention_in_days": params.get("retention_in_days"),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
     fn create_acm_certificate(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let args = self.build_acm_certificate_args(params)?;
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -2850,7 +2971,6 @@ impl AwsResourceProvisioner {
         let group_id = param_str(params, "security_group_id")?;
         let protocol = param_str(params, "protocol")?;
         let port = param_str(params, "port")?;
-        let cidr = param_str(params, "cidr")?;
 
         let direction = param_str_or(params, "direction", "ingress");
 
@@ -2860,7 +2980,7 @@ impl AwsResourceProvisioner {
             "authorize-security-group-ingress"
         };
 
-        let args = vec![
+        let mut args = vec![
             "ec2".into(),
             cmd.into(),
             "--group-id".into(),
@@ -2869,9 +2989,22 @@ impl AwsResourceProvisioner {
             protocol,
             "--port".into(),
             port,
-            "--cidr".into(),
-            cidr,
         ];
+
+        // Support either CIDR block or source security group (SG-to-SG)
+        if let Some(source_group) = params.get("source_group").and_then(|v| v.as_str()) {
+            args.push("--source-group".into());
+            args.push(source_group.into());
+        } else {
+            let cidr = param_str(params, "cidr")?;
+            args.push("--cidr".into());
+            args.push(cidr);
+        }
+
+        if let Some(desc) = params.get("description").and_then(|v| v.as_str()) {
+            args.push("--description".into());
+            args.push(desc.into());
+        }
         Ok(args)
     }
 
@@ -3132,8 +3265,9 @@ impl AwsResourceProvisioner {
             "--service-name".into(),
             service_name,
             "--vpc-endpoint-type".into(),
-            ep_type,
+            ep_type.clone(),
         ];
+        // Interface endpoints require subnets and security groups
         if let Some(subnets) = params.get("subnet_ids").and_then(|v| v.as_str()) {
             args.push("--subnet-ids".into());
             args.push(subnets.into());
@@ -3141,6 +3275,23 @@ impl AwsResourceProvisioner {
         if let Some(sgs) = params.get("security_group_ids").and_then(|v| v.as_str()) {
             args.push("--security-group-ids".into());
             args.push(sgs.into());
+        }
+        // Private DNS (Interface endpoints only, defaults to true)
+        if ep_type.eq_ignore_ascii_case("Interface") {
+            let dns_enabled = params
+                .get("private_dns_enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            if dns_enabled {
+                args.push("--private-dns-enabled".into());
+            } else {
+                args.push("--no-private-dns-enabled".into());
+            }
+        }
+        // Route table IDs (Gateway endpoints only)
+        if let Some(rt_ids) = params.get("route_table_ids").and_then(|v| v.as_str()) {
+            args.push("--route-table-ids".into());
+            args.push(rt_ids.into());
         }
         Ok(args)
     }
@@ -3607,27 +3758,60 @@ impl AwsResourceProvisioner {
         let subnets = param_str(params, "subnets")?;
         let security_groups = param_str(params, "security_groups")?;
         let public_ip = param_str_or(params, "public_ip", "DISABLED");
+        let platform_version = param_str_or(params, "platform_version", "LATEST");
 
         let network_config = format!(
             "awsvpcConfiguration={{subnets=[{subnets}],securityGroups=[{security_groups}],assignPublicIp={public_ip}}}"
         );
 
-        let args = vec![
+        let mut args = vec![
             "ecs".into(),
             "create-service".into(),
             "--cluster".into(),
             cluster,
             "--service-name".into(),
-            id,
+            id.clone(),
             "--task-definition".into(),
             task_definition,
             "--desired-count".into(),
             desired_count,
             "--launch-type".into(),
             "FARGATE".into(),
+            "--platform-version".into(),
+            platform_version,
             "--network-configuration".into(),
             network_config,
         ];
+
+        // Load balancer configuration (target_group_arn + container_name + container_port)
+        if let Some(tg_arn) = params.get("target_group_arn").and_then(|v| v.as_str()) {
+            let lb_container = params
+                .get("lb_container_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id);
+            let lb_port = params
+                .get("lb_container_port")
+                .and_then(|v| v.as_str())
+                .or_else(|| params.get("lb_container_port").and_then(|v| v.as_i64()).map(|_| ""))
+                .unwrap_or("80");
+            let lb_port_val = params
+                .get("lb_container_port")
+                .and_then(|v| v.as_i64())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| lb_port.to_string());
+            let lb_json = format!(
+                "targetGroupArn={tg_arn},containerName={lb_container},containerPort={lb_port_val}"
+            );
+            args.push("--load-balancers".into());
+            args.push(lb_json);
+        }
+
+        // Service registries (for Cloud Map)
+        if let Some(registry_arn) = params.get("service_registry_arn").and_then(|v| v.as_str()) {
+            args.push("--service-registries".into());
+            args.push(format!("registryArn={registry_arn}"));
+        }
+
         Ok(args)
     }
 
@@ -3642,12 +3826,81 @@ impl AwsResourceProvisioner {
         let image = param_str(params, "image")?;
         let port = param_str_or(params, "port", "80");
 
-        let container_defs = format!(
-            r#"[{{"name":"{}","image":"{}","portMappings":[{{"containerPort":{},"protocol":"tcp"}}],"essential":true}}]"#,
-            container_name, image, port
-        );
+        // Build container definition as JSON for full control
+        let mut container = serde_json::json!({
+            "name": container_name,
+            "image": image,
+            "portMappings": [{"containerPort": port.parse::<i64>().unwrap_or(80), "protocol": "tcp"}],
+            "essential": true,
+        });
 
-        let args = vec![
+        if let Some(obj) = container.as_object_mut() {
+            // Environment variables: env_vars = 'KEY1=val1,KEY2=val2'
+            if let Some(env_str) = params.get("env_vars").and_then(|v| v.as_str()) {
+                let env: Vec<serde_json::Value> = env_str
+                    .split(',')
+                    .filter_map(|pair| {
+                        let mut parts = pair.splitn(2, '=');
+                        let k = parts.next()?.trim();
+                        let v = parts.next()?.trim();
+                        Some(serde_json::json!({"name": k, "value": v}))
+                    })
+                    .collect();
+                if !env.is_empty() {
+                    obj.insert("environment".into(), serde_json::Value::Array(env));
+                }
+            }
+
+            // Log configuration: log_group = '/ecs/my-service'
+            if let Some(log_group) = params.get("log_group").and_then(|v| v.as_str()) {
+                let region = self.region.as_deref().unwrap_or("us-east-1");
+                obj.insert(
+                    "logConfiguration".into(),
+                    serde_json::json!({
+                        "logDriver": "awslogs",
+                        "options": {
+                            "awslogs-group": log_group,
+                            "awslogs-region": region,
+                            "awslogs-stream-prefix": "ecs"
+                        }
+                    }),
+                );
+            }
+
+            // Health check: health_check_cmd = 'CMD-SHELL,curl -f http://localhost/ || exit 1'
+            if let Some(hc) = params.get("health_check_cmd").and_then(|v| v.as_str()) {
+                let parts: Vec<&str> = hc.splitn(2, ',').collect();
+                let (cmd_type, cmd) = if parts.len() == 2 {
+                    (parts[0], parts[1])
+                } else {
+                    ("CMD-SHELL", hc)
+                };
+                obj.insert(
+                    "healthCheck".into(),
+                    serde_json::json!({"command": [cmd_type, cmd], "interval": 30, "timeout": 5, "retries": 3}),
+                );
+            }
+
+            // Secrets: secrets = 'ENV_VAR=arn:aws:secretsmanager:...,OTHER=arn:...'
+            if let Some(secrets_str) = params.get("secrets").and_then(|v| v.as_str()) {
+                let secrets: Vec<serde_json::Value> = secrets_str
+                    .split(',')
+                    .filter_map(|pair| {
+                        let mut parts = pair.splitn(2, '=');
+                        let k = parts.next()?.trim();
+                        let v = parts.next()?.trim();
+                        Some(serde_json::json!({"name": k, "valueFrom": v}))
+                    })
+                    .collect();
+                if !secrets.is_empty() {
+                    obj.insert("secrets".into(), serde_json::Value::Array(secrets));
+                }
+            }
+        }
+
+        let container_defs = serde_json::json!([container]).to_string();
+
+        let mut args = vec![
             "ecs".into(),
             "register-task-definition".into(),
             "--family".into(),
@@ -3663,6 +3916,18 @@ impl AwsResourceProvisioner {
             "--container-definitions".into(),
             container_defs,
         ];
+
+        // Execution role (required for log drivers and secrets)
+        if let Some(exec_role) = params.get("execution_role_arn").and_then(|v| v.as_str()) {
+            args.push("--execution-role-arn".into());
+            args.push(exec_role.into());
+        }
+        // Task role (for application-level AWS API access)
+        if let Some(task_role) = params.get("task_role_arn").and_then(|v| v.as_str()) {
+            args.push("--task-role-arn".into());
+            args.push(task_role.into());
+        }
+
         Ok(args)
     }
 
@@ -3842,6 +4107,71 @@ impl AwsResourceProvisioner {
             args.push(desc.into());
         }
         Ok(args)
+    }
+
+    // ── UPDATE (ALTER RESOURCE) ────────────────────────────────────
+
+    /// Update an existing AWS resource. Returns updated outputs on success.
+    pub fn update(
+        &self,
+        resource_type: &str,
+        id: &str,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        match resource_type {
+            "secrets_manager_secret" => {
+                let mut args = vec![
+                    "secretsmanager".to_string(),
+                    "update-secret".to_string(),
+                    "--secret-id".to_string(),
+                    id.to_string(),
+                ];
+                if let Some(value) = params.get("value").and_then(|v| v.as_str()) {
+                    args.push("--secret-string".into());
+                    args.push(value.into());
+                }
+                if let Some(desc) = params.get("description").and_then(|v| v.as_str()) {
+                    args.push("--description".into());
+                    args.push(desc.into());
+                }
+                let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let result = self.run_aws(&refs)?;
+
+                let outputs = serde_json::json!({
+                    "arn": result.get("ARN"),
+                    "name": result.get("Name"),
+                    "version_id": result.get("VersionId"),
+                });
+                Ok(ProvisionResult {
+                    status: "updated".into(),
+                    outputs: Some(outputs),
+                })
+            }
+            "cloudwatch_log_group" => {
+                if let Some(retention) = params.get("retention_in_days") {
+                    let ret_str = if let Some(n) = retention.as_i64() {
+                        n.to_string()
+                    } else if let Some(s) = retention.as_str() {
+                        s.to_string()
+                    } else {
+                        return Err("invalid retention_in_days value".into());
+                    };
+                    self.run_aws(&[
+                        "logs",
+                        "put-retention-policy",
+                        "--log-group-name",
+                        id,
+                        "--retention-in-days",
+                        &ret_str,
+                    ])?;
+                }
+                Ok(ProvisionResult {
+                    status: "updated".into(),
+                    outputs: None,
+                })
+            }
+            other => Err(format!("ALTER not supported for AWS resource type: {other}").into()),
+        }
     }
 }
 
