@@ -286,8 +286,22 @@ impl<'a> Executor<'a> {
             }
         };
 
-        let client =
-            kvmql_driver::ssh::SshClient::from_openssh(&host, user.as_deref(), port, key_path);
+        // Extract sudo mode from labels: {"sudo":"smart"} or {"sudo":"on"}
+        let sudo_mode = p
+            .labels
+            .as_deref()
+            .and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .and_then(|v| v.get("sudo").and_then(|s| s.as_str()).map(String::from))
+            .map(|s| kvmql_driver::ssh::SudoMode::from_str_loose(&s))
+            .unwrap_or(kvmql_driver::ssh::SudoMode::Off);
+
+        let client = kvmql_driver::ssh::SshClient::from_openssh(
+            &host,
+            user.as_deref(),
+            port,
+            key_path,
+        )
+        .with_sudo(sudo_mode);
         Ok(kvmql_driver::ssh::SshResourceProvisioner::new(client))
     }
 

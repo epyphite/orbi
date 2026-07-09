@@ -207,14 +207,14 @@ impl<'a> NginxProvisioner<'a> {
     fn config_test(&self) -> Result<bool, ProvisionError> {
         let out = self
             .client
-            .exec_sudo("nginx -t 2>&1")
+            .exec_elevated("nginx -t 2>&1")
             .map_err(|e| e.to_string())?;
         Ok(out.exit_code == 0)
     }
 
     fn reload_nginx(&self) -> Result<(), ProvisionError> {
         self.client
-            .exec_sudo_checked("systemctl reload nginx")
+            .exec_elevated_checked("systemctl reload nginx")
             .map(|_| ())
             .map_err(|e| format!("nginx reload failed: {e}"))?;
         Ok(())
@@ -252,7 +252,7 @@ impl<'a> NginxProvisioner<'a> {
     pub fn config_test_row(&self) -> Result<Vec<Value>, ProvisionError> {
         let out = self
             .client
-            .exec_sudo("nginx -t 2>&1")
+            .exec_elevated("nginx -t 2>&1")
             .map_err(|e| e.to_string())?;
         let valid = out.exit_code == 0;
         let output = format!("{}{}", out.stdout, out.stderr);

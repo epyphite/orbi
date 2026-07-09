@@ -254,7 +254,7 @@ impl SshResourceProvisioner {
         }
 
         // Let's Encrypt certificates
-        if let Ok(out) = self.client.exec_sudo("certbot certificates 2>/dev/null || true") {
+        if let Ok(out) = self.client.exec_elevated("certbot certificates 2>/dev/null || true") {
             // Parse certbot output — each cert block starts with
             // "Certificate Name:" and has "Domains:", "Expiry Date:" lines.
             let mut cert_name: Option<String> = None;

@@ -239,7 +239,7 @@ impl<'a> SystemdProvisioner<'a> {
         // systemctl mutations (start/stop/enable/disable/reload) require root
         Ok(self
             .client
-            .exec_sudo_checked(&cmd)
+            .exec_elevated_checked(&cmd)
             .map_err(|e| e.to_string())?)
     }
 

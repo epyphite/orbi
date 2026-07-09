@@ -70,7 +70,7 @@ impl<'a> DockerProvisioner<'a> {
                     .unwrap_or(id);
                 let qp = super::client::shell_single_quote(project);
                 self.client
-                    .exec_sudo_checked(&format!("docker compose -p {qp} down"))
+                    .exec_elevated_checked(&format!("docker compose -p {qp} down"))
                     .map(|_| ())
                     .map_err(|e| format!("docker compose down failed: {e}").into())
             }
@@ -236,7 +236,7 @@ impl<'a> DockerProvisioner<'a> {
         let qp = super::client::shell_single_quote(&project);
         let qd = super::client::shell_single_quote(&dir);
         self.client
-            .exec_sudo_checked(&format!(
+            .exec_elevated_checked(&format!(
                 "docker compose -p {qp} -f {qd}/docker-compose.yml up -d"
             ))
             .map_err(|e| format!("docker compose up failed: {e}"))?;
@@ -306,14 +306,14 @@ impl<'a> DockerProvisioner<'a> {
         );
         Ok(self
             .client
-            .exec_sudo_checked(&cmd)
+            .exec_elevated_checked(&cmd)
             .map_err(|e| e.to_string())?)
     }
 
     fn container_exists(&self, name: &str) -> bool {
         let q = super::client::shell_single_quote(name);
         self.client
-            .exec_sudo(&format!("docker inspect {q} >/dev/null 2>&1 && echo yes"))
+            .exec_elevated(&format!("docker inspect {q} >/dev/null 2>&1 && echo yes"))
             .map(|o| o.stdout.trim() == "yes")
             .unwrap_or(false)
     }
@@ -321,7 +321,7 @@ impl<'a> DockerProvisioner<'a> {
     fn volume_exists(&self, name: &str) -> bool {
         let q = super::client::shell_single_quote(name);
         self.client
-            .exec_sudo(&format!(
+            .exec_elevated(&format!(
                 "docker volume inspect {q} >/dev/null 2>&1 && echo yes"
             ))
             .map(|o| o.stdout.trim() == "yes")
@@ -331,7 +331,7 @@ impl<'a> DockerProvisioner<'a> {
     fn network_exists(&self, name: &str) -> bool {
         let q = super::client::shell_single_quote(name);
         self.client
-            .exec_sudo(&format!(
+            .exec_elevated(&format!(
                 "docker network inspect {q} >/dev/null 2>&1 && echo yes"
             ))
             .map(|o| o.stdout.trim() == "yes")

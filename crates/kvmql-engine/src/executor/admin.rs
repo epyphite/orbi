@@ -45,12 +45,13 @@ impl<'a> Executor<'a> {
         let region = get_param(&s.params, "region");
         let mut labels = get_param(&s.params, "labels");
 
-        // Merge USER and PORT params into labels for SSH providers so they
-        // survive the round-trip through the registry (labels is the only
-        // extensible field on the providers table).
+        // Merge USER, PORT, and SUDO params into labels for SSH providers so
+        // they survive the round-trip through the registry (labels is the
+        // only extensible field on the providers table).
         let ssh_user = get_param(&s.params, "user");
         let ssh_port = get_param(&s.params, "port");
-        if ssh_user.is_some() || ssh_port.is_some() {
+        let ssh_sudo = get_param(&s.params, "sudo");
+        if ssh_user.is_some() || ssh_port.is_some() || ssh_sudo.is_some() {
             let mut obj: serde_json::Map<String, serde_json::Value> = labels
                 .as_deref()
                 .and_then(|l| serde_json::from_str(l).ok())
@@ -60,6 +61,9 @@ impl<'a> Executor<'a> {
             }
             if let Some(p) = &ssh_port {
                 obj.insert("ssh_port".into(), serde_json::Value::String(p.clone()));
+            }
+            if let Some(s) = &ssh_sudo {
+                obj.insert("sudo".into(), serde_json::Value::String(s.clone()));
             }
             labels = Some(serde_json::Value::Object(obj).to_string());
         }

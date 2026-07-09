@@ -19,5 +19,5 @@ pub mod nginx;
 pub mod resources;
 pub mod systemd;
 
-pub use client::{SshClient, SshError, SshExec, StatInfo};
+pub use client::{SshClient, SshError, SshExec, StatInfo, SudoMode};
 pub use resources::SshResourceProvisioner;

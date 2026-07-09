@@ -55,7 +55,7 @@ impl<'a> LetsencryptProvisioner<'a> {
             "letsencrypt_cert" => {
                 let q = super::client::shell_single_quote(id);
                 self.client
-                    .exec_sudo_checked(&format!("certbot delete --cert-name {q} --non-interactive"))
+                    .exec_elevated_checked(&format!("certbot delete --cert-name {q} --non-interactive"))
                     .map(|_| ())
                     .map_err(|e| format!("certbot delete failed: {e}").into())
             }
@@ -188,7 +188,7 @@ impl<'a> LetsencryptProvisioner<'a> {
              {domain_args}"
         );
 
-        let result = self.client.exec_sudo(&cmd).map_err(|e| e.to_string())?;
+        let result = self.client.exec_elevated(&cmd).map_err(|e| e.to_string())?;
 
         // Clean up credentials file regardless of outcome
         let _ = self.client.remove(creds_path);
@@ -234,7 +234,7 @@ impl<'a> LetsencryptProvisioner<'a> {
         );
 
         self.client
-            .exec_sudo_checked(&cmd)
+            .exec_elevated_checked(&cmd)
             .map(|_| ())
             .map_err(|e| format!("certbot http-01 failed: {e}").into())
     }
@@ -273,7 +273,7 @@ impl<'a> LetsencryptProvisioner<'a> {
     fn run_certbot_renew(&self, cert_name: &str) -> Result<(), ProvisionError> {
         let q = super::client::shell_single_quote(cert_name);
         self.client
-            .exec_sudo_checked(&format!("certbot renew --cert-name {q} --non-interactive"))
+            .exec_elevated_checked(&format!("certbot renew --cert-name {q} --non-interactive"))
             .map(|_| ())
             .map_err(|e| format!("certbot renew failed: {e}").into())
     }

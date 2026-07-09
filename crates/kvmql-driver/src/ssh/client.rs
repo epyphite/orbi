@@ -223,15 +223,45 @@ fn looks_like_connect_failure(stderr: &str) -> bool {
         || s.contains("could not resolve hostname")
 }
 
+/// Sudo escalation policy for SSH operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SudoMode {
+    /// Never use sudo (default — safe for user-space deploys).
+    Off,
+    /// Always prefix mutating commands with `sudo -n`.
+    On,
+    /// Try without sudo first; retry with sudo on permission denied.
+    Smart,
+}
+
+impl SudoMode {
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "on" | "true" | "yes" | "always" => Self::On,
+            "smart" | "auto" => Self::Smart,
+            _ => Self::Off,
+        }
+    }
+}
+
 /// High-level SSH client: builds on any [`SshExec`] implementation and
 /// exposes filesystem primitives the resource provisioner needs.
 pub struct SshClient {
     exec: Box<dyn SshExec>,
+    pub sudo: SudoMode,
 }
 
 impl SshClient {
     pub fn new(exec: Box<dyn SshExec>) -> Self {
-        Self { exec }
+        Self {
+            exec,
+            sudo: SudoMode::Off,
+        }
+    }
+
+    pub fn with_sudo(mut self, mode: SudoMode) -> Self {
+        self.sudo = mode;
+        self
     }
 
     /// Construct a real SSH client from provider config.
@@ -259,8 +289,7 @@ impl SshClient {
         self.exec.exec(cmd)
     }
 
-    /// Run a remote command with `sudo` prefix.  Uses `-n` (non-interactive)
-    /// so it fails fast instead of hanging when sudo requires a password.
+    /// Run a remote command with explicit `sudo -n` prefix.
     pub fn exec_sudo(&self, cmd: &str) -> Result<ExecOutput, SshError> {
         self.exec.exec(&format!("sudo -n {cmd}"))
     }
@@ -268,6 +297,42 @@ impl SshClient {
     /// Run a remote command with sudo, failing if exit != 0.
     pub fn exec_sudo_checked(&self, cmd: &str) -> Result<String, SshError> {
         let out = self.exec_sudo(cmd)?;
+        if out.exit_code != 0 {
+            return Err(SshError::CommandFailed {
+                exit_code: out.exit_code,
+                stderr: out.stderr.trim().to_string(),
+            });
+        }
+        Ok(out.stdout)
+    }
+
+    /// Run a mutating command respecting the provider's [`SudoMode`].
+    ///
+    /// - `Off`: run as-is
+    /// - `On`: always `sudo -n`
+    /// - `Smart`: try without; if "Permission denied", retry with `sudo -n`
+    pub fn exec_elevated(&self, cmd: &str) -> Result<ExecOutput, SshError> {
+        match self.sudo {
+            SudoMode::Off => self.exec.exec(cmd),
+            SudoMode::On => self.exec.exec(&format!("sudo -n {cmd}")),
+            SudoMode::Smart => {
+                let out = self.exec.exec(cmd)?;
+                if out.exit_code != 0
+                    && (out.stderr.contains("Permission denied")
+                        || out.stderr.contains("Operation not permitted")
+                        || out.stderr.contains("Read-only file system"))
+                {
+                    self.exec.exec(&format!("sudo -n {cmd}"))
+                } else {
+                    Ok(out)
+                }
+            }
+        }
+    }
+
+    /// Like [`exec_elevated`] but fails on non-zero exit.
+    pub fn exec_elevated_checked(&self, cmd: &str) -> Result<String, SshError> {
+        let out = self.exec_elevated(cmd)?;
         if out.exit_code != 0 {
             return Err(SshError::CommandFailed {
                 exit_code: out.exit_code,
@@ -290,14 +355,15 @@ impl SshClient {
     }
 
     /// Upload bytes to `remote_path` atomically: stream through stdin into
-    /// a temp file, then `mv` into place.  Uses `sudo tee` so the write
-    /// succeeds even when the target directory is root-owned.
+    /// a temp file, then `mv` into place.  Respects the provider's sudo mode.
     pub fn upload(&self, content: &[u8], remote_path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(remote_path);
-        // Write to a world-writable tmp location first, then sudo mv into place.
-        let cmd = format!(
-            "tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && sudo -n mv \"$tmp\" {q}"
-        );
+        let mv = match self.sudo {
+            SudoMode::On => "sudo -n mv",
+            SudoMode::Smart => "sudo -n mv",
+            SudoMode::Off => "mv",
+        };
+        let cmd = format!("tmp=/tmp/orbi-upload.$$ && cat > \"$tmp\" && {mv} \"$tmp\" {q}");
         let out = self.exec.exec_with_stdin(&cmd, content)?;
         if out.exit_code != 0 {
             return Err(SshError::CommandFailed {
@@ -419,7 +485,7 @@ impl SshClient {
 
     pub fn mkdir_p(&self, path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(path);
-        self.exec_sudo_checked(&format!("mkdir -p {q}")).map(|_| ())
+        self.exec_elevated_checked(&format!("mkdir -p {q}")).map(|_| ())
     }
 
     pub fn chmod(&self, path: &str, mode: &str) -> Result<(), SshError> {
@@ -435,7 +501,7 @@ impl SshClient {
             });
         }
         let q = shell_single_quote(path);
-        self.exec_sudo_checked(&format!("chmod {mode} {q}")).map(|_| ())
+        self.exec_elevated_checked(&format!("chmod {mode} {q}")).map(|_| ())
     }
 
     pub fn chown(
@@ -462,24 +528,24 @@ impl SshClient {
             });
         }
         let q = shell_single_quote(path);
-        self.exec_sudo_checked(&format!("chown {spec} {q}")).map(|_| ())
+        self.exec_elevated_checked(&format!("chown {spec} {q}")).map(|_| ())
     }
 
     /// `ln -sfn target link` — atomic replace of an existing symlink.
     pub fn symlink_create(&self, target: &str, link_path: &str) -> Result<(), SshError> {
         let qt = shell_single_quote(target);
         let ql = shell_single_quote(link_path);
-        self.exec_sudo_checked(&format!("ln -sfn {qt} {ql}")).map(|_| ())
+        self.exec_elevated_checked(&format!("ln -sfn {qt} {ql}")).map(|_| ())
     }
 
     pub fn remove(&self, path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(path);
-        self.exec_sudo_checked(&format!("rm -f {q}")).map(|_| ())
+        self.exec_elevated_checked(&format!("rm -f {q}")).map(|_| ())
     }
 
     pub fn remove_dir(&self, path: &str) -> Result<(), SshError> {
         let q = shell_single_quote(path);
-        self.exec_sudo_checked(&format!("rmdir {q}")).map(|_| ())
+        self.exec_elevated_checked(&format!("rmdir {q}")).map(|_| ())
     }
 }
 
