@@ -3822,83 +3822,163 @@ impl AwsResourceProvisioner {
         let id = param_str(params, "id")?;
         let cpu = param_str_or(params, "cpu", "256");
         let memory = param_str_or(params, "memory", "512");
-        let container_name = param_str_or(params, "container_name", &id);
-        let image = param_str(params, "image")?;
-        let port = param_str_or(params, "port", "80");
 
-        // Build container definition as JSON for full control
-        let mut container = serde_json::json!({
-            "name": container_name,
-            "image": image,
-            "portMappings": [{"containerPort": port.parse::<i64>().unwrap_or(80), "protocol": "tcp"}],
-            "essential": true,
-        });
+        // If user passes raw container_definitions JSON, use it directly
+        // (full-control escape hatch for complex multi-container tasks)
+        let container_defs = if let Some(raw) = params.get("container_definitions").and_then(|v| v.as_str()) {
+            raw.to_string()
+        } else {
+            // Build single-container definition from params
+            let container_name = param_str_or(params, "container_name", &id);
+            let image = param_str(params, "image")?;
 
-        if let Some(obj) = container.as_object_mut() {
-            // Environment variables: env_vars = 'KEY1=val1,KEY2=val2'
-            if let Some(env_str) = params.get("env_vars").and_then(|v| v.as_str()) {
-                let env: Vec<serde_json::Value> = env_str
-                    .split(',')
-                    .filter_map(|pair| {
-                        let mut parts = pair.splitn(2, '=');
-                        let k = parts.next()?.trim();
-                        let v = parts.next()?.trim();
-                        Some(serde_json::json!({"name": k, "value": v}))
-                    })
-                    .collect();
-                if !env.is_empty() {
-                    obj.insert("environment".into(), serde_json::Value::Array(env));
+            // Port mappings: port = '80' or ports = '80,443,8080'
+            let port_mappings: Vec<serde_json::Value> = if let Some(ports) = params.get("ports").and_then(|v| v.as_str()) {
+                ports.split(',').map(|p| {
+                    let port_num = p.trim().parse::<i64>().unwrap_or(80);
+                    serde_json::json!({"containerPort": port_num, "protocol": "tcp"})
+                }).collect()
+            } else {
+                let port = param_str_or(params, "port", "80");
+                vec![serde_json::json!({"containerPort": port.parse::<i64>().unwrap_or(80), "protocol": "tcp"})]
+            };
+
+            let mut container = serde_json::json!({
+                "name": container_name,
+                "image": image,
+                "portMappings": port_mappings,
+                "essential": true,
+            });
+
+            if let Some(obj) = container.as_object_mut() {
+                // Command override: command = 'node,server.js' (comma-separated)
+                if let Some(cmd) = params.get("command").and_then(|v| v.as_str()) {
+                    let parts: Vec<serde_json::Value> = cmd.split(',')
+                        .map(|s| serde_json::Value::String(s.trim().to_string()))
+                        .collect();
+                    obj.insert("command".into(), serde_json::Value::Array(parts));
+                }
+
+                // Entrypoint override: entrypoint = '/bin/sh,-c'
+                if let Some(ep) = params.get("entrypoint").and_then(|v| v.as_str()) {
+                    let parts: Vec<serde_json::Value> = ep.split(',')
+                        .map(|s| serde_json::Value::String(s.trim().to_string()))
+                        .collect();
+                    obj.insert("entryPoint".into(), serde_json::Value::Array(parts));
+                }
+
+                // Working directory
+                if let Some(wd) = params.get("working_directory").and_then(|v| v.as_str()) {
+                    obj.insert("workingDirectory".into(), serde_json::Value::String(wd.to_string()));
+                }
+
+                // Container-level memory limits
+                if let Some(mem_limit) = params.get("memory_reservation").and_then(|v| {
+                    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                }) {
+                    obj.insert("memoryReservation".into(), serde_json::json!(mem_limit));
+                }
+
+                // Environment variables: env_vars = 'KEY1=val1,KEY2=val2'
+                if let Some(env_str) = params.get("env_vars").and_then(|v| v.as_str()) {
+                    let env: Vec<serde_json::Value> = env_str
+                        .split(',')
+                        .filter_map(|pair| {
+                            let mut parts = pair.splitn(2, '=');
+                            let k = parts.next()?.trim();
+                            let v = parts.next()?.trim();
+                            Some(serde_json::json!({"name": k, "value": v}))
+                        })
+                        .collect();
+                    if !env.is_empty() {
+                        obj.insert("environment".into(), serde_json::Value::Array(env));
+                    }
+                }
+
+                // Log configuration: log_group = '/ecs/my-service'
+                if let Some(log_group) = params.get("log_group").and_then(|v| v.as_str()) {
+                    let region = self.region.as_deref().unwrap_or("us-east-1");
+                    let stream_prefix = params.get("log_stream_prefix")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ecs");
+                    obj.insert(
+                        "logConfiguration".into(),
+                        serde_json::json!({
+                            "logDriver": "awslogs",
+                            "options": {
+                                "awslogs-group": log_group,
+                                "awslogs-region": region,
+                                "awslogs-stream-prefix": stream_prefix
+                            }
+                        }),
+                    );
+                }
+
+                // Health check: health_check_cmd = 'CMD-SHELL,curl -f http://localhost/ || exit 1'
+                if let Some(hc) = params.get("health_check_cmd").and_then(|v| v.as_str()) {
+                    let parts: Vec<&str> = hc.splitn(2, ',').collect();
+                    let (cmd_type, cmd) = if parts.len() == 2 {
+                        (parts[0], parts[1])
+                    } else {
+                        ("CMD-SHELL", hc)
+                    };
+                    let interval: i64 = params.get("health_check_interval")
+                        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                        .unwrap_or(30);
+                    let retries: i64 = params.get("health_check_retries")
+                        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                        .unwrap_or(3);
+                    obj.insert(
+                        "healthCheck".into(),
+                        serde_json::json!({
+                            "command": [cmd_type, cmd],
+                            "interval": interval,
+                            "timeout": 5,
+                            "retries": retries,
+                            "startPeriod": 60
+                        }),
+                    );
+                }
+
+                // Secrets: secrets = 'ENV_VAR=arn:aws:secretsmanager:...,OTHER=arn:...'
+                if let Some(secrets_str) = params.get("secrets").and_then(|v| v.as_str()) {
+                    let secrets: Vec<serde_json::Value> = secrets_str
+                        .split(',')
+                        .filter_map(|pair| {
+                            let mut parts = pair.splitn(2, '=');
+                            let k = parts.next()?.trim();
+                            let v = parts.next()?.trim();
+                            Some(serde_json::json!({"name": k, "valueFrom": v}))
+                        })
+                        .collect();
+                    if !secrets.is_empty() {
+                        obj.insert("secrets".into(), serde_json::Value::Array(secrets));
+                    }
+                }
+
+                // Mount points: mount_points = 'source_vol:/container/path,data:/app/data'
+                if let Some(mounts_str) = params.get("mount_points").and_then(|v| v.as_str()) {
+                    let mounts: Vec<serde_json::Value> = mounts_str
+                        .split(',')
+                        .filter_map(|pair| {
+                            let mut parts = pair.splitn(2, ':');
+                            let vol = parts.next()?.trim();
+                            let path = parts.next()?.trim();
+                            Some(serde_json::json!({
+                                "sourceVolume": vol,
+                                "containerPath": path,
+                                "readOnly": false
+                            }))
+                        })
+                        .collect();
+                    if !mounts.is_empty() {
+                        obj.insert("mountPoints".into(), serde_json::Value::Array(mounts));
+                    }
                 }
             }
 
-            // Log configuration: log_group = '/ecs/my-service'
-            if let Some(log_group) = params.get("log_group").and_then(|v| v.as_str()) {
-                let region = self.region.as_deref().unwrap_or("us-east-1");
-                obj.insert(
-                    "logConfiguration".into(),
-                    serde_json::json!({
-                        "logDriver": "awslogs",
-                        "options": {
-                            "awslogs-group": log_group,
-                            "awslogs-region": region,
-                            "awslogs-stream-prefix": "ecs"
-                        }
-                    }),
-                );
-            }
-
-            // Health check: health_check_cmd = 'CMD-SHELL,curl -f http://localhost/ || exit 1'
-            if let Some(hc) = params.get("health_check_cmd").and_then(|v| v.as_str()) {
-                let parts: Vec<&str> = hc.splitn(2, ',').collect();
-                let (cmd_type, cmd) = if parts.len() == 2 {
-                    (parts[0], parts[1])
-                } else {
-                    ("CMD-SHELL", hc)
-                };
-                obj.insert(
-                    "healthCheck".into(),
-                    serde_json::json!({"command": [cmd_type, cmd], "interval": 30, "timeout": 5, "retries": 3}),
-                );
-            }
-
-            // Secrets: secrets = 'ENV_VAR=arn:aws:secretsmanager:...,OTHER=arn:...'
-            if let Some(secrets_str) = params.get("secrets").and_then(|v| v.as_str()) {
-                let secrets: Vec<serde_json::Value> = secrets_str
-                    .split(',')
-                    .filter_map(|pair| {
-                        let mut parts = pair.splitn(2, '=');
-                        let k = parts.next()?.trim();
-                        let v = parts.next()?.trim();
-                        Some(serde_json::json!({"name": k, "valueFrom": v}))
-                    })
-                    .collect();
-                if !secrets.is_empty() {
-                    obj.insert("secrets".into(), serde_json::Value::Array(secrets));
-                }
-            }
-        }
-
-        let container_defs = serde_json::json!([container]).to_string();
+            serde_json::json!([container]).to_string()
+        };
 
         let mut args = vec![
             "ecs".into(),
@@ -3926,6 +4006,35 @@ impl AwsResourceProvisioner {
         if let Some(task_role) = params.get("task_role_arn").and_then(|v| v.as_str()) {
             args.push("--task-role-arn".into());
             args.push(task_role.into());
+        }
+        // EFS volumes: volumes = 'name:fs-id:path,data:fs-456:/data'
+        if let Some(vols_str) = params.get("volumes").and_then(|v| v.as_str()) {
+            let volumes: Vec<serde_json::Value> = vols_str
+                .split(',')
+                .filter_map(|vol| {
+                    let parts: Vec<&str> = vol.splitn(3, ':').collect();
+                    if parts.len() >= 2 {
+                        let name = parts[0].trim();
+                        let fs_id = parts[1].trim();
+                        let root_dir = if parts.len() == 3 { parts[2].trim() } else { "/" };
+                        Some(serde_json::json!({
+                            "name": name,
+                            "efsVolumeConfiguration": {
+                                "fileSystemId": fs_id,
+                                "rootDirectory": root_dir,
+                                "transitEncryption": "ENABLED"
+                            }
+                        }))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !volumes.is_empty() {
+                let volumes_json = serde_json::json!(volumes).to_string();
+                args.push("--volumes".into());
+                args.push(volumes_json);
+            }
         }
 
         Ok(args)
