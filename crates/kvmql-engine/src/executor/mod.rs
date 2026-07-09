@@ -737,8 +737,31 @@ impl<'a> Executor<'a> {
                 let is_cloudflare = rtype.starts_with("cf_");
                 let is_github = rtype.starts_with("gh_");
                 let is_k8s = rtype.starts_with("k8s_");
+                let is_ssh = matches!(
+                    rtype,
+                    "file"
+                        | "directory"
+                        | "symlink"
+                        | "systemd_service"
+                        | "systemd_timer"
+                        | "nginx_vhost"
+                        | "nginx_proxy"
+                        | "docker_container"
+                        | "docker_volume"
+                        | "docker_network"
+                        | "docker_compose"
+                        | "letsencrypt_cert"
+                );
 
-                let (command_prefix, args_result) = if is_k8s {
+                let (command_prefix, args_result) = if is_ssh {
+                    // SSH resources are executed via the system ssh client;
+                    // show the remote command that would be run.
+                    let desc = format!(
+                        "ssh <host> -- orbi-ssh-provision {rtype} {}",
+                        config.to_string()
+                    );
+                    ("ssh", Ok(vec![desc]))
+                } else if is_k8s {
                     let p = self.get_k8s_provisioner("default");
                     ("kubectl", p.build_create_args(rtype, &config))
                 } else if is_cloudflare {
@@ -789,11 +812,21 @@ impl<'a> Executor<'a> {
                 let is_cloudflare = rtype.starts_with("cf_");
                 let is_github = rtype.starts_with("gh_");
                 let is_k8s = rtype.starts_with("k8s_");
+                let is_ssh = matches!(
+                    rtype,
+                    "file" | "directory" | "symlink" | "systemd_service" | "systemd_timer"
+                        | "nginx_vhost" | "nginx_proxy" | "docker_container" | "docker_volume"
+                        | "docker_network" | "docker_compose" | "letsencrypt_cert"
+                );
 
-                // For Cloudflare/GitHub/Kubernetes and Azure sub-resources,
-                // delete requires params/context that aren't available in
-                // EXPLAIN mode — show a generic plan step.
-                if is_k8s {
+                if is_ssh {
+                    steps.push(serde_json::json!({
+                        "step": 1,
+                        "action": format!("DESTROY RESOURCE '{}' '{}'", rtype, s.id),
+                        "command": format!("ssh <host> -- orbi-ssh-destroy {} {}", rtype, s.id),
+                        "registry_action": "DELETE FROM resources",
+                    }));
+                } else if is_k8s {
                     let kind = rtype.strip_prefix("k8s_").unwrap_or(rtype);
                     steps.push(serde_json::json!({
                         "step": 1,
