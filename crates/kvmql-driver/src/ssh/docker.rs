@@ -217,8 +217,13 @@ impl<'a> DockerProvisioner<'a> {
                  or inline the YAML directly."
             )?;
 
-        // Write compose file to a project directory on the remote
-        let dir = format!("/opt/compose/{project}");
+        // Write compose file to a project directory on the remote.
+        // User can override with path = '/my/custom/dir'.
+        let dir = params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| format!("/opt/compose/{project}"));
         self.client
             .mkdir_p(&dir)
             .map_err(|e| format!("mkdir compose dir failed: {e}"))?;
