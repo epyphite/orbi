@@ -199,37 +199,60 @@ impl<'a> Executor<'a> {
         &self,
         provider_id: &str,
     ) -> kvmql_driver::cloudflare::CloudflareResourceProvisioner {
-        let token = if let Ok(p) = self.ctx.registry.get_provider(provider_id) {
-            kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref).ok()
-        } else {
-            // Fallback: find any provider of type "cloudflare" and resolve its auth_ref
-            self.ctx
-                .registry
-                .list_providers()
-                .ok()
-                .and_then(|ps| {
-                    ps.iter()
-                        .find(|p| p.provider_type == "cloudflare")
-                        .and_then(|p| {
-                            kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref).ok()
-                        })
-                })
-                .or_else(|| std::env::var("CLOUDFLARE_API_TOKEN").ok())
-        };
+        let token = self
+            .resolve_provider_token(provider_id, "cloudflare", "CLOUDFLARE_API_TOKEN");
         kvmql_driver::cloudflare::CloudflareResourceProvisioner::new(token.as_deref())
+    }
+
+    /// Resolve an API token for a provider, trying multiple strategies:
+    /// 1. Resolve auth_ref from the provider registered with `provider_id`
+    /// 2. If auth_ref has no scheme (raw value), use it directly
+    /// 3. Search for any provider of `provider_type` and resolve its auth_ref
+    /// 4. Fall back to `fallback_env` environment variable
+    fn resolve_provider_token(
+        &self,
+        provider_id: &str,
+        provider_type: &str,
+        fallback_env: &str,
+    ) -> Option<String> {
+        // Strategy 1: lookup by exact provider ID
+        if let Ok(p) = self.ctx.registry.get_provider(provider_id) {
+            if let Ok(val) = kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref) {
+                return Some(val);
+            }
+            // If auth_ref has no scheme (no ':'), treat it as a raw token value
+            if !p.auth_ref.is_empty() && !p.auth_ref.contains(':') {
+                return Some(p.auth_ref.clone());
+            }
+        }
+
+        // Strategy 2: find any provider of the matching type
+        if let Ok(providers) = self.ctx.registry.list_providers() {
+            for p in &providers {
+                if p.provider_type == provider_type && p.id != provider_id {
+                    if let Ok(val) =
+                        kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref)
+                    {
+                        return Some(val);
+                    }
+                    if !p.auth_ref.is_empty() && !p.auth_ref.contains(':') {
+                        return Some(p.auth_ref.clone());
+                    }
+                }
+            }
+        }
+
+        // Strategy 3: environment variable fallback
+        std::env::var(fallback_env).ok()
     }
 
     pub(super) fn get_github_provisioner(
         &self,
         provider_id: &str,
     ) -> kvmql_driver::github::GithubResourceProvisioner {
-        let token = if let Ok(p) = self.ctx.registry.get_provider(provider_id) {
-            kvmql_auth::resolver::CredentialResolver::resolve(&p.auth_ref).ok()
-        } else {
-            std::env::var("GITHUB_TOKEN")
-                .ok()
-                .or_else(|| std::env::var("GH_TOKEN").ok())
-        };
+        let token = self
+            .resolve_provider_token(provider_id, "github", "GITHUB_TOKEN")
+            .or_else(|| std::env::var("GH_TOKEN").ok());
         kvmql_driver::github::GithubResourceProvisioner::new(token.as_deref())
     }
 

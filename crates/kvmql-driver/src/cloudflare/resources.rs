@@ -483,7 +483,7 @@ mod tests {
         let params = json!({"id": "test.com"});
         let result = p.create("cf_zone", &params);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("token not configured"));
+        assert!(result.unwrap_err().contains("token not resolved"));
     }
 
     #[test]
