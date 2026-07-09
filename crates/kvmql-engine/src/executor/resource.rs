@@ -232,7 +232,7 @@ impl<'a> Executor<'a> {
 
             if is_ssh {
                 let mut cfg_with_content = config_value.clone();
-                if s.resource_type == "file" {
+                if s.resource_type == "file" || s.resource_type == "docker_compose" {
                     if let Some(raw_content) = cfg_with_content
                         .get("content")
                         .and_then(|v| v.as_str())

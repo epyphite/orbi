@@ -202,12 +202,20 @@ impl<'a> DockerProvisioner<'a> {
 
     fn create_compose(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let project = param_str(params, "project_name")?;
-        // The compose file content is pre-resolved in __content_bytes or file
+        // The compose file content can be provided as:
+        //   content = 'file:/path/to/docker-compose.yml'  (resolved by engine)
+        //   content = '... yaml inline ...'
+        //   file = '... yaml ...'  (legacy)
         let compose_content = params
             .get("__content_bytes")
+            .or_else(|| params.get("content"))
             .or_else(|| params.get("file"))
             .and_then(|v| v.as_str())
-            .ok_or("docker_compose requires file (compose YAML content)")?;
+            .ok_or(
+                "docker_compose requires 'content' param with the compose YAML. \
+                 Use content = 'file:/path/to/docker-compose.yml' to reference a local file, \
+                 or inline the YAML directly."
+            )?;
 
         // Write compose file to a project directory on the remote
         let dir = format!("/opt/compose/{project}");
