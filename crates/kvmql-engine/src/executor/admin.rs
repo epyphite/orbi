@@ -139,17 +139,29 @@ impl<'a> Executor<'a> {
         &self,
         s: &AlterProviderStmt,
     ) -> Result<StmtOutcome, EngineError> {
+        let mut changed = Vec::new();
         for item in &s.set_items {
-            if item.key == "status" {
-                if let Value::String(ref v) = item.value {
-                    self.ctx
-                        .registry
-                        .update_provider_status(&s.name, v)
-                        .map_err(|e| format!("failed to alter provider: {e}"))?;
-                }
-            }
+            let val = match &item.value {
+                Value::String(v) => v.clone(),
+                Value::Integer(n) => n.to_string(),
+                Value::Boolean(b) => b.to_string(),
+                _ => format!("{}", item.value),
+            };
+            self.ctx
+                .registry
+                .update_provider_field(&s.name, &item.key, &val)
+                .map_err(|e| format!("failed to alter provider '{}': {e}", s.name))?;
+            changed.push(format!("{} = '{val}'", item.key));
         }
-        Ok(StmtOutcome::ok_empty())
+        let msg = if changed.is_empty() {
+            "no changes".to_string()
+        } else {
+            changed.join(", ")
+        };
+        Ok(StmtOutcome::ok_val(serde_json::json!({
+            "provider": s.name,
+            "altered": msg,
+        })))
     }
 
     // =======================================================================

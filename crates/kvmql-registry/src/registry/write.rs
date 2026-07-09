@@ -61,6 +61,36 @@ impl Registry {
         Ok(())
     }
 
+    /// Update a single column on a provider row.
+    /// Allowed columns: status, auth_ref, host, region, labels.
+    pub fn update_provider_field(
+        &self,
+        id: &str,
+        field: &str,
+        value: &str,
+    ) -> Result<(), RegistryError> {
+        let sql = match field {
+            "status" => "UPDATE providers SET status = ?1, last_seen = datetime('now') WHERE id = ?2",
+            "auth" | "auth_ref" => "UPDATE providers SET auth_ref = ?1 WHERE id = ?2",
+            "host" => "UPDATE providers SET host = ?1 WHERE id = ?2",
+            "region" => "UPDATE providers SET region = ?1 WHERE id = ?2",
+            "labels" => "UPDATE providers SET labels = ?1 WHERE id = ?2",
+            other => {
+                return Err(RegistryError::ConstraintViolation(format!(
+                    "cannot update provider field '{other}'"
+                )));
+            }
+        };
+        let changed = self.conn.execute(sql, params![value, id])?;
+        if changed == 0 {
+            return Err(RegistryError::NotFound {
+                entity: "provider".into(),
+                id: id.into(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn delete_provider(&self, id: &str) -> Result<(), RegistryError> {
         let changed = self
             .conn

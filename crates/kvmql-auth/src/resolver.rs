@@ -100,8 +100,18 @@ impl CredentialResolver {
     // ------------------------------------------------------------------
 
     fn resolve_file(path: &str) -> Result<String, CredentialError> {
+        // Expand ~ to $HOME
+        let path = if path.starts_with("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                format!("{}{}", home, &path[1..])
+            } else {
+                path.to_string()
+            }
+        } else {
+            path.to_string()
+        };
         let metadata =
-            fs::metadata(path).map_err(|_| CredentialError::FileNotFound(path.to_string()))?;
+            fs::metadata(&path).map_err(|_| CredentialError::FileNotFound(path.to_string()))?;
 
         // Check not world-readable (unix permissions)
         let mode = metadata.permissions().mode();
