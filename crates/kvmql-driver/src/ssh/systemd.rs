@@ -236,7 +236,11 @@ impl<'a> SystemdProvisioner<'a> {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        Ok(self.client.exec_checked(&cmd).map_err(|e| e.to_string())?)
+        // systemctl mutations (start/stop/enable/disable/reload) require root
+        Ok(self
+            .client
+            .exec_sudo_checked(&cmd)
+            .map_err(|e| e.to_string())?)
     }
 
     fn is_enabled(&self, unit: &str) -> bool {

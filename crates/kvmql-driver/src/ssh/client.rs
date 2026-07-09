@@ -259,6 +259,24 @@ impl SshClient {
         self.exec.exec(cmd)
     }
 
+    /// Run a remote command with `sudo` prefix.  Uses `-n` (non-interactive)
+    /// so it fails fast instead of hanging when sudo requires a password.
+    pub fn exec_sudo(&self, cmd: &str) -> Result<ExecOutput, SshError> {
+        self.exec.exec(&format!("sudo -n {cmd}"))
+    }
+
+    /// Run a remote command with sudo, failing if exit != 0.
+    pub fn exec_sudo_checked(&self, cmd: &str) -> Result<String, SshError> {
+        let out = self.exec_sudo(cmd)?;
+        if out.exit_code != 0 {
+            return Err(SshError::CommandFailed {
+                exit_code: out.exit_code,
+                stderr: out.stderr.trim().to_string(),
+            });
+        }
+        Ok(out.stdout)
+    }
+
     /// Run a remote command, failing if exit != 0.
     pub fn exec_checked(&self, cmd: &str) -> Result<String, SshError> {
         let out = self.exec.exec(cmd)?;
