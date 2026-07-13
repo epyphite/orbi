@@ -246,6 +246,8 @@ pub enum Value {
     Array(Vec<Value>),
     Null,
     Variable(String),
+    /// String concatenation: `'prefix-' || @var || '-suffix'`
+    Concat(Box<Value>, Box<Value>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

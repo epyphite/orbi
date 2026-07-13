@@ -318,6 +318,7 @@ impl fmt::Display for Value {
             }
             Value::Null => write!(f, "null"),
             Value::Variable(s) => write!(f, "@{s}"),
+            Value::Concat(left, right) => write!(f, "{left} || {right}"),
         }
     }
 }

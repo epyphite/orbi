@@ -3,7 +3,7 @@ use kvmql_parser::ast::*;
 use crate::errors::{with_remediation, EngineError, ErrorContext};
 use crate::response::*;
 
-use super::helpers::{resolve_content_reference, simulate_outputs};
+use super::helpers::{resolve_content_reference, simulate_outputs, validate_required_params};
 use super::{get_param, Executor, StmtOutcome};
 
 impl<'a> Executor<'a> {
@@ -876,6 +876,19 @@ impl<'a> Executor<'a> {
         let config_value = self.params_to_json(&s.params);
         let config = config_value.to_string();
         let labels = get_param(&params, "labels");
+
+        // Validate required parameters per resource type before simulating.
+        // This catches missing params that would fail during real provisioning.
+        let missing = validate_required_params(&s.resource_type, &config_value);
+        if !missing.is_empty() {
+            return Err(format!(
+                "dry-run: {} resource '{}' missing required param(s): {}",
+                s.resource_type,
+                id,
+                missing.join(", ")
+            )
+            .into());
+        }
 
         let outputs = simulate_outputs(&s.resource_type, &id, &config_value);
 

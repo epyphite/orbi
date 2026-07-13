@@ -1608,6 +1608,18 @@ impl Parser {
 
 impl Parser {
     fn parse_value(&mut self) -> Result<Value, ParseError> {
+        let mut left = self.parse_value_primary()?;
+        // Support `||` (string concatenation) in parameter values:
+        //   id = 'prefix-' || @env || '-suffix'
+        while matches!(self.peek(), Some(Token::Concat)) {
+            self.advance();
+            let right = self.parse_value_primary()?;
+            left = Value::Concat(Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn parse_value_primary(&mut self) -> Result<Value, ParseError> {
         match self.peek().cloned() {
             Some(Token::Null) => {
                 self.advance();

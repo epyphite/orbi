@@ -68,6 +68,11 @@ impl<'a> Executor<'a> {
                     value.clone()
                 }
             }
+            Value::Concat(left, right) => {
+                let l = self.resolve_value(left);
+                let r = self.resolve_value(right);
+                Value::String(format!("{l}{r}"))
+            }
             _ => value.clone(),
         }
     }
@@ -155,6 +160,8 @@ impl<'a> Executor<'a> {
                 | "route53_zone"
                 | "route53_record"
                 | "secrets_manager_secret"
+                | "sns_subscription"
+                | "vpc_flow_log"
         )
     }
 
@@ -407,6 +414,44 @@ pub(super) fn resolve_content_reference(raw: &str) -> Result<String, String> {
     }
 
     Ok(raw.to_string())
+}
+
+/// Validate that required parameters are present for a given resource type.
+/// Returns a list of missing parameter names (empty = all good).
+pub(super) fn validate_required_params(
+    resource_type: &str,
+    config: &serde_json::Value,
+) -> Vec<&'static str> {
+    let required: &[&str] = match resource_type {
+        "docker_compose" => &["project_name"],
+        "file" => &["content"],
+        "systemd_service" => &["unit"],
+        "nginx_vhost" | "nginx_proxy" => &["server_name"],
+        "letsencrypt_cert" => &["domain"],
+        "rds_postgres" => &["instance_class"],
+        "eks_cluster" => &["role_arn", "subnet_ids"],
+        "eks_nodegroup" => &["cluster", "role_arn", "subnet_ids"],
+        "ecs_service" => &["cluster", "task_definition"],
+        "ecs_task_definition" => &["family", "cpu", "memory"],
+        "alb" => &["subnets"],
+        "alb_listener" => &["load_balancer_arn", "target_group_arn"],
+        "sg_rule" => &["security_group_id", "protocol", "port"],
+        "route53_record" => &["zone_id", "record_type", "value"],
+        "sns_subscription" => &["topic_arn", "protocol", "endpoint"],
+        "vpc_flow_log" => &["resource_id", "traffic_type"],
+        _ => return Vec::new(),
+    };
+
+    required
+        .iter()
+        .filter(|&&key| {
+            config
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map_or(true, |s| s.is_empty())
+        })
+        .copied()
+        .collect()
 }
 
 /// Parse optional SSH connection hints out of the provider's `labels` JSON.
@@ -1016,6 +1061,16 @@ pub(super) fn simulate_outputs(
                 "vpc_id": config.get("vpc_id").and_then(|v| v.as_str()),
             }))
         }
+        "sns_subscription" => Some(serde_json::json!({
+            "subscription_arn": format!("arn:aws:sns:us-east-1:123456789012:{id}"),
+            "topic_arn": config.get("topic_arn").and_then(|v| v.as_str()),
+            "protocol": config.get("protocol").and_then(|v| v.as_str()),
+            "endpoint": config.get("endpoint").and_then(|v| v.as_str()),
+        })),
+        "vpc_flow_log" => Some(serde_json::json!({
+            "flow_log_id": format!("fl-sim-{}", &id[..id.len().min(8)]),
+            "resource_id": config.get("resource_id").and_then(|v| v.as_str()),
+        })),
         _ => Some(serde_json::json!({
             "id": id,
             "status": "simulated",

@@ -80,6 +80,8 @@ impl AwsResourceProvisioner {
             "iam_policy_attachment" => self.create_iam_policy_attachment(params),
             "kms_alias" => self.create_kms_alias(params),
             "cloudwatch_log_group" => self.create_cloudwatch_log_group(params),
+            "sns_subscription" => self.create_sns_subscription(params),
+            "vpc_flow_log" => self.create_vpc_flow_log(params),
             other => Err(format!("unsupported AWS resource type: {other}").into()),
         }
     }
@@ -336,6 +338,14 @@ impl AwsResourceProvisioner {
                     "logs", "delete-log-group",
                     "--log-group-name", id,
                 ])?;
+                Ok(())
+            }
+            "sns_subscription" => {
+                self.run_aws(&["sns", "unsubscribe", "--subscription-arn", id])?;
+                Ok(())
+            }
+            "vpc_flow_log" => {
+                self.run_aws(&["ec2", "delete-flow-logs", "--flow-log-ids", id])?;
                 Ok(())
             }
             other => Err(format!("unsupported AWS resource type for delete: {other}").into()),
@@ -2876,6 +2886,131 @@ impl AwsResourceProvisioner {
         let outputs = serde_json::json!({
             "log_group_name": id,
             "retention_in_days": params.get("retention_in_days"),
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    // ── sns_subscription ──────────────────────────────────────────────
+
+    fn create_sns_subscription(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let topic_arn = param_str(params, "topic_arn")?;
+        let protocol = param_str(params, "protocol")?;
+        let endpoint = param_str(params, "endpoint")?;
+
+        let mut args = vec![
+            "sns".to_string(),
+            "subscribe".to_string(),
+            "--topic-arn".to_string(),
+            topic_arn.clone(),
+            "--protocol".to_string(),
+            protocol.clone(),
+            "--notification-endpoint".to_string(),
+            endpoint.clone(),
+            "--return-subscription-arn".to_string(),
+        ];
+
+        // Optional filter policy
+        if let Some(filter) = params.get("filter_policy").and_then(|v| v.as_str()) {
+            args.push("--attributes".to_string());
+            args.push(format!("{{\"FilterPolicy\":\"{}\"}}", filter.replace('"', "\\\"")));
+        }
+
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let subscription_arn = result
+            .get("SubscriptionArn")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pending confirmation")
+            .to_string();
+
+        let outputs = serde_json::json!({
+            "subscription_arn": subscription_arn,
+            "topic_arn": topic_arn,
+            "protocol": protocol,
+            "endpoint": endpoint,
+        });
+
+        Ok(ProvisionResult {
+            status: "created".into(),
+            outputs: Some(outputs),
+        })
+    }
+
+    // ── vpc_flow_log ─────────────────────────────────────────────────
+
+    fn create_vpc_flow_log(
+        &self,
+        params: &Value,
+    ) -> Result<ProvisionResult, ProvisionError> {
+        let resource_id = param_str(params, "resource_id")?;
+        let traffic_type = param_str_or(params, "traffic_type", "ALL");
+        let resource_type = param_str_or(params, "resource_type", "VPC");
+        let log_destination_type =
+            param_str_or(params, "log_destination_type", "cloud-watch-logs");
+
+        let mut args = vec![
+            "ec2".to_string(),
+            "create-flow-logs".to_string(),
+            "--resource-ids".to_string(),
+            resource_id.clone(),
+            "--resource-type".to_string(),
+            resource_type,
+            "--traffic-type".to_string(),
+            traffic_type,
+            "--log-destination-type".to_string(),
+            log_destination_type.clone(),
+        ];
+
+        // For CloudWatch Logs, accept or auto-resolve log group + IAM role
+        if log_destination_type == "cloud-watch-logs" {
+            let log_group = param_str_or(
+                params,
+                "log_group_name",
+                &format!("/vpc/flow-logs/{resource_id}"),
+            );
+            args.push("--log-group-name".to_string());
+            args.push(log_group);
+
+            // IAM role is required for CloudWatch Logs destination
+            if let Some(role_arn) = params.get("role_arn").and_then(|v| v.as_str()) {
+                args.push("--deliver-logs-permission-arn".to_string());
+                args.push(role_arn.to_string());
+            }
+        } else if log_destination_type == "s3" {
+            if let Some(bucket_arn) = params.get("log_destination").and_then(|v| v.as_str()) {
+                args.push("--log-destination".to_string());
+                args.push(bucket_arn.to_string());
+            }
+        }
+
+        // Optional max aggregation interval
+        if let Some(interval) = params.get("max_aggregation_interval").and_then(|v| v.as_str()) {
+            args.push("--max-aggregation-interval".to_string());
+            args.push(interval.to_string());
+        }
+
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self.run_aws(&refs)?;
+
+        let flow_log_id = result
+            .get("FlowLogIds")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let outputs = serde_json::json!({
+            "flow_log_id": flow_log_id,
+            "resource_id": resource_id,
         });
 
         Ok(ProvisionResult {
