@@ -4466,6 +4466,307 @@ impl AwsResourceProvisioner {
                     outputs: None,
                 })
             }
+            // ── ALB ───────────────────────────────────────────────────
+            "alb" => {
+                // Look up the ARN from the load balancer name
+                let describe = self.run_aws(&[
+                    "elbv2",
+                    "describe-load-balancers",
+                    "--names",
+                    id,
+                ])?;
+                let lb_arn = describe
+                    .get("LoadBalancers")
+                    .and_then(|v| v.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|lb| lb.get("LoadBalancerArn"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("ALB '{}' not found", id))?
+                    .to_string();
+
+                let mut attrs = Vec::new();
+
+                // Access logs
+                if let Some(enabled) = params
+                    .get("access_logs_enabled")
+                    .and_then(|v| v.as_str().or_else(|| if v.as_bool()? { Some("true") } else { Some("false") }))
+                {
+                    attrs.push(format!(
+                        "Key=access_logs.s3.enabled,Value={enabled}"
+                    ));
+                }
+                if let Some(bucket) = params.get("access_logs_bucket").and_then(|v| v.as_str()) {
+                    attrs.push(format!("Key=access_logs.s3.bucket,Value={bucket}"));
+                }
+                if let Some(prefix) = params.get("access_logs_prefix").and_then(|v| v.as_str()) {
+                    attrs.push(format!("Key=access_logs.s3.prefix,Value={prefix}"));
+                }
+
+                // Idle timeout
+                if let Some(timeout) = params.get("idle_timeout").and_then(|v| {
+                    v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string()))
+                }) {
+                    attrs.push(format!(
+                        "Key=idle_timeout.timeout_seconds,Value={timeout}"
+                    ));
+                }
+
+                // Deletion protection
+                if let Some(protect) = params
+                    .get("deletion_protection")
+                    .and_then(|v| v.as_str().or_else(|| if v.as_bool()? { Some("true") } else { Some("false") }))
+                {
+                    attrs.push(format!(
+                        "Key=deletion_protection.enabled,Value={protect}"
+                    ));
+                }
+
+                if attrs.is_empty() {
+                    return Err("ALTER alb: no modifiable attributes provided. \
+                        Supported: access_logs_enabled, access_logs_bucket, access_logs_prefix, \
+                        idle_timeout, deletion_protection"
+                        .into());
+                }
+
+                let mut args = vec![
+                    "elbv2",
+                    "modify-load-balancer-attributes",
+                    "--load-balancer-arn",
+                    &lb_arn,
+                    "--attributes",
+                ];
+                let attrs_str = attrs.join(" ");
+                args.push(&attrs_str);
+
+                self.run_aws(&args)?;
+
+                Ok(ProvisionResult {
+                    status: "updated".into(),
+                    outputs: Some(serde_json::json!({
+                        "load_balancer_arn": lb_arn,
+                        "modified_attributes": attrs,
+                    })),
+                })
+            }
+
+            // ── RDS PostgreSQL ───────────────────────────────────────
+            "rds_postgres" => {
+                let mut args = vec![
+                    "rds".to_string(),
+                    "modify-db-instance".to_string(),
+                    "--db-instance-identifier".to_string(),
+                    id.to_string(),
+                    "--apply-immediately".to_string(),
+                ];
+
+                if let Some(class) = params.get("instance_class").and_then(|v| v.as_str()) {
+                    args.push("--db-instance-class".into());
+                    args.push(class.into());
+                }
+                if let Some(storage) = params.get("allocated_storage").and_then(|v| {
+                    v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string()))
+                }) {
+                    args.push("--allocated-storage".into());
+                    args.push(storage);
+                }
+                if let Some(multi_az) = params
+                    .get("multi_az")
+                    .and_then(|v| v.as_str().or_else(|| if v.as_bool()? { Some("true") } else { Some("false") }))
+                {
+                    if multi_az == "true" {
+                        args.push("--multi-az".into());
+                    } else {
+                        args.push("--no-multi-az".into());
+                    }
+                }
+                if let Some(retention) = params.get("backup_retention_period").and_then(|v| {
+                    v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string()))
+                }) {
+                    args.push("--backup-retention-period".into());
+                    args.push(retention);
+                }
+                if let Some(storage_type) = params.get("storage_type").and_then(|v| v.as_str()) {
+                    args.push("--storage-type".into());
+                    args.push(storage_type.into());
+                }
+                if let Some(iops) = params.get("iops").and_then(|v| {
+                    v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string()))
+                }) {
+                    args.push("--iops".into());
+                    args.push(iops);
+                }
+
+                let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let result = self.run_aws(&refs)?;
+
+                let outputs = serde_json::json!({
+                    "db_instance_identifier": id,
+                    "status": result.get("DBInstance").and_then(|db| db.get("DBInstanceStatus")),
+                });
+
+                Ok(ProvisionResult {
+                    status: "updated".into(),
+                    outputs: Some(outputs),
+                })
+            }
+
+            // ── ECS Service ──────────────────────────────────────────
+            "ecs_service" => {
+                let cluster = params
+                    .get("cluster")
+                    .and_then(|v| v.as_str())
+                    .ok_or("ALTER ecs_service requires 'cluster' param")?;
+
+                let mut args = vec![
+                    "ecs".to_string(),
+                    "update-service".to_string(),
+                    "--cluster".to_string(),
+                    cluster.to_string(),
+                    "--service".to_string(),
+                    id.to_string(),
+                ];
+
+                if let Some(desired) = params.get("desired_count").and_then(|v| {
+                    v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string()))
+                }) {
+                    args.push("--desired-count".into());
+                    args.push(desired);
+                }
+                if let Some(task_def) = params.get("task_definition").and_then(|v| v.as_str()) {
+                    args.push("--task-definition".into());
+                    args.push(task_def.into());
+                }
+                if let Some(force) = params.get("force_new_deployment").and_then(|v| v.as_bool()) {
+                    if force {
+                        args.push("--force-new-deployment".into());
+                    }
+                }
+
+                let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let result = self.run_aws(&refs)?;
+
+                let outputs = serde_json::json!({
+                    "service_name": id,
+                    "status": result
+                        .get("service")
+                        .and_then(|s| s.get("status")),
+                    "desired_count": result
+                        .get("service")
+                        .and_then(|s| s.get("desiredCount")),
+                });
+
+                Ok(ProvisionResult {
+                    status: "updated".into(),
+                    outputs: Some(outputs),
+                })
+            }
+
+            // ── S3 Bucket ────────────────────────────────────────────
+            "s3_bucket" => {
+                let mut changed = Vec::new();
+
+                // Versioning
+                if let Some(versioning) = params.get("versioning").and_then(|v| v.as_str()) {
+                    let status = if versioning == "true" || versioning == "Enabled" {
+                        "Enabled"
+                    } else {
+                        "Suspended"
+                    };
+                    self.run_aws(&[
+                        "s3api",
+                        "put-bucket-versioning",
+                        "--bucket",
+                        id,
+                        "--versioning-configuration",
+                        &format!("Status={status}"),
+                    ])?;
+                    changed.push("versioning");
+                }
+
+                // Server-side encryption
+                if let Some(sse) = params.get("encryption").and_then(|v| v.as_str()) {
+                    let config_json = format!(
+                        r#"{{"Rules":[{{"ApplyServerSideEncryptionByDefault":{{"SSEAlgorithm":"{sse}"}}}}]}}"#
+                    );
+                    self.run_aws(&[
+                        "s3api",
+                        "put-bucket-encryption",
+                        "--bucket",
+                        id,
+                        "--server-side-encryption-configuration",
+                        &config_json,
+                    ])?;
+                    changed.push("encryption");
+                }
+
+                // Public access block
+                if let Some(block) = params
+                    .get("block_public_access")
+                    .and_then(|v| v.as_str().or_else(|| if v.as_bool()? { Some("true") } else { Some("false") }))
+                {
+                    if block == "true" {
+                        self.run_aws(&[
+                            "s3api",
+                            "put-public-access-block",
+                            "--bucket",
+                            id,
+                            "--public-access-block-configuration",
+                            "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true",
+                        ])?;
+                    } else {
+                        self.run_aws(&[
+                            "s3api",
+                            "delete-public-access-block",
+                            "--bucket",
+                            id,
+                        ])?;
+                    }
+                    changed.push("block_public_access");
+                }
+
+                if changed.is_empty() {
+                    return Err("ALTER s3_bucket: no modifiable attributes provided. \
+                        Supported: versioning, encryption, block_public_access"
+                        .into());
+                }
+
+                Ok(ProvisionResult {
+                    status: "updated".into(),
+                    outputs: Some(serde_json::json!({
+                        "bucket": id,
+                        "modified": changed,
+                    })),
+                })
+            }
+
+            // ── ElastiCache ──────────────────────────────────────────
+            "elasticache_redis" => {
+                let mut args = vec![
+                    "elasticache".to_string(),
+                    "modify-cache-cluster".to_string(),
+                    "--cache-cluster-id".to_string(),
+                    id.to_string(),
+                    "--apply-immediately".to_string(),
+                ];
+
+                if let Some(node_type) = params.get("node_type").and_then(|v| v.as_str()) {
+                    args.push("--cache-node-type".into());
+                    args.push(node_type.into());
+                }
+                if let Some(engine_ver) = params.get("engine_version").and_then(|v| v.as_str()) {
+                    args.push("--engine-version".into());
+                    args.push(engine_ver.into());
+                }
+
+                let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                self.run_aws(&refs)?;
+
+                Ok(ProvisionResult {
+                    status: "updated".into(),
+                    outputs: None,
+                })
+            }
+
             other => Err(format!("ALTER not supported for AWS resource type: {other}").into()),
         }
     }
