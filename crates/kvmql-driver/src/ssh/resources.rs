@@ -310,9 +310,16 @@ impl SshResourceProvisioner {
     fn create_file(&self, params: &Value) -> Result<ProvisionResult, ProvisionError> {
         let path = param_str(params, "id")?;
         // Executor pre-resolves credential/file references into __content_bytes.
+        // Falls back to 'content' then 'file' (legacy alias, consistent with docker_compose).
         let content = param_str(params, "__content_bytes")
             .or_else(|_| param_str(params, "content"))
-            .map_err(|_| "file resource requires either content or __content_bytes".to_string())?;
+            .or_else(|_| param_str(params, "file"))
+            .map_err(|_| {
+                "file resource requires 'content' param. \
+                 Use content='file:./path' to upload a local file, \
+                 or content='literal text' for inline content."
+                    .to_string()
+            })?;
         let owner = params.get("owner").and_then(|v| v.as_str());
         let group = params.get("group").and_then(|v| v.as_str());
         let mode = params

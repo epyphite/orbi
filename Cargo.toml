@@ -18,7 +18,7 @@ too_many_arguments = "allow"
 result_large_err = "allow"
 
 [workspace.package]
-version = "0.9.8"
+version = "0.9.9"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Epiphyte Corp"]

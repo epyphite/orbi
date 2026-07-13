@@ -359,6 +359,12 @@ pub(super) fn resolve_aws_profile(auth_ref: &str) -> Option<String> {
 }
 
 /// Resolve a `file` resource `content` parameter into raw bytes.
+///
+/// Resolution order:
+/// 1. `file:path` — read local file at path
+/// 2. Credential scheme (`env:`, `op:`, `vault:`, etc.) — resolve secret
+/// 3. Bare path that exists on disk — read as local file (catches missing `file:` prefix)
+/// 4. Literal string — return as-is
 pub(super) fn resolve_content_reference(raw: &str) -> Result<String, String> {
     if let Some(rest) = raw.strip_prefix("file:") {
         return std::fs::read_to_string(rest).map_err(|e| format!("failed to read {rest}: {e}"));
@@ -379,6 +385,27 @@ pub(super) fn resolve_content_reference(raw: &str) -> Result<String, String> {
         return kvmql_auth::resolver::CredentialResolver::resolve(raw)
             .map_err(|e| format!("credential resolve failed: {e}"));
     }
+
+    // If the value looks like a filename/path (contains a dot extension or path
+    // separator) and the file exists locally, read it. This catches the common
+    // mistake of writing content='docker-compose.yml' instead of
+    // content='file:docker-compose.yml'.
+    let looks_like_path = (raw.contains('/') || raw.contains('.'))
+        && !raw.contains('\n')
+        && raw.len() < 4096;
+    if looks_like_path {
+        let path = std::path::Path::new(raw);
+        if path.is_file() {
+            tracing::warn!(
+                path = raw,
+                "content value looks like a file path and the file exists — reading it. \
+                 Prefer the explicit file:{raw} scheme to avoid ambiguity."
+            );
+            return std::fs::read_to_string(raw)
+                .map_err(|e| format!("failed to read {raw}: {e}"));
+        }
+    }
+
     Ok(raw.to_string())
 }
 

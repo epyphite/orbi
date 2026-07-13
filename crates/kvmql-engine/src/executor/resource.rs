@@ -233,11 +233,19 @@ impl<'a> Executor<'a> {
             if is_ssh {
                 let mut cfg_with_content = config_value.clone();
                 if s.resource_type == "file" || s.resource_type == "docker_compose" {
-                    if let Some(raw_content) = cfg_with_content
+                    // Try 'content' first, then 'file' as fallback (legacy docker_compose param).
+                    let raw_content = cfg_with_content
                         .get("content")
                         .and_then(|v| v.as_str())
                         .map(str::to_string)
-                    {
+                        .or_else(|| {
+                            cfg_with_content
+                                .get("file")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                        });
+
+                    if let Some(raw_content) = raw_content {
                         match resolve_content_reference(&raw_content) {
                             Ok(bytes) => {
                                 if let Some(obj) = cfg_with_content.as_object_mut() {
